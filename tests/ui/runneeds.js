@@ -27,10 +27,13 @@ t("Run and a list refresh change the row in place, not the table", () => {
   if (!row.isConnected || !row.querySelector(".rolling")) throw new Error("row redrawn for its spinner");
   ui.running.delete("nginx:alpine"); render();
 });
-t("an image that needs nothing starts straight away", () => {
+t("an image that needs nothing opens a name popover", () => {
   pressRun("nginx:alpine");
-  if (needPop()) throw new Error("popover for nginx");
-  if (runsSent().length !== 1 || runsSent()[0].value.length) throw new Error(JSON.stringify(runsSent()));
+  if (runsSent().length) throw new Error("ran without asking");
+  if (!/Run nginx:alpine/.test(needPop()?.textContent) || !needPop().querySelector("[data-needcname]")) throw new Error(needPop()?.textContent);
+  needPop().querySelector("[data-needgo]").click();
+  const m = runsSent()[0];
+  if (runsSent().length !== 1 || m.value.length || m.container !== "nginx" || m.port) throw new Error(JSON.stringify(runsSent()));
   kiri.on({ type: "ran", name: "nginx:alpine", error: false });
 });
 t("postgres: a popover on its Run button, with a password made", () => {

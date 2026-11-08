@@ -937,6 +937,10 @@ td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px
 .need .more { display: grid; grid-template-columns: max-content 1fr; gap: 6px 10px; align-items: center; padding: 2px 0 0 16px; }
 .need .more[hidden] { display: none; }
 .need .more label { font: var(--fs-mono) var(--mono-font); color: var(--muted); }
+.need .err { color: var(--red-text); font-size: var(--fs-small); line-height: 1.4; padding: 8px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--red) 10%, transparent); border: 1px solid color-mix(in srgb, var(--red) 35%, var(--line)); }
+.need .err[hidden] { display: none; }
+.need .inp input.bad { border-color: var(--red); }
 .need .ft { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 .need .ft .row { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 .need .ft .note { color: var(--faint); font-size: var(--fs-small); }
@@ -3942,14 +3946,19 @@ function usedCell(i, lit) {
    that offers to remove the stopped containers with it, or says which running
    ones to stop first. */
 /* Run an image where you are: the button is a yellow spinner until the
-   container is up, then the play button again. The list stays put. */
-function runImage(name, env) {
+   container is up, then the play button again. The list stays put.
+   With no env yet, a popover asks for an optional container name (and any
+   password the image needs). Pass env (even []) to start. */
+function runImage(name, env, container, port) {
   if (isK8sImage(name)) return k8sRunNote(name);
   if (ui.running.has(name)) return;
-  if (!env && !needsFor(name) && !probedFresh(name)) return probeNeeds(name);
-  if (!env && needsFor(name)) return needOpen(name);
+  if (env === undefined) {
+    if (!needsFor(name) && !probedFresh(name)) return probeNeeds(name);
+    if (needsFor(name)) return needOpen(name);
+    return runOpen(name);
+  }
   ui.running.add(name);
-  send("run", { name, value: env || [] });
+  send("run", { name, value: env || [], container: container || "", port: port || 0 });
   if (ui.view === "images") render();
 }
 function runBtn(name) {
@@ -5136,6 +5145,132 @@ function needField(n) {
     <button class="eye" data-needeye title="Show" aria-label="Show password">${svgOf("eye")}</button></span>
     <button class="btn sm gen" data-needgen title="Make a new one">${svgOf("regen")}Generate</button></div>`;
 }
+/* Optional `docker run --name`: empty uses the image repository's last
+   segment (nginx:alpine → nginx). Matches the daemon's name rule. */
+function validContainerName(n) {
+  return n.length > 0 && [...n].every((c) => /[a-zA-Z0-9_.-]/.test(c));
+}
+function defaultContainerName(image) {
+  const base = (repoOf(image).split("/").pop() || "container")
+    .replace(/[^a-zA-Z0-9_.-]+/g, "-")
+    .replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "");
+  return validContainerName(base) ? base : "container";
+}
+function needNameField(image) {
+  const def = defaultContainerName(image);
+  return `<div class="fld"><label for="need-cname">Container name</label>
+    <div class="pw"><span class="inp"><input id="need-cname" data-needcname spellcheck="false" autocomplete="off" placeholder="${esc(def)}" aria-label="Container name"></span></div>
+    <span class="hint" data-cnamehint></span></div>`;
+}
+function needPortField() {
+  return `<div class="fld"><label for="need-hport">Host port</label>
+    <div class="pw"><span class="inp"><input id="need-hport" data-needport inputmode="numeric" spellcheck="false" autocomplete="off" placeholder="Leave empty to assign automatically" aria-label="Host port"></span></div>
+    <span class="hint" data-porthint></span></div>`;
+}
+function nameInUse(name) {
+  return ui.containers.some((c) => cname(c) === name);
+}
+function portInUse(port) {
+  return ui.containers.some((c) => (c.Ports || []).some((p) => p.PublicPort === port));
+}
+function needContainer() {
+  const raw = (ui.need?.el.querySelector("[data-needcname]")?.value || "").trim();
+  const name = raw || defaultContainerName(ui.need.image);
+  if (!validContainerName(name)) return { ok: false, name, why: "Only letters, digits, _, . and -" };
+  if (nameInUse(name)) return { ok: false, name, why: `“${name}” is already in use` };
+  return { ok: true, name };
+}
+function needHostPort() {
+  const raw = (ui.need?.el.querySelector("[data-needport]")?.value || "").trim();
+  if (!raw) return { ok: true, port: 0 };
+  if (!/^\d+$/.test(raw)) return { ok: false, port: 0, why: "Enter a port from 1 to 65535" };
+  const n = +raw;
+  if (n < 1 || n > 65535) return { ok: false, port: 0, why: "Enter a port from 1 to 65535" };
+  if (portInUse(n)) return { ok: false, port: n, why: `Host port ${n} is already in use` };
+  return { ok: true, port: n };
+}
+function shortNameConflict(message) {
+  const m = message.match(/container name "\/?([^"]+)"/i);
+  return m ? `The name “${m[1]}” is already in use. Pick another.` : "That container name is already in use. Pick another.";
+}
+function shortPortConflict(message) {
+  const m = message.match(/:(\d+) failed: port is already allocated/i) || message.match(/\bport (\d+)\b/i);
+  return m ? `Host port ${m[1]} is already in use. Pick another, or leave it blank.` : "That host port is already in use. Pick another, or leave it blank.";
+}
+function classifyRunErr(message) {
+  if (/Conflict\. The container name|container name "\/?[^"]+" is already in use/i.test(message)) return "name";
+  if (/port is already allocated|already allocated|Bind for |address already in use/i.test(message)) return "port";
+  return "other";
+}
+/* After a failed Run: reopen the popover fields and point at the bad one. */
+function needRunFail(message) {
+  const p = ui.need;
+  if (!p) { toast("error", message || "Couldn't start"); return; }
+  p.busy = false;
+  p.runErr = message || "Couldn't start";
+  p.runErrKind = classifyRunErr(p.runErr);
+  p.el.querySelectorAll("input, button").forEach((x) => { x.disabled = false; });
+  const go = p.el.querySelector("[data-needgo]");
+  if (go) go.textContent = "Run";
+  needPaintRunErr();
+  needCheck();
+  if (p.runErrKind === "name") p.el.querySelector("[data-needcname]")?.focus({ preventScroll: true });
+  else if (p.runErrKind === "port") p.el.querySelector("[data-needport]")?.focus({ preventScroll: true });
+}
+function needPaintRunErr() {
+  const p = ui.need;
+  if (!p) return;
+  const box = p.el.querySelector("[data-neederr]");
+  const msg = p.runErr || "";
+  const kind = p.runErrKind || "other";
+  if (box) {
+    box.hidden = !msg;
+    box.textContent = kind === "name" ? shortNameConflict(msg) : kind === "port" ? shortPortConflict(msg) : msg;
+  }
+  const cIn = p.el.querySelector("[data-needcname]"), pIn = p.el.querySelector("[data-needport]");
+  cIn?.classList.toggle("bad", kind === "name" && !!msg);
+  pIn?.classList.toggle("bad", kind === "port" && !!msg);
+  if (kind === "name" && p.el.querySelector("[data-cnamehint]")) {
+    const ch = p.el.querySelector("[data-cnamehint]");
+    ch.className = "hint no";
+    ch.textContent = shortNameConflict(msg);
+  }
+  if (kind === "port" && p.el.querySelector("[data-porthint]")) {
+    const ph = p.el.querySelector("[data-porthint]");
+    ph.className = "hint no";
+    ph.textContent = shortPortConflict(msg);
+  }
+}
+function needClearRunErr() {
+  const p = ui.need;
+  if (!p?.runErr) return;
+  p.runErr = "";
+  p.runErrKind = "";
+  const box = p.el.querySelector("[data-neederr]");
+  if (box) { box.hidden = true; box.textContent = ""; }
+  p.el.querySelector("[data-needcname]")?.classList.remove("bad");
+  p.el.querySelector("[data-needport]")?.classList.remove("bad");
+}
+/* Run with no password to collect: name + optional host port. */
+function runOpen(image) {
+  needClose();
+  const el = document.createElement("div");
+  el.className = "need";
+  el.setAttribute("role", "dialog");
+  el.setAttribute("aria-label", `Run ${image}`);
+  el.innerHTML = `<div class="hd"><span class="oic">${svgOf("play")}</span><h3>Run ${esc(image)}</h3><p class="why">Name defaults to <span class="mono">${esc(defaultContainerName(image))}</span>. Host port is optional.</p></div>
+    ${needNameField(image)}
+    ${needPortField()}
+    <div class="err" data-neederr hidden></div>
+    <div class="ft"><div class="row"><button class="btn sm quiet" data-needcancel>Cancel <span class="kbd">esc</span></button><button class="btn sm primary" data-needgo>Run</button></div>
+      <span class="note"><span class="mono">docker run --name</span> and <span class="mono">-p</span>.</span></div>`;
+  ui.need = { image, n: null, el };
+  document.body.append(el);
+  needCheck();
+  if (ui.view === "images") render();
+  needPlace();
+  el.querySelector("[data-needcname]")?.focus({ preventScroll: true });
+}
 function needOpen(image) {
   needClose();
   const n = needsFor(image);
@@ -5157,7 +5292,10 @@ function needOpen(image) {
   const more = n.more ? `<button class="disc" data-needdisc aria-expanded="false">${svgOf("caret")}More settings <span class="n">${n.more.length} optional</span></button>
       <div class="more" hidden>${n.more.map(([k, ph]) => `<label for="need-${k}">${k}</label><input id="need-${k}" data-needmore="${k}" spellcheck="false" autocomplete="off" placeholder="${esc(ph)}">`).join("")}</div>` : "";
   el.innerHTML = `<div class="hd"><span class="oic">${svgOf("lock")}</span><h3>${esc(image)} needs ${esc(what)} to start</h3><p class="why">${esc(n.why)}</p></div>
+    ${needNameField(image)}
+    ${needPortField()}
     ${body}${more}
+    <div class="err" data-neederr hidden></div>
     <div class="ft"><div class="row"><button class="btn sm quiet" data-needcancel>Cancel <span class="kbd">esc</span></button><button class="btn sm primary" data-needgo>Run</button></div>
       <span class="note">Saved in the container's environment. Kiri doesn't keep a copy.</span></div>`;
   ui.need = { image, n, el };
@@ -5165,7 +5303,7 @@ function needOpen(image) {
   needCheck();
   if (ui.view === "images") render();
   needPlace();
-  el.querySelector(n.learned && !secretish(n.pw) ? "[data-needpw]" : "[data-needgo]")?.focus({ preventScroll: true });
+  el.querySelector(n.learned && !secretish(n.pw) ? "[data-needpw]" : "[data-needcname]")?.focus({ preventScroll: true });
 }
 // `done`: Run went through, so the busy popover just goes.
 function needClose(done) {
@@ -5193,8 +5331,10 @@ function needPlace() {
   requestAnimationFrame(needPlace);
 }
 // What Run sends, or null while something it needs is missing.
+// A name-only popover (no password) returns [].
 function needEnv() {
   const { n, el } = ui.need;
+  if (!n) return [];
   const way = el.querySelector("[name=need-way]:checked")?.value || "pw";
   const off = el.querySelector("[data-needoff]")?.checked;
   const pw = el.querySelector("[data-needpw]")?.value || "";
@@ -5218,12 +5358,36 @@ function needCheck() {
     h.className = `hint${ok ? " ok" : v ? " no" : ""}`;
     h.innerHTML = `<span class="bars" data-n="${v ? k : 0}"><i></i><i></i><i></i><i></i></span><span>${ok ? "Strong enough" : "Needs upper and lower case, a digit and a symbol, 8 or more"}</span>`;
   }
+  const c = needContainer(), ch = p.el.querySelector("[data-cnamehint]");
+  const cIn = p.el.querySelector("[data-needcname]");
+  if (ch && p.runErrKind !== "name") {
+    ch.className = `hint${c.ok ? "" : " no"}`;
+    ch.textContent = c.ok ? "" : (c.why || "Only letters, digits, _, . and -");
+  }
+  cIn?.classList.toggle("bad", !c.ok || p.runErrKind === "name");
+  const hp = needHostPort(), ph = p.el.querySelector("[data-porthint]");
+  const pIn = p.el.querySelector("[data-needport]");
+  if (ph && p.runErrKind !== "port") {
+    ph.className = `hint${hp.ok ? "" : " no"}`;
+    ph.textContent = hp.ok ? "" : (hp.why || "Enter a port from 1 to 65535");
+  }
+  pIn?.classList.toggle("bad", !hp.ok || p.runErrKind === "port");
   p.el.classList.toggle("sec-off", !!p.el.querySelector("[data-needoff]")?.checked);
-  p.el.querySelector("[data-needgo]").disabled = !needEnv();
+  p.el.querySelector("[data-needgo]").disabled = !c.ok || !hp.ok || needEnv() === null;
 }
-document.addEventListener("input", (ev) => { if (ev.target.closest(".need")) needCheck(); });
+document.addEventListener("input", (ev) => {
+  if (!ev.target.closest(".need")) return;
+  if (ev.target.matches("[data-needcname],[data-needport]")) needClearRunErr();
+  needCheck();
+});
 document.addEventListener("change", (ev) => { if (ev.target.closest(".need")) needCheck(); });
-document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && ui.need) needClose(); });
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && ui.need) needClose();
+  if (ev.key === "Enter" && ui.need && !ui.need.busy && ev.target.closest(".need") && !ev.target.closest("textarea, button")) {
+    const go = ui.need.el.querySelector("[data-needgo]");
+    if (go && !go.disabled) { ev.preventDefault(); go.click(); }
+  }
+});
 document.addEventListener("click", (ev) => {
   const p = ui.need;
   if (!p) return;
@@ -5231,12 +5395,12 @@ document.addEventListener("click", (ev) => {
   if (!pop) { if (!ev.target.closest("[data-run]")) needClose(); return; }
   if (b?.matches("[data-needcancel]")) needClose();
   else if (b?.matches("[data-needgo]")) {
-    const env = needEnv();
-    if (!env) return;
+    const env = needEnv(), c = needContainer(), hp = needHostPort();
+    if (env === null || !c.ok || !hp.ok) return;
     p.busy = true;
     p.el.querySelectorAll("input, button").forEach((x) => (x.disabled = true));
     b.innerHTML = `<i class="spin"></i>Starting…`;
-    runImage(p.image, env);
+    runImage(p.image, env, c.name, hp.port);
   } else if (b?.matches("[data-needeye]")) {
     ev.preventDefault();
     const f = b.previousElementSibling, show = f.type === "password";
@@ -5867,7 +6031,12 @@ window.kiri = {
       case "diaglogs": case "diagcrashes": case "diagsendcrash": case "diagsend": case "diagreport": case "lastcrash": diagEvent(e); break;
       case "ran":
         ui.running.delete(e.name);
-        if (ui.need?.image === e.name) needClose(true);
+        if (e.error) {
+          if (ui.need?.image === e.name) needRunFail(e.message || "Couldn't start");
+          else toast("error", e.message || "Couldn't start");
+        } else if (ui.need?.image === e.name) {
+          needClose(true);
+        }
         if (ui.view === "images") render();
         break;
       case "pulled":

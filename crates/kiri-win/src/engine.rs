@@ -46,8 +46,9 @@ pub(crate) enum Cmd {
     Refresh,
     Pull(String),
     RemoveImage(String),
-    /// An image, and the environment the Run popover asked for.
-    Run(String, Vec<String>),
+    /// Image, env from the Run popover, container name, and an optional host
+    /// port (None = PublishAllPorts only).
+    Run(String, Vec<String>, String, Option<u16>),
     Container { action: String, id: String },
     RemoveVolume(String),
     RemoveNetwork(String),
@@ -72,6 +73,12 @@ struct PageCmd {
     path: String,
     #[serde(default)]
     value: Value,
+    /// Optional container name for `run` (`docker run --name`).
+    #[serde(default)]
+    container: String,
+    /// Optional host port for `run` (`docker run -p`). `0` means unset.
+    #[serde(default)]
+    port: u64,
 }
 
 /// What the engine needs from the rest of kiri-win.
@@ -181,11 +188,12 @@ fn engine(rx: &Receiver<Cmd>, tx: Sender<Cmd>) {
                 refresh();
             }
             Ok(Cmd::Pull(name)) => pull(name),
-            Ok(Cmd::Run(name, env)) => {
+            Ok(Cmd::Run(name, env, container, host_port)) => {
                 // The page shows its spinner until this says how it went.
-                let result = run_image(&name, &env);
-                emit(json!({"type": "ran", "name": name, "error": result.is_err()}).to_string());
-                act(result)
+                // Name/port conflicts stay on the Run popover (`message`).
+                let result = run_image(&name, &env, &container, host_port);
+                let message = result.as_ref().err().map(std::string::ToString::to_string);
+                emit(json!({"type": "ran", "name": name, "error": message.is_some(), "message": message}).to_string());
             }
             Ok(Cmd::RemoveImage(name)) => match client::request("DELETE", &format!("/images/{}", path_escape(&name)), None) {
                 Ok(r) if r.ok() => {
@@ -620,10 +628,30 @@ fn set_env(id: &str, env: Vec<String>) -> io::Result<()> {
     Ok(())
 }
 
-fn run_image(image: &str, env: &[String]) -> io::Result<()> {
-    let body = json!({"Image": image, "Tty": true, "OpenStdin": true, "Env": env, "HostConfig": {"PublishAllPorts": true}});
+/// The first exposed port on `image` to pin a host port to: prefer TCP, then
+/// any other, in name order (`80/tcp` before `443/tcp`).
+fn primary_exposed(image: &str) -> Option<String> {
+    let info = client::get(&format!("/images/{}/json", path_escape(image))).ok()?;
+    let map = info["Config"]["ExposedPorts"].as_object()?;
+    let mut keys: Vec<_> = map.keys().cloned().collect();
+    keys.sort();
+    keys.iter().find(|k| k.ends_with("/tcp")).cloned().or_else(|| keys.into_iter().next())
+}
+
+fn run_image(image: &str, env: &[String], container: &str, host_port: Option<u16>) -> io::Result<()> {
+    let mut bindings = serde_json::Map::new();
+    if let Some(hp) = host_port {
+        let key = primary_exposed(image).ok_or_else(|| io::Error::other("this image exposes no ports to publish on the host"))?;
+        bindings.insert(key, json!([{"HostIp": "", "HostPort": hp.to_string()}]));
+    }
+    let body = json!({"Image": image, "Tty": true, "OpenStdin": true, "Env": env,
+        "HostConfig": {"PublishAllPorts": true, "PortBindings": bindings}});
     let began = std::time::Instant::now();
-    let created = client::request("POST", "/containers/create", Some(&body))?;
+    let path = match container.trim() {
+        "" => "/containers/create".to_owned(),
+        name => format!("/containers/create?name={}", path_escape(name.trim_start_matches('/'))),
+    };
+    let created = client::request("POST", &path, Some(&body))?;
     if !created.ok() {
         return Err(io::Error::other(created.error()));
     }
@@ -894,7 +922,8 @@ pub fn on_message(msg: &str) {
         "rmi" => send(Cmd::RemoveImage(c.name)),
         "run" => {
             let env = c.value.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-            send(Cmd::Run(c.name, env));
+            let host_port = u16::try_from(c.port).ok().filter(|&p| p > 0);
+            send(Cmd::Run(c.name, env, c.container, host_port));
         }
         "container" => send(Cmd::Container { action: c.action, id: c.id }),
         "ports" => send(Cmd::Ports { id: c.id, ports: c.ports }),

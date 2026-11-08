@@ -406,6 +406,9 @@ fn images(req: &Request, engine: &Engine) -> Result<Value, Error> {
 
 fn image_inspect(engine: &Engine, name: &str) -> Result<Value, Error> {
     let i = engine.image(name)?.ok_or_else(|| Error::NotFound(format!("No such image: {name}")))?;
+    // ExposedPorts (and Healthcheck) live in the image config blob, not in
+    // Kiri's slim image model — read them the same way create's EXPOSE path does.
+    let cfg = image_config_json(engine, &i);
     Ok(json!({
         "Id": i.config_digest,
         "RepoTags": [i.name],
@@ -420,10 +423,18 @@ fn image_inspect(engine: &Engine, name: &str) -> Result<Value, Error> {
             "Entrypoint": if i.config.entrypoint.is_empty() { Value::Null } else { json!(i.config.entrypoint) },
             "WorkingDir": i.config.working_dir,
             "User": i.config.user,
-            "Healthcheck": image_healthcheck(engine, &i),
+            "ExposedPorts": cfg["config"]["ExposedPorts"].clone(),
+            "Healthcheck": cfg["config"]["Healthcheck"].clone(),
+            "Labels": cfg["config"]["Labels"].clone(),
+            "StopSignal": cfg["config"]["StopSignal"].clone(),
         },
         "RootFS": {"Type": "layers", "Layers": i.layers.iter().map(|l| &l.digest).collect::<Vec<_>>()},
     }))
+}
+
+/// The OCI image config blob, or null when it is missing / unreadable.
+fn image_config_json(engine: &Engine, i: &kiri_image::Image) -> Value {
+    engine.store.read_config(&i.config_digest).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null)
 }
 
 fn image_remove(engine: &Engine, name: &str) -> Result<Value, Error> {
@@ -1524,12 +1535,6 @@ fn healthcheck_from(body: &Value, image_cfg: &Value) -> Result<Option<super::hea
         h.validate().map_err(Error::BadRequest)?;
     }
     Ok(super::health::merge(mine, Healthcheck::from_json(&image_cfg["config"]["Healthcheck"])))
-}
-
-/// The image's HEALTHCHECK, which Kiri's image model does not keep.
-fn image_healthcheck(engine: &Engine, i: &kiri_image::Image) -> Value {
-    let cfg: Value = engine.store.read_config(&i.config_digest).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
-    cfg["config"]["Healthcheck"].clone()
 }
 
 /// `docker ps`'s Status: "Up 2 minutes (healthy)" while running unpaused

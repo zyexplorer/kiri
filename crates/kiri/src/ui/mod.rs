@@ -73,8 +73,9 @@ enum Cmd {
     /// An image, after the stopped containers made from it (their ids).
     RemoveImage(String, Vec<String>),
     /// Run an image detached with its own command.
-    /// An image, and the environment the Run popover asked for.
-    Run(String, Vec<String>),
+    /// Image, env from the Run popover, container name, and an optional host
+    /// port (None = keep the usual auto / same-port publish).
+    Run(String, Vec<String>, String, Option<u16>),
     /// `start`, `stop`, `restart`, `pause`, `unpause` or `remove`.
     Container { action: String, id: String },
     RemoveVolume(String),
@@ -96,7 +97,7 @@ impl Cmd {
             Cmd::Stop => ("stop", String::new()),
             Cmd::Pull(name) => ("pull", name.clone()),
             Cmd::RemoveImage(name, _) => ("rmi", name.clone()),
-            Cmd::Run(name, _) => ("run", name.clone()),
+            Cmd::Run(name, ..) => ("run", name.clone()),
             Cmd::Container { action, id } => (action.as_str(), id.chars().take(12).collect()),
             Cmd::RemoveVolume(name) => ("rmvol", name.clone()),
             Cmd::RemoveNetwork(id) => ("rmnet", id.chars().take(12).collect()),
@@ -128,6 +129,12 @@ struct PageCmd {
     /// A setting's value (`setpref`).
     #[serde(default)]
     value: serde_json::Value,
+    /// Optional container name for `run` (`docker run --name`).
+    #[serde(default)]
+    container: String,
+    /// Optional host port for `run` (`docker run -p`). `0` means unset.
+    #[serde(default)]
+    port: u64,
 }
 
 fn text_or_number<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
@@ -271,11 +278,16 @@ fn engine(rx: Receiver<Cmd>, tx: Sender<Cmd>) {
                 refresh(&mut connected);
             }
             Ok(Cmd::Pull(name)) => pull(name),
-            Ok(Cmd::Run(name, env)) => {
+            Ok(Cmd::Run(name, env, container, host_port)) => {
                 // The page shows Starting… until this says how it went.
-                let result = run_image(&name, &env);
-                emit(serde_json::json!({"type": "ran", "name": name, "error": result.is_err()}).to_string());
-                act("run", result)
+                // Name/port conflicts stay on the Run popover (`message`); other
+                // failures toast from the page when no popover is open.
+                let result = run_image(&name, &env, &container, host_port);
+                let message = result.as_ref().err().map(std::string::ToString::to_string);
+                if let Some(ref e) = message {
+                    diag::warn!("action failed", action = "run", error = e);
+                }
+                emit(serde_json::json!({"type": "ran", "name": name, "error": message.is_some(), "message": message}).to_string());
             }
             Ok(Cmd::RemoveImage(name, with)) => {
                 // The stopped containers made from it go first, never forced: a
@@ -774,12 +786,15 @@ fn set_env(id: &str, env: Vec<String>) -> io::Result<()> {
 /// (gallerybox's 4567 on localhost:4567), otherwise on a free one, as
 /// `docker run -P` does. An image that declares none gets an offer to
 /// publish what it turns out to listen on.
-fn run_image(image: &str, env: &[String]) -> io::Result<()> {
+fn run_image(image: &str, env: &[String], container: &str, host_port: Option<u16>) -> io::Result<()> {
     let own = same_ports(image);
     let began = std::time::Instant::now();
-    let id = match create_and_start(image, &own, env) {
+    let id = match create_and_start(image, &own, env, container, host_port) {
         // Taken between the check and the start: let the engine pick.
-        Err(e) if !own.is_empty() && e.to_string().contains("already allocated") => create_and_start(image, &[], env)?,
+        // A host port the person chose is kept; only the same-port guesses retry.
+        Err(e) if host_port.is_none() && !own.is_empty() && e.to_string().contains("already allocated") => {
+            create_and_start(image, &[], env, container, None)?
+        }
         r => r?,
     };
     let info = client::get(&format!("/containers/{id}/json"))?;
@@ -832,17 +847,30 @@ fn listening_event(id: &str, name: &str, ports: &[(u16, u16)], offer: bool) -> S
 
 /// Creates and starts `image` with every declared port published, `own` on
 /// the same host port. A container that fails to start is removed.
-fn create_and_start(image: &str, own: &[String], env: &[String]) -> io::Result<String> {
-    let bindings: serde_json::Map<String, serde_json::Value> = own
+/// `container` is `docker run --name`: empty lets the engine pick one.
+/// `host_port` pins the image's primary exposed port on the Mac (`-p N:…`);
+/// when unset, the usual same-port / free-port publish stays.
+fn create_and_start(image: &str, own: &[String], env: &[String], container: &str, host_port: Option<u16>) -> io::Result<String> {
+    let mut bindings: serde_json::Map<String, serde_json::Value> = own
         .iter()
         .map(|key| {
             let port = key.split('/').next().unwrap_or_default();
             (key.clone(), serde_json::json!([{"HostIp": "", "HostPort": port}]))
         })
         .collect();
+    if let Some(hp) = host_port {
+        let Some(key) = primary_exposed(image) else {
+            return Err(io::Error::other("this image exposes no ports to publish on the host"));
+        };
+        bindings.insert(key, serde_json::json!([{"HostIp": "", "HostPort": hp.to_string()}]));
+    }
     let body = serde_json::json!({"Image": image, "Tty": true, "OpenStdin": true, "Env": env,
         "HostConfig": {"PublishAllPorts": true, "PortBindings": bindings}});
-    let created = client::request("POST", "/containers/create", Some(&body))?;
+    let path = match container.trim() {
+        "" => "/containers/create".to_owned(),
+        name => format!("/containers/create?name={}", path_escape(name.trim_start_matches('/'))),
+    };
+    let created = client::request("POST", &path, Some(&body))?;
     if !created.ok() {
         return Err(io::Error::other(created.error()));
     }
@@ -852,6 +880,16 @@ fn create_and_start(image: &str, own: &[String], env: &[String]) -> io::Result<S
         return Err(e);
     }
     Ok(id)
+}
+
+/// The first exposed port on `image` to pin a host port to: prefer TCP, then
+/// any other, in name order (`80/tcp` before `443/tcp`).
+fn primary_exposed(image: &str) -> Option<String> {
+    let info = client::get(&format!("/images/{}/json", path_escape(image))).ok()?;
+    let map = info["Config"]["ExposedPorts"].as_object()?;
+    let mut keys: Vec<_> = map.keys().cloned().collect();
+    keys.sort();
+    keys.iter().find(|k| k.ends_with("/tcp")).cloned().or_else(|| keys.into_iter().next())
 }
 
 /// The ports `image` declares (`4567/tcp`) whose number is free on the Mac.
@@ -1371,7 +1409,8 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         }
         "run" => {
             let env = msg.value.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-            tx.send(Cmd::Run(msg.name, env))
+            let host_port = u16::try_from(msg.port).ok().filter(|&p| p > 0);
+            tx.send(Cmd::Run(msg.name, env, msg.container, host_port))
         }
         "container" => tx.send(Cmd::Container { action: msg.action, id: msg.id }),
         "rmvol" => tx.send(Cmd::RemoveVolume(msg.name)),
