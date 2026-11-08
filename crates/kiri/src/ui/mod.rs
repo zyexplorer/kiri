@@ -453,7 +453,7 @@ pub(crate) fn prefs() -> serde_json::Value {
 }
 
 fn set_pref(name: &str, value: serde_json::Value) {
-    if !matches!(name, "font" | "mono" | "scale" | "termH" | "termFs" | "termFont" | "domainsAsked" | "theme" | "accent" | "importSeen" | "updateAuto" | "updateSkip" | "updateSnoozeUntil" | "columnWidths" | "crashReports" | "ctxSnooze" | "ctxBack" | "logSize" | "starAsked" | "setupSkip") {
+    if !matches!(name, "font" | "mono" | "scale" | "termH" | "termFs" | "termFont" | "domainsAsked" | "theme" | "accent" | "lang" | "importSeen" | "updateAuto" | "updateSkip" | "updateSnoozeUntil" | "columnWidths" | "crashReports" | "ctxSnooze" | "ctxBack" | "logSize" | "starAsked" | "setupSkip") {
         return;
     }
     let Some(path) = prefs_path() else { return };
@@ -495,6 +495,24 @@ fn proxy(save: Option<serde_json::Value>) {
             emit(v.to_string());
         }
         Err(e) => emit(serde_json::json!({"type": "proxy", "error": e.to_string()}).to_string()),
+    }
+}
+
+/// Reads (or saves, then reads) `~/.kiri/daemon.json` (registry mirrors).
+fn daemon(save: Option<serde_json::Value>) {
+    if let Some(body) = save {
+        match client::request("POST", "/kiri/daemon", Some(&body)) {
+            Ok(r) if r.ok() => emit(notice("ok", "daemon.json saved")),
+            Ok(r) => emit(notice("error", &r.error())),
+            Err(e) => emit(notice("error", &e.to_string())),
+        }
+    }
+    match client::get("/kiri/daemon") {
+        Ok(mut v) => {
+            v["type"] = "daemon".into();
+            emit(v.to_string());
+        }
+        Err(e) => emit(serde_json::json!({"type": "daemon", "error": e.to_string()}).to_string()),
     }
 }
 
@@ -1791,6 +1809,16 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         "setproxy" => {
             let body = msg.value;
             std::thread::spawn(move || proxy(Some(body)));
+            Ok(())
+        }
+        // Settings → Network: registry mirrors (`~/.kiri/daemon.json`).
+        "daemon" => {
+            std::thread::spawn(|| daemon(None));
+            Ok(())
+        }
+        "setdaemon" => {
+            let body = msg.value;
+            std::thread::spawn(move || daemon(Some(body)));
             Ok(())
         }
         // Settings → Resources.

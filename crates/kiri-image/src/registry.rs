@@ -18,9 +18,13 @@ const ACCEPT: &str = "application/vnd.oci.image.index.v1+json, \
     application/vnd.oci.image.manifest.v1+json, \
     application/vnd.docker.distribution.manifest.v2+json";
 
-/// Layers downloaded at once. Registries and CDNs serve a few streams well;
-/// more mostly adds contention.
-const PARALLEL_LAYERS: usize = 4;
+/// Layers downloaded at once when `daemon.json` does not set
+/// `max-concurrent-downloads`. Registries and CDNs serve a few streams
+/// well; more mostly adds contention.
+const DEFAULT_DOWNLOADS: usize = 4;
+/// Blobs uploaded at once when `max-concurrent-uploads` is unset (Docker's default).
+const DEFAULT_UPLOADS: usize = 5;
+const MAX_CONCURRENT: usize = 16;
 
 #[derive(Debug)]
 pub enum Error {
@@ -198,6 +202,10 @@ impl Credentials {
 pub struct Client {
     agent: ureq::Agent,
     credentials: Option<Credentials>,
+    /// When set, pull requests use this registry API base instead of
+    /// [`Reference::api_base`]. Used for Docker Hub registry mirrors;
+    /// push never sets this.
+    endpoint: Option<String>,
 }
 
 impl Default for Client {
@@ -215,6 +223,69 @@ static PROXY_SOURCE: std::sync::OnceLock<ProxySource> = std::sync::OnceLock::new
 /// Called once by the daemon, so every client follows its proxy settings.
 pub fn set_proxy_source(f: ProxySource) {
     let _ = PROXY_SOURCE.set(f);
+}
+
+/// Docker Hub registry mirrors (`daemon.json`'s `registry-mirrors`): tried
+/// first when pulling from `docker.io`, then Hub itself. Push never uses them.
+pub type MirrorsSource = fn() -> Vec<String>;
+static MIRRORS_SOURCE: std::sync::OnceLock<MirrorsSource> = std::sync::OnceLock::new();
+
+/// Called once by the daemon, so every client follows its Hub mirrors.
+pub fn set_mirrors_source(f: MirrorsSource) {
+    let _ = MIRRORS_SOURCE.set(f);
+}
+
+fn hub_mirrors() -> Vec<String> {
+    MIRRORS_SOURCE.get().map(|f| f()).unwrap_or_default()
+}
+
+/// How many layer downloads / blob uploads may run at once
+/// (`max-concurrent-downloads` / `max-concurrent-uploads`).
+pub type ConcurrentSource = fn() -> usize;
+static DOWNLOADS_SOURCE: std::sync::OnceLock<ConcurrentSource> = std::sync::OnceLock::new();
+static UPLOADS_SOURCE: std::sync::OnceLock<ConcurrentSource> = std::sync::OnceLock::new();
+
+/// Called once by the daemon for `max-concurrent-downloads`.
+pub fn set_downloads_source(f: ConcurrentSource) {
+    let _ = DOWNLOADS_SOURCE.set(f);
+}
+
+/// Called once by the daemon for `max-concurrent-uploads`.
+pub fn set_uploads_source(f: ConcurrentSource) {
+    let _ = UPLOADS_SOURCE.set(f);
+}
+
+fn concurrent_downloads() -> usize {
+    DOWNLOADS_SOURCE.get().map(|f| f()).unwrap_or(DEFAULT_DOWNLOADS).clamp(1, MAX_CONCURRENT)
+}
+
+fn concurrent_uploads() -> usize {
+    UPLOADS_SOURCE.get().map(|f| f()).unwrap_or(DEFAULT_UPLOADS).clamp(1, MAX_CONCURRENT)
+}
+
+/// A registry mirror URL as Docker's `daemon.json` writes it: `https://host`
+/// (or with a path prefix), no trailing slash. Empty or not http(s) → none.
+pub fn normalize_mirror(raw: &str) -> Option<String> {
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let s = if s.contains("://") { s.to_owned() } else { format!("https://{s}") };
+    let uri: ureq::http::Uri = s.parse().ok()?;
+    let scheme = uri.scheme_str()?;
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let auth = uri.authority()?;
+    let path = match uri.path().trim_end_matches('/') {
+        "" | "/" => String::new(),
+        p => p.to_owned(),
+    };
+    Some(format!("{scheme}://{auth}{path}"))
+}
+
+fn host_of_base(base: &str) -> Option<String> {
+    base.parse::<ureq::http::Uri>().ok()?.authority().map(|a| a.as_str().to_owned())
 }
 
 type ProxyChoice = Option<Option<(String, Vec<String>)>>;
@@ -240,8 +311,12 @@ fn realm_is_secure(realm: &str, registry: &str) -> bool {
         return true;
     }
     realm.get(..7).is_some_and(|s| s.eq_ignore_ascii_case("http://"))
-        && crate::reference::is_local(registry)
-        && realm.parse::<ureq::http::Uri>().ok().and_then(|u| u.authority().map(|a| a.host().to_owned())).is_some_and(|h| crate::reference::is_local(&h))
+        && crate::reference::is_insecure(registry)
+        && realm
+            .parse::<ureq::http::Uri>()
+            .ok()
+            .and_then(|u| u.authority().map(|a| a.as_str().to_owned()))
+            .is_some_and(|h| crate::reference::is_insecure(&h))
 }
 
 /// How long an idle connection waits in the pool for the next request.
@@ -268,7 +343,7 @@ fn shared_agent() -> ureq::Agent {
         // Parallel layer downloads each hold a connection to the registry
         // and one to its CDN; keep them all for the next pull.
         .max_idle_connections(32)
-        .max_idle_connections_per_host(PARALLEL_LAYERS * 2)
+        .max_idle_connections_per_host(concurrent_downloads() * 2)
         .user_agent(concat!("kiri/", env!("CARGO_PKG_VERSION")));
     if let Some(p) = proxy(chosen.clone()) {
         cfg = cfg.proxy(p);
@@ -400,7 +475,7 @@ fn stale(e: &ureq::Error) -> bool {
 
 impl Client {
     pub fn new() -> Client {
-        Client { agent: shared_agent(), credentials: None }
+        Client { agent: shared_agent(), credentials: None, endpoint: None }
     }
 
     /// Who the tokens are for: a fingerprint of the credentials, so one
@@ -412,8 +487,19 @@ impl Client {
         }
     }
 
+    /// The registry API base this client talks to for pulls.
+    fn endpoint(&self, r: &Reference) -> String {
+        self.endpoint.clone().unwrap_or_else(|| r.api_base())
+    }
+
+    /// Host used for tokens and challenges: a mirror's host when pulling
+    /// through one, else the reference's registry name (`docker.io`).
+    fn auth_host(&self, r: &Reference) -> String {
+        self.endpoint.as_deref().and_then(host_of_base).unwrap_or_else(|| r.registry.clone())
+    }
+
     fn token_key(&self, r: &Reference, actions: &str) -> String {
-        format!("{}/{} {actions} {}", r.registry, r.repository, self.who())
+        format!("{}/{} {actions} {}", self.auth_host(r), r.repository, self.who())
     }
 
     fn manifest_key(&self, r: &Reference, reference: &str) -> String {
@@ -452,14 +538,18 @@ impl Client {
         if self.credentials.as_ref().is_some_and(|c| !c.registry_token.is_empty()) || Self::cached_token(&key).is_some() {
             return Ok(());
         }
-        let known = CHALLENGES.lock().unwrap_or_else(|e| e.into_inner()).get(&r.registry).cloned();
-        let Some(challenge) = known.or_else(|| (r.registry == "docker.io").then(|| DOCKER_HUB_CHALLENGE.to_owned())) else { return Ok(()) };
-        let url = format!("{}/v2/", r.api_base());
+        let host = self.auth_host(r);
+        let known = CHALLENGES.lock().unwrap_or_else(|e| e.into_inner()).get(&host).cloned();
+        // Hub's challenge is known; a mirror's is not, so skip until a 401.
+        let Some(challenge) = known.or_else(|| (self.endpoint.is_none() && r.registry == "docker.io").then(|| DOCKER_HUB_CHALLENGE.to_owned())) else {
+            return Ok(());
+        };
+        let url = format!("{}/v2/", self.endpoint(r));
         std::thread::scope(|s| {
             // Two connections: after the manifests, the config and the first
             // layer are fetched at once.
             let connections: Vec<_> = (0..2).map(|_| s.spawn(|| self.agent.get(&url).call().map(drain))).collect();
-            if let Ok((header, ttl)) = self.answer(&challenge, &format!("repository:{}:{actions}", r.repository), &r.registry) {
+            if let Ok((header, ttl)) = self.answer(&challenge, &format!("repository:{}:{actions}", r.repository), &host) {
                 Self::remember_token(key, header, ttl);
             }
             let mut failed = None;
@@ -495,7 +585,52 @@ impl Client {
     /// [`Client::pull`] that `cancel` can stop from another thread: it then
     /// ends with [`Error::Cancelled`], its downloads stopped and no image
     /// recorded. Layers it finished stay in the store, for the next pull.
+    ///
+    /// For Docker Hub (`docker.io`), configured registry mirrors are tried
+    /// first (anonymously, as Docker does), then Hub itself with credentials.
     pub fn pull_with(
+        &self,
+        store: &Store,
+        reference: &Reference,
+        platform: &Platform,
+        progress: &(dyn Fn(Progress) + Sync),
+        cancel: &Cancel,
+    ) -> Result<Image, Error> {
+        let endpoints = pull_endpoints(reference);
+        let mirrored = endpoints.iter().any(|(ep, _)| ep.is_some());
+        let mut mirror_errs = Vec::new();
+        let mut last = None;
+        for (endpoint, creds) in endpoints {
+            let label = endpoint.clone().unwrap_or_else(|| reference.registry.clone());
+            let client = Client {
+                agent: self.agent.clone(),
+                credentials: if creds { self.credentials.clone() } else { None },
+                endpoint,
+            };
+            match client.pull_once(store, reference, platform, progress, cancel) {
+                Ok(img) => return Ok(img),
+                Err(Error::Cancelled) => return Err(Error::Cancelled),
+                Err(e) => {
+                    if !creds {
+                        mirror_errs.push(format!("{label}: {e}"));
+                    }
+                    last = Some(e);
+                }
+            }
+        }
+        // When Hub itself is unreachable, a bare "timeout: connect" hides that
+        // every configured registry-mirror was already tried and failed.
+        if mirrored && !mirror_errs.is_empty() {
+            let hub = last.as_ref().map(|e| e.to_string()).unwrap_or_default();
+            return Err(Error::Http(format!(
+                "registry mirrors failed ({}); docker.io: {hub}",
+                mirror_errs.join("; ")
+            )));
+        }
+        Err(last.unwrap_or_else(|| Error::Http("no registry endpoint".into())))
+    }
+
+    fn pull_once(
         &self,
         store: &Store,
         reference: &Reference,
@@ -585,7 +720,7 @@ impl Client {
                     first_error.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert(e);
                 }
             });
-            for _ in 0..PARALLEL_LAYERS.min(layers.len()) {
+            for _ in 0..concurrent_downloads().min(layers.len()) {
                 s.spawn(|| {
                     let _on = cancel.enter();
                     loop {
@@ -654,7 +789,7 @@ impl Client {
         if by_digest && let Some(hit) = MANIFESTS.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
             return Ok(hit);
         }
-        let url = format!("{}/v2/{}/manifests/{reference}", r.api_base(), r.repository);
+        let url = format!("{}/v2/{}/manifests/{reference}", self.endpoint(r), r.repository);
         let mut resp = self.get(r, &url, Some(ACCEPT))?;
         let media_type = resp
             .headers()
@@ -683,7 +818,7 @@ impl Client {
     /// progress. Refuses bodies over `max` bytes, and stops (removing what
     /// it wrote) once `cancel` is.
     fn download_with(&self, store: &Store, r: &Reference, digest: &str, max: u64, on_bytes: &dyn Fn(u64), cancel: &Cancel) -> Result<u64, Error> {
-        let url = format!("{}/v2/{}/blobs/{digest}", r.api_base(), r.repository);
+        let url = format!("{}/v2/{}/blobs/{digest}", self.endpoint(r), r.repository);
         let mut out = store.blob_writer(digest)?;
         let mut buf = vec![0u8; 256 * 1024];
         let (mut got, mut told) = (0u64, 0u64);
@@ -788,12 +923,13 @@ impl Client {
             if rsp.status().as_u16() == 401 && attempt == 0 {
                 let challenge = rsp.headers().get("www-authenticate").and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned();
                 drain(rsp);
-                let (answer, ttl) = self.answer(&challenge, &format!("repository:{}:{actions}", r.repository), &r.registry).map_err(|e| match e {
-                    Error::Status { url, status, body } if url.is_empty() => Error::Status { url: r.api_base(), status, body },
+                let host = self.auth_host(r);
+                let (answer, ttl) = self.answer(&challenge, &format!("repository:{}:{actions}", r.repository), &host).map_err(|e| match e {
+                    Error::Status { url, status, body } if url.is_empty() => Error::Status { url: self.endpoint(r), status, body },
                     e => e,
                 })?;
                 if let Some(c) = without_scope(&challenge) {
-                    CHALLENGES.lock().unwrap_or_else(|e| e.into_inner()).insert(r.registry.clone(), c);
+                    CHALLENGES.lock().unwrap_or_else(|e| e.into_inner()).insert(host, c);
                 }
                 Self::remember_token(key.clone(), answer, ttl);
                 continue;
@@ -801,7 +937,7 @@ impl Client {
             resp = Some(rsp);
             break;
         }
-        resp.ok_or_else(|| Error::Status { url: r.api_base(), status: 401, body: "unauthorized after token refresh".into() })
+        resp.ok_or_else(|| Error::Status { url: self.endpoint(r), status: 401, body: "unauthorized after token refresh".into() })
     }
 
     /// The `Authorization` header that answers a `WWW-Authenticate` challenge
@@ -874,7 +1010,7 @@ impl Client {
     /// `docker search`, against Docker Hub's search API.
     pub fn search(&self, term: &str, limit: u32) -> Result<Vec<serde_json::Value>, Error> {
         let url = "https://index.docker.io/v1/search";
-        let mut resp = self.agent.get(url).query("q", term).query("n", &limit.to_string()).call()?;
+        let mut resp = self.agent.get(url).query("q", term).query("n", limit.to_string()).call()?;
         if resp.status().as_u16() != 200 {
             return Err(Error::Status { url: url.to_owned(), status: resp.status().as_u16(), body: String::new() });
         }
@@ -888,7 +1024,7 @@ impl Client {
     pub fn hub_tags(&self, repo: &str, limit: u32) -> Result<Vec<String>, Error> {
         let repo = if repo.contains('/') { repo.to_owned() } else { format!("library/{repo}") };
         let url = format!("https://hub.docker.com/v2/repositories/{repo}/tags");
-        let mut resp = self.agent.get(&url).query("page_size", &limit.to_string()).query("ordering", "last_updated").call()?;
+        let mut resp = self.agent.get(&url).query("page_size", limit.to_string()).query("ordering", "last_updated").call()?;
         if resp.status().as_u16() != 200 {
             return Err(Error::Status { url, status: resp.status().as_u16(), body: String::new() });
         }
@@ -901,7 +1037,7 @@ impl Client {
     pub fn login(&self, server: &str) -> Result<(), Error> {
         let host = server.trim_start_matches("https://").trim_start_matches("http://").split('/').next().unwrap_or_default();
         let host = if host.is_empty() || host == "index.docker.io" || host == "docker.io" { "registry-1.docker.io" } else { host };
-        let base = format!("{}://{host}", if crate::reference::is_local(host) { "http" } else { "https" });
+        let base = format!("{}://{host}", if crate::reference::is_insecure(host) { "http" } else { "https" });
         let url = format!("{base}/v2/");
         let resp = self.agent.get(&url).call()?;
         match resp.status().as_u16() {
@@ -925,13 +1061,14 @@ impl Client {
 
     /// Uploads `image` as `target` (`docker push`): blobs the registry
     /// lacks, then a manifest. Returns the manifest's digest and size.
-    pub fn push(&self, store: &Store, image: &Image, target: &Reference, progress: &dyn Fn(PushProgress)) -> Result<(String, u64), Error> {
+    pub fn push(&self, store: &Store, image: &Image, target: &Reference, progress: &(dyn Fn(PushProgress) + Sync)) -> Result<(String, u64), Error> {
         let base = target.api_base();
         let repo = &target.repository;
         let config_size = std::fs::metadata(store.blob_path(&image.config_digest)?)?.len();
         let blobs: Vec<(String, u64)> =
             image.layers.iter().map(|l| (l.digest.clone(), l.size)).chain(std::iter::once((image.config_digest.clone(), config_size))).collect();
-        for (digest, size) in &blobs {
+        let mut missing = Vec::new();
+        for (digest, size) in blobs {
             let url = format!("{base}/v2/{repo}/blobs/{digest}");
             let head = self.authed(target, "pull,push", |auth| {
                 let mut req = self.agent.head(&url);
@@ -941,34 +1078,65 @@ impl Client {
                 req.call()
             })?;
             if head.status().as_u16() == 200 {
-                progress(PushProgress::Exists { digest: digest.clone() });
+                progress(PushProgress::Exists { digest });
                 continue;
             }
-            progress(PushProgress::Uploading { digest: digest.clone(), size: *size });
-            // Start an upload session, then send the blob in one PUT.
-            let start_url = format!("{base}/v2/{repo}/blobs/uploads/");
-            let started = self.authed(target, "pull,push", |auth| {
-                let mut req = self.agent.post(&start_url).header("Content-Length", "0");
-                if let Some(a) = auth {
-                    req = req.header("Authorization", a);
-                }
-                req.send_empty()
-            })?;
-            let started = ok(started, &start_url)?;
-            let location = started.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned();
-            let location = if location.starts_with('/') { format!("{base}{location}") } else { location };
-            let put_url = format!("{location}{}digest={digest}", if location.contains('?') { '&' } else { '?' });
-            let path = store.blob_path(digest)?;
-            let put = self.authed(target, "pull,push", |auth| {
-                let mut f = std::fs::File::open(&path).map_err(ureq::Error::Io)?;
-                let mut req = self.agent.put(&put_url).header("Content-Type", "application/octet-stream").header("Content-Length", &size.to_string());
-                if let Some(a) = auth {
-                    req = req.header("Authorization", a);
-                }
-                req.send(ureq::SendBody::from_reader(&mut f))
-            })?;
-            ok(put, &put_url)?;
-            progress(PushProgress::Pushed { digest: digest.clone() });
+            missing.push((digest, size));
+        }
+        let queue = Mutex::new(missing);
+        let first_error: Mutex<Option<Error>> = Mutex::new(None);
+        let workers = concurrent_uploads().min(queue.lock().unwrap_or_else(|e| e.into_inner()).len().max(1));
+        std::thread::scope(|s| {
+            for _ in 0..workers {
+                s.spawn(|| {
+                    loop {
+                        if first_error.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+                            return;
+                        }
+                        let Some((digest, size)) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop() else {
+                            return;
+                        };
+                        progress(PushProgress::Uploading { digest: digest.clone(), size });
+                        let result = (|| {
+                            // Start an upload session, then send the blob in one PUT.
+                            let start_url = format!("{base}/v2/{repo}/blobs/uploads/");
+                            let started = self.authed(target, "pull,push", |auth| {
+                                let mut req = self.agent.post(&start_url).header("Content-Length", "0");
+                                if let Some(a) = auth {
+                                    req = req.header("Authorization", a);
+                                }
+                                req.send_empty()
+                            })?;
+                            let started = ok(started, &start_url)?;
+                            let location = started.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned();
+                            let location = if location.starts_with('/') { format!("{base}{location}") } else { location };
+                            let put_url = format!("{location}{}digest={digest}", if location.contains('?') { '&' } else { '?' });
+                            let path = store.blob_path(&digest)?;
+                            let put = self.authed(target, "pull,push", |auth| {
+                                let mut f = std::fs::File::open(&path).map_err(ureq::Error::Io)?;
+                                let mut req =
+                                    self.agent.put(&put_url).header("Content-Type", "application/octet-stream").header("Content-Length", &size.to_string());
+                                if let Some(a) = auth {
+                                    req = req.header("Authorization", a);
+                                }
+                                req.send(ureq::SendBody::from_reader(&mut f))
+                            })?;
+                            ok(put, &put_url)?;
+                            Ok(())
+                        })();
+                        match result {
+                            Ok(()) => progress(PushProgress::Pushed { digest }),
+                            Err(e) => {
+                                first_error.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert(e);
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        if let Some(e) = first_error.into_inner().unwrap_or_else(|e| e.into_inner()) {
+            return Err(e);
         }
         let manifest = serde_json::json!({
             "schemaVersion": 2,
@@ -988,6 +1156,19 @@ impl Client {
         ok(put, &url)?;
         Ok((sha256_digest(&bytes), bytes.len() as u64))
     }
+}
+
+/// Endpoints to try for a pull: Hub mirrors first (no credentials), then
+/// the real registry. Only `docker.io` has mirrors, as in Docker's daemon.
+fn pull_endpoints(r: &Reference) -> Vec<(Option<String>, bool)> {
+    let mut out = Vec::new();
+    if r.registry == "docker.io" {
+        for m in hub_mirrors() {
+            out.push((Some(m), false));
+        }
+    }
+    out.push((None, true));
+    out
 }
 
 /// Parses `Bearer realm="…",service="…",scope="…"`.
@@ -1090,6 +1271,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn normalize_mirror_matches_docker() {
+        assert_eq!(normalize_mirror("https://docker.m.daocloud.io").as_deref(), Some("https://docker.m.daocloud.io"));
+        assert_eq!(normalize_mirror("docker.m.daocloud.io/").as_deref(), Some("https://docker.m.daocloud.io"));
+        assert_eq!(normalize_mirror("https://mirror.example/v2/").as_deref(), Some("https://mirror.example/v2"));
+        assert_eq!(normalize_mirror("  ").as_deref(), None);
+        assert_eq!(normalize_mirror("ftp://x").as_deref(), None);
+        assert_eq!(host_of_base("https://mirror.example:443/v2").as_deref(), Some("mirror.example:443"));
+    }
+
+    #[test]
+    fn without_mirrors_a_pull_is_just_the_registry() {
+        let r = Reference::parse("alpine").unwrap();
+        let other = Reference::parse("ghcr.io/o/r:v1").unwrap();
+        // No daemon has called set_mirrors_source in this crate's tests.
+        if hub_mirrors().is_empty() {
+            assert_eq!(pull_endpoints(&r), [(None, true)]);
+            assert_eq!(pull_endpoints(&other), [(None, true)]);
+        } else {
+            for (endpoint, creds) in pull_endpoints(&r) {
+                assert_eq!(creds, endpoint.is_none(), "mirrors are anonymous; Hub keeps credentials");
+            }
+            assert_eq!(pull_endpoints(&other), [(None, true)], "mirrors are Hub-only");
+        }
+        let via = Client {
+            agent: shared_agent(),
+            credentials: Some(Credentials { username: "a".into(), password: "b".into(), ..Default::default() }),
+            endpoint: Some("https://mirror.example".into()),
+        };
+        assert_eq!(via.auth_host(&r), "mirror.example");
+        assert_eq!(via.endpoint(&r), "https://mirror.example");
+        assert!(via.token_key(&r, "pull").starts_with("mirror.example/"), "mirror tokens stay apart from Hub's");
+        assert_ne!(via.token_key(&r, "pull"), Client::new().token_key(&r, "pull"));
+    }
+
+    #[test]
     fn a_missing_image_reads_as_docker_says_it() {
         let r = Reference::parse("gall").unwrap();
         let denied = Error::Status { url: "https://registry-1.docker.io/v2/library/gall/manifests/latest".into(), status: 401, body: r#"{"errors":[{"code":"UNAUTHORIZED"}]}"#.into() };
@@ -1136,9 +1352,9 @@ mod tests {
     #[test]
     fn tokens_are_kept_apart_by_who_asked() {
         let r = Reference::parse("alpine").unwrap();
-        let anon = Client { agent: shared_agent(), credentials: None };
-        let alice = Client { agent: shared_agent(), credentials: Some(Credentials { username: "alice".into(), password: "a".into(), ..Default::default() }) };
-        let other = Client { agent: shared_agent(), credentials: Some(Credentials { username: "alice".into(), password: "b".into(), ..Default::default() }) };
+        let anon = Client { agent: shared_agent(), credentials: None, endpoint: None };
+        let alice = Client { agent: shared_agent(), credentials: Some(Credentials { username: "alice".into(), password: "a".into(), ..Default::default() }), endpoint: None };
+        let other = Client { agent: shared_agent(), credentials: Some(Credentials { username: "alice".into(), password: "b".into(), ..Default::default() }), endpoint: None };
         let keys = [anon.token_key(&r, "pull"), alice.token_key(&r, "pull"), other.token_key(&r, "pull"), alice.token_key(&r, "pull,push")];
         for (i, a) in keys.iter().enumerate() {
             for b in &keys[i + 1..] {
@@ -1244,7 +1460,7 @@ mod tests {
     fn test_client() -> Client {
         let cfg = ureq::Agent::config_builder().http_status_as_error(false).build();
         let agent = ureq::Agent::with_parts(cfg, crate::connect::connector_with(Duration::from_millis(300)), ureq::unversioned::resolver::DefaultResolver::default());
-        Client { agent, credentials: None }
+        Client { agent, credentials: None, endpoint: None }
     }
 
     fn blob() -> (Vec<u8>, String) {
@@ -1342,7 +1558,7 @@ mod tests {
         // Stalls only give up after 10 s: the cancel must not wait for that.
         let cfg = ureq::Agent::config_builder().http_status_as_error(false).build();
         let agent = ureq::Agent::with_parts(cfg, crate::connect::connector_with(Duration::from_secs(10)), ureq::unversioned::resolver::DefaultResolver::default());
-        let client = Client { agent, credentials: None };
+        let client = Client { agent, credentials: None, endpoint: None };
         let cancel = Cancel::new();
         let c = cancel.clone();
         std::thread::spawn(move || {

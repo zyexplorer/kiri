@@ -39,7 +39,11 @@ Apple silicon and Intel Macs (macOS 14+), Windows 10 and 11 (x86-64 and Arm, thr
   (virtiofs), `--tmpfs`, `--mount`, `volume` commands
 - **Images**: `pull` (with `docker login` credentials), `push`, `tag`,
   `save`, `load`, `history`, `search`, `image prune`, `system df`;
-  **amd64 images run through Rosetta**, `--platform` honoured
+  **amd64 images run through Rosetta**, `--platform` honoured;
+  Docker Hub pulls honour `registry-mirrors` in `~/.kiri/daemon.json`
+  (Settings → Network); `insecure-registries` and
+  `max-concurrent-downloads` / `max-concurrent-uploads` apply as in Docker's
+  `daemon.json`
 - **Builds**: `docker build` / `buildx build` through BuildKit running in a
   Kiri container (buildx's docker-container driver), stopped when idle
 - **Compose**: `up`, `down`, `ps`, `logs`, `exec`, multiple networks, events
@@ -54,7 +58,8 @@ Apple silicon and Intel Macs (macOS 14+), Windows 10 and 11 (x86-64 and Arm, thr
   a command line (and "Open in Terminal" for a full shell) and its files
   (preview, Save to Downloads, Show in Finder); Settings for fonts, text
   size, the VM's CPUs and memory (`~/.kiri/vm.json`, used from the VM's
-  next start; `KIRI_CPUS` and `KIRI_MEMORY_MIB` override it) and local names
+  next start; `KIRI_CPUS` and `KIRI_MEMORY_MIB` override it), a proxy,
+  `daemon.json` registry settings (`~/.kiri/daemon.json`) and local names
 - **Menu bar**: Kiri stays in the menu bar when its window closes, with the
   VM's state, running containers (click one to open it) and Start/Stop
 - **Kubernetes**: `kiri k8s start` — a single-node k3s cluster in one

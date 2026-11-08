@@ -267,6 +267,18 @@ fn main_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
     app_menu.addItem(&item(&format!("Quit {}", crate::flavor::APP), sel!(terminate:), "q"));
     let app_item = NSMenuItem::new(mtm);
     app_item.setSubmenu(Some(&app_menu));
+    // Edit: the standard Cut/Copy/Paste/Select All so ⌘X/C/V/A reach the
+    // WebView's focused field (inputs, textareas). Without this menu AppKit
+    // never dispatches those key equivalents into WKWebView.
+    let edit_menu = NSMenu::new(mtm);
+    edit_menu.setTitle(&NSString::from_str("Edit"));
+    edit_menu.addItem(&item("Cut", sel!(cut:), "x"));
+    edit_menu.addItem(&item("Copy", sel!(copy:), "c"));
+    edit_menu.addItem(&item("Paste", sel!(paste:), "v"));
+    edit_menu.addItem(&NSMenuItem::separatorItem(mtm));
+    edit_menu.addItem(&item("Select All", sel!(selectAll:), "a"));
+    let edit_item = NSMenuItem::new(mtm);
+    edit_item.setSubmenu(Some(&edit_menu));
     // View: ⌘+ / ⌘− / ⌘0 step the text size Settings → Appearance sets.
     let view_menu = NSMenu::new(mtm);
     view_menu.setTitle(&NSString::from_str("View"));
@@ -277,6 +289,7 @@ fn main_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
     view_item.setSubmenu(Some(&view_menu));
     let bar = NSMenu::new(mtm);
     bar.addItem(&app_item);
+    bar.addItem(&edit_item);
     bar.addItem(&view_item);
     bar
 }

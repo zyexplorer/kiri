@@ -23,9 +23,19 @@ def page(test, os_name=None):
     if os_name and os_name != "macos":
         index = index.replace("<head>", f'<head><script>window.KIRI_OS = "{os_name}";</script>', 1)
     fixture = open(os.path.join(ROOT, "tests/ui/fixture.js")).read()
+    test_js = open(test).read()
+    # Wait for gzipped MT language packs (ja/ko/…) before assertions that call tr().
     report = 'const report = (lines) => document.body.insertAdjacentHTML("beforeend", `<pre id="results">${lines.join("\\n")}</pre>`);'
     catch = '<script>window.onerror = (m, u, l) => document.body.insertAdjacentHTML("beforeend", `<pre id="results">FAIL page error: ${m} (line ${l})</pre>`);</script>'
-    return index[: index.rindex("</body>")] + catch + f"<script>{report}\n{fixture}\n{open(test).read()}</script></body></html>"
+    runner = (
+        f"{report}\n"
+        "(async () => {\n"
+        "  if (typeof i18nReady !== 'undefined') await i18nReady;\n"
+        f"{fixture}\n"
+        f"{test_js}\n"
+        "})().catch((e) => report(['FAIL page error: ' + (e && e.message || e)]));\n"
+    )
+    return index[: index.rindex("</body>")] + catch + f"<script>{runner}</script></body></html>"
 
 
 def run(test, os_name=None):

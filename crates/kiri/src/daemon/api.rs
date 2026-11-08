@@ -106,6 +106,8 @@ fn route(req: &Request, engine: &Arc<Engine>, w: &mut UnixStream, r: &mut BufRea
         ("GET", "/kiri/proxy") => return reply(w, Ok(super::proxy::report()), 200),
         ("POST", "/kiri/proxy") => return reply(w, set_proxy(req), 200),
         ("PUT", "/kiri/proxy/system") => return reply(w, set_host_proxy(req), 200),
+        ("GET", "/kiri/daemon") => return reply(w, Ok(super::daemon_cfg::report()), 200),
+        ("POST", "/kiri/daemon") => return reply(w, set_daemon(req), 200),
         ("GET", "/kiri/resources") => return reply(w, Ok(resources(engine)), 200),
         ("POST", "/kiri/resources") => return reply(w, set_resources(req).map(|()| resources(engine)), 200),
         ("POST", p) if p.strip_prefix("/kiri/containers/").and_then(|r| r.strip_suffix("/ports")).is_some_and(|id| !id.is_empty()) => {
@@ -351,6 +353,7 @@ fn info(engine: &Engine) -> Value {
         "KiriMemoryStall": engine.memory_trouble().0,
         "KiriOomKills": engine.memory_trouble().1,
         "KiriCpuPercent": engine.cpu_percent(),
+        "RegistryConfig": super::daemon_cfg::registry_config(),
         "Warnings": [],
     })
 }
@@ -579,6 +582,46 @@ fn set_proxy(req: &Request) -> Result<Value, Error> {
     super::proxy::save(&json!({"mode": mode, "http": field("http"), "https": field("https"), "no_proxy": field("no_proxy"), "containers": body["containers"].as_bool().unwrap_or(false)}))
         .map_err(Error::Io)?;
     Ok(super::proxy::report())
+}
+
+fn set_daemon(req: &Request) -> Result<Value, Error> {
+    let body: Value = serde_json::from_slice(&req.body).map_err(|e| Error::BadRequest(format!("invalid JSON: {e}")))?;
+    // Accept a full Docker-shaped `daemon.json` object (or just `{ "registry-mirrors": [...] }`).
+    if !body.is_object() {
+        return Err(Error::BadRequest("daemon.json must be a JSON object".into()));
+    }
+    if let Some(raw) = body.get("registry-mirrors") {
+        let arr = raw.as_array().ok_or_else(|| Error::BadRequest("registry-mirrors must be an array of URLs".into()))?;
+        for v in arr {
+            let Some(s) = v.as_str() else {
+                return Err(Error::BadRequest("registry-mirrors entries must be strings".into()));
+            };
+            if !s.trim().is_empty() && kiri_image::normalize_mirror(s).is_none() {
+                return Err(Error::BadRequest(format!("registry mirror: not an http(s) URL: {s}")));
+            }
+        }
+    }
+    if let Some(raw) = body.get("insecure-registries") {
+        let arr = raw.as_array().ok_or_else(|| Error::BadRequest("insecure-registries must be an array of hosts or CIDRs".into()))?;
+        for v in arr {
+            let Some(s) = v.as_str() else {
+                return Err(Error::BadRequest("insecure-registries entries must be strings".into()));
+            };
+            if !s.trim().is_empty() && kiri_image::normalize_insecure(s).is_none() {
+                return Err(Error::BadRequest(format!("insecure registry: not a host or CIDR: {s}")));
+            }
+        }
+    }
+    for key in ["max-concurrent-downloads", "max-concurrent-uploads"] {
+        if let Some(raw) = body.get(key) {
+            let n = raw.as_u64().ok_or_else(|| Error::BadRequest(format!("{key} must be a number from 1 to 16")))?;
+            if !(1..=16).contains(&n) {
+                return Err(Error::BadRequest(format!("{key} must be a number from 1 to 16")));
+            }
+        }
+    }
+    super::daemon_cfg::save(&body).map_err(Error::Io)?;
+    Ok(super::daemon_cfg::report())
 }
 
 fn set_resources(req: &Request) -> Result<(), Error> {

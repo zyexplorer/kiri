@@ -12,5 +12,9 @@ pub mod store;
 
 pub use cancel::Cancel;
 pub use reference::Reference;
-pub use registry::{Client, Credentials, Platform, Progress, PushProgress, set_proxy_source};
+pub use reference::{normalize_insecure, set_insecure_source};
+pub use registry::{
+    Client, Credentials, Platform, Progress, PushProgress, normalize_mirror, set_downloads_source, set_mirrors_source, set_proxy_source,
+    set_uploads_source,
+};
 pub use store::{Image, Layer, RunConfig, Store};

@@ -1,0 +1,285 @@
+// Settings → Appearance → Language: System / Custom (+ language select).
+const R = [];
+const t = (name, fn) => { try { fn(); R.push("PASS " + name); } catch (e) { R.push("FAIL " + name + ": " + e.message); } };
+show("containers");
+t("English is the default for tests", () => {
+  if (lang() !== "en") throw new Error(lang());
+  if ($("title").textContent !== "Containers") throw new Error($("title").textContent);
+  if (!document.querySelector('[data-view="images"] .lbl')?.textContent.includes("Images")) throw new Error("nav");
+});
+t("简体中文 switches the chrome and list title", () => {
+  prefs.lang = "zh";
+  paintChrome();
+  render();
+  if (lang() !== "zh") throw new Error(lang());
+  if (document.documentElement.lang !== "zh-CN") throw new Error(document.documentElement.lang);
+  if ($("title").textContent !== "容器") throw new Error($("title").textContent);
+  if (document.querySelector('[data-view="images"] .lbl')?.textContent !== "镜像") throw new Error("nav images");
+  if (document.querySelector('[data-view="pods"] .lbl')?.textContent !== "容器组") throw new Error("nav pods");
+  if (document.querySelector('[data-view="services"] .lbl')?.textContent !== "服务") throw new Error("nav services");
+  if (document.querySelector('[data-view="settings"] .lbl')?.textContent !== "设置") throw new Error("nav settings");
+  if ($("vm-toggle").textContent !== "启动" && $("vm-toggle").textContent !== "停止") throw new Error($("vm-toggle").textContent);
+});
+t("Kubernetes off empty state is Chinese", () => {
+  prefs.lang = "zh";
+  show("pods");
+  Object.assign(k8s, { state: "absent", ready: false, op: null, wantPort: 6443 });
+  render();
+  const text = $("content")?.textContent || "";
+  if (!text.includes("Kubernetes 已关闭")) throw new Error(text.slice(0, 200));
+  if (!text.includes("启动 Kubernetes")) throw new Error("start btn");
+  if ($("title").textContent !== "容器组") throw new Error($("title").textContent);
+  if (!($("k8s-side")?.textContent || "").includes("已关闭")) throw new Error($("k8s-side")?.textContent);
+});
+t("Settings → Appearance exposes Language and applies it", () => {
+  show("settings");
+  prefs.tab = "appearance";
+  prefs.lang = "system";
+  settingsShown.html = "";
+  render();
+  const mode = document.querySelector('[data-lang-mode="custom"]');
+  if (!mode) throw new Error("no language mode control");
+  if (!/语言|Language/.test(document.querySelector(".settings .pane")?.textContent || "")) throw new Error("no language row");
+  const locked = $("pref-lang");
+  if (!locked) throw new Error("no language select");
+  if (!locked.disabled) throw new Error("select should be disabled on System");
+  mode.click();
+  // Leaving System locks the currently resolved language.
+  if ((prefs.lang || "system") === "system") throw new Error("still system");
+  if (!sent.some((m) => m.type === "setpref" && m.name === "lang" && m.value !== "system")) throw new Error(JSON.stringify(sent.filter((m) => m.type === "setpref")));
+  settingsShown.html = "";
+  render();
+  const sel = $("pref-lang");
+  if (!sel || sel.disabled) throw new Error("select should be enabled on Custom");
+  sel.click();
+  const opt = document.querySelector('[data-lang-pick="zh"]');
+  if (!opt) throw new Error("no zh option in menu");
+  opt.click();
+  if (prefs.lang !== "zh") throw new Error(prefs.lang);
+  if (!document.querySelector('[data-stab="appearance"]')?.textContent.includes("外观")) throw new Error("tab not zh");
+});
+t("Settings tabs and panes are Chinese", () => {
+  prefs.lang = "zh";
+  for (const [tab, needle] of [["resources", "资源"], ["network", "网络"], ["builds", "构建"], ["domains", "域名"], ["import", "导入"], ["diagnostics", "诊断"], ["about", "关于"]]) {
+    prefs.tab = tab;
+    settingsShown.html = "";
+    render();
+    const text = document.querySelector(".settings")?.textContent || "";
+    if (!text.includes(needle)) throw new Error(tab + " missing " + needle + ": " + text.slice(0, 120));
+  }
+  ui.loginsOn = true;
+  ui.logins = { items: [] };
+  prefs.tab = "registries";
+  settingsShown.html = "";
+  render();
+  if (!(document.querySelector(".settings")?.textContent || "").includes("镜像仓库")) throw new Error("registries");
+});
+t("List headers and actions translate", () => {
+  prefs.lang = "zh";
+  show("images");
+  ui.images = [{ Id: "sha256:abc", RepoTags: ["alpine:latest"], Size: 1000, Created: 0, Pulled: 0, icon: "" }];
+  render();
+  const head = document.querySelector("thead")?.textContent || "";
+  if (!head.includes("仓库") || !head.includes("标签")) throw new Error(head);
+  if (!document.querySelector('[data-ppopen]')?.textContent.includes("拉取镜像")) throw new Error("pull btn");
+  if (!(document.querySelector(".used")?.textContent || "").includes("未使用")) throw new Error("used-by");
+});
+t("Detail tabs and empty filter are Chinese", () => {
+  prefs.lang = "zh";
+  show("containers");
+  ui.containers = [{ Id: "c1", Names: ["/demo"], Image: "alpine", State: "exited", Status: "Exited", Created: 1, Ports: [], Labels: {} }];
+  ui.detail = { id: "c1", name: "demo", tab: "overview", info: { Id: "c1xxxxxxxx", Created: new Date().toISOString(), Config: { Image: "alpine", Env: [] }, HostConfig: {}, State: { Running: false, ExitCode: 0, FinishedAt: new Date().toISOString() }, NetworkSettings: { Networks: {} }, Mounts: [] }, logFilter: "", logLevel: "", follow: true };
+  render();
+  const tabs = [...document.querySelectorAll("[data-dtab]")].map((b) => b.textContent).join(",");
+  if (!tabs.includes("概览") || !tabs.includes("日志") || !tabs.includes("终端")) throw new Error(tabs);
+  closeDetail();
+  ui.filter = "zzz-no-match";
+  render();
+  if (!(document.querySelector(".empty")?.textContent || "").includes("没有匹配")) throw new Error(document.querySelector(".empty")?.textContent);
+  ui.filter = "";
+});
+t("Share view chrome is Chinese", () => {
+  prefs.lang = "zh";
+  paintChrome();
+  show("share");
+  renderShare();
+  const text = $("content")?.textContent || "";
+  if (!text.includes("当前分享")) throw new Error("Shared now: " + text.slice(0, 200));
+  if (!text.includes("已传输流量")) throw new Error("Traffic served");
+  if (!text.includes("本月")) throw new Error("This month");
+  if (!text.includes("退出登录")) throw new Error("Sign out");
+  if (!text.includes("已用 GitHub 登录")) throw new Error("signed in foot");
+  if (!text.includes("安全隧道")) throw new Error("intro");
+});
+t("Run tip and fix panel strings translate", () => {
+  prefs.lang = "zh";
+  if (tr("View container") !== "查看容器") throw new Error(tr("View container"));
+  if (tr("Set it and start") !== "设置并启动") throw new Error(tr("Set it and start"));
+  if (tr("Show full log") !== "查看完整日志") throw new Error(tr("Show full log"));
+  if (tr("Engine updated") !== "引擎已更新") throw new Error(tr("Engine updated"));
+  if (tr("stopped") !== "已停止") throw new Error(tr("stopped"));
+  if (!tr("Started with {name} set", { name: "FOO" }).includes("FOO")) throw new Error(tr("Started with {name} set", { name: "FOO" }));
+});
+t("Diagnostics and crash report strings translate", () => {
+  prefs.lang = "zh";
+  if (tr("Send a report to Kiri") !== "向 Kiri 发送报告") throw new Error("send report");
+  if (tr("Create a diagnostics report") !== "创建诊断报告") throw new Error("create report");
+  if (tr("Always send crash reports") !== "始终发送崩溃报告") throw new Error("always send");
+  if (tr("Kiri quit unexpectedly last time") !== "Kiri 上次意外退出") throw new Error("quit");
+  if (tr("Show in Diagnostics") !== "在诊断中查看") throw new Error("show in diag");
+  if (tr("Couldn't send it: {error}", { error: "x" }) !== "无法发送：x") throw new Error("couldn't send");
+  if (!tr("Quote {id} if you write to us about this crash.", { id: "R1" }).includes("R1")) throw new Error("quote");
+});
+t("Share sign-in and k8s share strings translate", () => {
+  prefs.lang = "zh";
+  if (tr("Continue with GitHub") !== "使用 GitHub 继续") throw new Error("github");
+  if (tr("Waiting for GitHub…") !== "正在等待 GitHub…") throw new Error("waiting");
+  if (tr("Enter this code on GitHub") !== "在 GitHub 上输入此代码") throw new Error("code");
+  if (tr("Share which port?") !== "分享哪个端口？") throw new Error("which port");
+  if (tr("Share this pod on a port…") !== "在端口上分享此 Pod…") throw new Error("pod port");
+  if (!tr("Sign in to share {what}", { what: "demo" }).includes("demo")) throw new Error("sign in");
+  if (tr("Open Share") !== "打开分享") throw new Error("open share");
+  if (tr("Stop sharing") !== "停止分享" && tr("Stop sharing") === "Stop sharing") throw new Error("stop sharing missing");
+});
+t("Toast and pull-panel leftovers translate", () => {
+  prefs.lang = "zh";
+  if (tr("Docker tools are ready") !== "Docker 工具已就绪") throw new Error("tools");
+  if (tr("Kubernetes is short of memory.") !== "Kubernetes 内存不足。") throw new Error("k8s mem");
+  if (tr("Recent pulls") !== "最近拉取") throw new Error("recent");
+  if (tr("Pull exactly this") !== "精确拉取此项") throw new Error("exact");
+  if (tr("Waiting for the first sample…") !== "正在等待第一次采样…") throw new Error("stats");
+  if (!tr("Couldn't share {source}: {reason}", { source: "a", reason: "b" }).includes("a")) throw new Error("share toast");
+});
+t("Setup, terminal and registry leftovers translate", () => {
+  prefs.lang = "zh";
+  if (tr("Set up Kiri") !== "设置 Kiri") throw new Error("setup");
+  if (tr("How should you reach your containers?") !== "你希望如何访问容器？") throw new Error("welcome");
+  if (tr("Looking for shells…") !== "正在查找 shell…") throw new Error("shells");
+  if (tr("Close tab") !== "关闭标签页") throw new Error("close tab");
+  if (tr("Text size") !== "文字大小") throw new Error("text size");
+  if (!tr("Use a Docker Hub personal access token (Account settings → Personal access tokens).").includes("令牌")) throw new Error("reg hint");
+  if (tr("This image needs privileged mode") !== "此镜像需要特权模式") throw new Error("privileged");
+  if (tr("Nothing is deleted. You can switch back any time from the status bar.") !== "不会删除任何内容。可随时从状态栏切回去。") throw new Error("ctx");
+});
+t("Former zh ternaries go through tr()", () => {
+  prefs.lang = "zh";
+  if (tr("Search {view}…", { view: tr("Containers") }) !== "搜索容器…") throw new Error("search");
+  if (tr("Docker Hub can't be reached") !== "无法连接 Docker Hub") throw new Error("hub");
+  if (tr("Download the new .deb or .rpm") !== "下载新的 .deb 或 .rpm") throw new Error("deb");
+  if (!tr("{label} isn't running. Start it to import from it; it doesn't need to stay open afterwards.", { label: "OrbStack" }).includes("OrbStack")) throw new Error("import");
+  if (tr("its build cache") !== "构建缓存") throw new Error("cache");
+});
+t("繁體中文 switches chrome and uses ZH_TW", () => {
+  prefs.lang = "zh-TW";
+  show("containers");
+  paintChrome();
+  render();
+  if (lang() !== "zh-TW") throw new Error(lang());
+  if (document.documentElement.lang !== "zh-TW") throw new Error(document.documentElement.lang);
+  if ($("title").textContent !== "容器") throw new Error($("title").textContent);
+  if (document.querySelector('[data-view="images"] .lbl')?.textContent !== "鏡像") throw new Error("nav images tw");
+  if (document.querySelector('[data-view="settings"] .lbl')?.textContent !== "設置") throw new Error("nav settings tw");
+  if (tr("Language") !== "語言") throw new Error(tr("Language"));
+  if (tr("简体中文") !== "簡體中文") throw new Error(tr("简体中文"));
+  if (tr("繁體中文") !== "繁體中文") throw new Error(tr("繁體中文"));
+  if (tr("Containers") !== "容器") throw new Error(tr("Containers"));
+  if (tr("Pull image") !== "拉取鏡像") throw new Error(tr("Pull image"));
+});
+t("Settings exposes 繁體中文 and applies it", () => {
+  show("settings");
+  prefs.tab = "appearance";
+  prefs.lang = "zh";
+  settingsShown.html = "";
+  render();
+  const sel = $("pref-lang");
+  if (!sel) throw new Error("no language select");
+  sel.click();
+  const opt = document.querySelector('[data-lang-pick="zh-TW"]');
+  if (!opt) throw new Error("no zh-TW option");
+  opt.click();
+  if (prefs.lang !== "zh-TW") throw new Error(prefs.lang);
+  if (!sent.some((m) => m.type === "setpref" && m.name === "lang" && m.value === "zh-TW")) throw new Error("setpref zh-TW");
+  if (lang() !== "zh-TW") throw new Error(lang());
+});
+t("Language menu lists mainstream locales", () => {
+  prefs.lang = "en";
+  show("settings");
+  prefs.tab = "appearance";
+  settingsShown.html = "";
+  render();
+  $("pref-lang").click();
+  const codes = [...document.querySelectorAll("[data-lang-pick]")].map((b) => b.dataset.langPick);
+  for (const need of ["en", "zh", "zh-TW", "ja", "ko", "fr", "de", "es", "pt", "ru"]) {
+    if (!codes.includes(need)) throw new Error("missing " + need + " in " + codes);
+  }
+  document.querySelector('[data-lang-pick="ja"]')?.click();
+  if (prefs.lang !== "ja" || lang() !== "ja") throw new Error(prefs.lang + "/" + lang());
+  if (tr("Containers") !== "コンテナ") throw new Error(tr("Containers"));
+  if (tr("Settings") !== "設定") throw new Error(tr("Settings"));
+  document.querySelector('[data-lang-mode="custom"]'); // stay custom
+  settingsShown.html = "";
+  render();
+  $("pref-lang").click();
+  document.querySelector('[data-lang-pick="de"]')?.click();
+  if (tr("Language") !== "Sprache") throw new Error(tr("Language"));
+  $("pref-lang").click();
+  document.querySelector('[data-lang-pick="fr"]')?.click();
+  if (tr("Language") !== "Langue") throw new Error(tr("Language"));
+  $("pref-lang").click();
+  document.querySelector('[data-lang-pick="ko"]')?.click();
+  if (tr("Language") !== "언어") throw new Error(tr("Language"));
+  $("pref-lang").click();
+  document.querySelector('[data-lang-pick="es"]')?.click();
+  if (tr("Language") !== "Idioma") throw new Error(tr("Language"));
+  $("pref-lang").click();
+  document.querySelector('[data-lang-pick="pt"]')?.click();
+  if (tr("Language") !== "Idioma") throw new Error(tr("Language"));
+  $("pref-lang").click();
+  document.querySelector('[data-lang-pick="ru"]')?.click();
+  if (tr("Language") !== "Язык") throw new Error(tr("Language"));
+});
+t("Update card follows the language", () => {
+  ui.upd = { phase: "available", version: "0.1.18", current: "0.0.0", notes: "hi", notesUrl: "", hidden: false, error: "", snoozing: false };
+  prefs.lang = "zh";
+  setPref("lang", "zh");
+  const zh = $("updcard")?.textContent || "";
+  if (!zh.includes("可用") || !zh.includes("下载") || !zh.includes("跳过此版本")) throw new Error(zh.slice(0, 120));
+  setPref("lang", "ru");
+  const ru = $("updcard")?.textContent || "";
+  if (!ru.includes("Доступен") || !ru.includes("Скачать") || !ru.includes("Пропустить эту версию")) throw new Error(ru.slice(0, 160));
+  setPref("lang", "en");
+  const en = $("updcard")?.textContent || "";
+  if (!en.includes("is available") || !en.includes("Download") || !en.includes("Skip this version")) throw new Error(en.slice(0, 120));
+  ui.upd = null;
+  renderUpdate();
+});
+t("System mode disables the language list", () => {
+  show("settings");
+  prefs.tab = "appearance";
+  prefs.lang = "zh-TW";
+  settingsShown.html = "";
+  render();
+  document.querySelector('[data-lang-mode="system"]')?.click();
+  if (prefs.lang !== "system") throw new Error(prefs.lang);
+  settingsShown.html = "";
+  render();
+  const sel = $("pref-lang");
+  if (!sel || !sel.disabled) throw new Error("select should stay visible but disabled");
+  if (document.querySelector('[data-lang-mode="system"]')?.getAttribute("aria-pressed") !== "true") throw new Error("system not pressed");
+});
+t("English restores the labels", () => {
+  prefs.lang = "en";
+  paintChrome();
+  show("settings");
+  prefs.tab = "appearance";
+  settingsShown.html = "";
+  render();
+  const sel = $("pref-lang");
+  if (!sel) throw new Error("no select");
+  sel.click();
+  document.querySelector('[data-lang-pick="en"]')?.click();
+  if (prefs.lang !== "en" || lang() !== "en") throw new Error(prefs.lang + "/" + lang());
+  show("containers");
+  if ($("title").textContent !== "Containers") throw new Error($("title").textContent);
+});
+report(R);

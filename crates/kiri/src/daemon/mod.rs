@@ -7,6 +7,7 @@ pub mod access;
 mod api;
 mod binds;
 mod builder;
+mod daemon_cfg;
 pub mod dns;
 pub mod tls;
 pub mod proxy;
@@ -135,6 +136,10 @@ pub fn run(_args: &[String]) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     finder(&engine);
     kiri_image::set_proxy_source(proxy::for_registry);
+    kiri_image::set_mirrors_source(daemon_cfg::for_registry);
+    kiri_image::set_insecure_source(daemon_cfg::for_insecure);
+    kiri_image::set_downloads_source(daemon_cfg::for_downloads);
+    kiri_image::set_uploads_source(daemon_cfg::for_uploads);
     // The managed BuildKit stops itself when builds have been idle a while.
     builder::watch(engine.clone());
     // A Kubernetes node the engine restarted gets its kubectl context.

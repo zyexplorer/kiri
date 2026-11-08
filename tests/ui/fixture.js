@@ -18,3 +18,6 @@ kiri.on({type:"share",id:3,source:"postgres",target:"postgres (localhost:5432)",
 
 const sent = [];
 window.webkit = { messageHandlers: { kiri: { postMessage: (m) => { const o = JSON.parse(m); sent.push({ type: o.cmd, ...o }); } } } };
+// UI tests assert English copy; pin the language so a Chinese system locale cannot fail them.
+prefs.lang = "en";
+if (typeof paintChrome === "function") paintChrome();
