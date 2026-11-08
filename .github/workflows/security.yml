@@ -1,0 +1,75 @@
+# Security checks for every pull request and for main.
+#
+# Each job runs only in libracoder/kiri: copies of this repository skip them.
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, so new RustSec advisories show up between changes.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-deny:
+    name: cargo-deny (${{ matrix.checks }})
+    if: github.repository == 'libracoder/kiri'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        checks:
+          - advisories
+          - bans licenses sources
+    # A new advisory against an existing dependency shouldn't block
+    # unrelated pull requests; the weekly run reports it.
+    continue-on-error: ${{ matrix.checks == 'advisories' && github.event_name == 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check ${{ matrix.checks }}
+
+  shellcheck:
+    name: ShellCheck
+    if: github.repository == 'libracoder/kiri'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check shell scripts
+        run: |
+          git ls-files -z '*.sh' \
+            'contrib/linux/deb/postinst' 'contrib/linux/deb/postrm' 'contrib/linux/deb/prerm' \
+            'packaging/linux/deb/postinst' 'packaging/linux/deb/postrm' 'packaging/linux/deb/prerm' \
+            'packaging/linux/docker-wrapper' 'contrib/wsl/kiri-linux/kiri-start' \
+            | xargs -0 shellcheck --severity=error
+
+  zizmor:
+    name: zizmor (workflow audit)
+    if: github.repository == 'libracoder/kiri'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          advanced-security: false
