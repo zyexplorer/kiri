@@ -20,6 +20,9 @@ case "$1" in
     stop_everything
     if [ -x /usr/libexec/kiri/docker ]; then
       update-alternatives --remove docker /usr/libexec/kiri/docker || true
+      for p in docker-compose docker-buildx; do
+        update-alternatives --remove "$p" "/usr/libexec/kiri/cli-plugins/$p" || true
+      done
     fi
     ;;
 esac

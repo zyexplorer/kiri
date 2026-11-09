@@ -83,7 +83,7 @@ host_test() { # name full(0|1)
     # The plugins as laid down; found through the CLI only when nothing else
     # shadows them (a docker in /usr/local/lib/docker/cli-plugins, Docker
     # Desktop's WSL integration for one, is searched first).
-    check "compose and buildx plugins run (/usr/lib/docker/cli-plugins)" "/usr/lib/docker/cli-plugins/docker-compose version | grep -q v5 && /usr/lib/docker/cli-plugins/docker-buildx version | grep -q v0.38"
+    check "compose and buildx plugins run (/usr/libexec/kiri/cli-plugins)" "/usr/libexec/kiri/cli-plugins/docker-compose version | grep -q v5 && /usr/libexec/kiri/cli-plugins/docker-buildx version | grep -q v0.38"
     [ "$slot_free" = 1 ] && check "docker compose and buildx found through the CLI" "$cli compose version | grep -q v5 && $cli buildx version | grep -q v0.38"
   elif [ -n "$clidir" ]; then
     cli="$clidir/docker -H unix:///run/kiri/docker.sock"

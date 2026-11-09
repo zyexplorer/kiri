@@ -30,7 +30,7 @@ mod mirror;
 mod names;
 mod network;
 #[cfg(target_os = "macos")]
-mod nfs;
+pub(crate) mod nfs;
 mod ops;
 pub(crate) mod ports;
 pub mod proxy;

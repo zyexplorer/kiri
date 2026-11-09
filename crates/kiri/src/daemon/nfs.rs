@@ -116,13 +116,44 @@ pub fn mount_point() -> io::Result<PathBuf> {
 }
 
 /// Mounts the server at `~/Kiri`, as the user (no admin rights needed).
+///
+/// Only over what is safe to cover: no folder (it is made), an empty one
+/// (Finder's `.DS_Store` and `.localized` don't count), or a mount this
+/// engine left behind, say after `kill -9`. A folder with the person's own
+/// files in it, a file, a link, or anything else mounted there is left
+/// alone and the mount fails: `~/kiri` is the same folder on a
+/// case-insensitive disk, and a clone of the repo there is a likely thing
+/// to find.
 pub fn mount(socket: &Path) -> io::Result<PathBuf> {
     let dir = mount_point()?;
     let socket = socket
         .to_str()
         .filter(|s| !s.contains(','))
         .ok_or_else(|| io::Error::other("the files socket's path cannot be passed to mount_nfs"))?;
-    unmount();
+    match mounted_at(&dir) {
+        Some(m) if m.is_ours(socket) => {
+            unmount();
+            if mounted_at(&dir).is_some() {
+                return Err(io::Error::other(format!(
+                    "the last mount at {} could not be removed",
+                    dir.display()
+                )));
+            }
+        }
+        Some(m) => {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} already has {} mounted on it ({}), so it was left alone",
+                    dir.display(),
+                    m.from,
+                    m.fstype
+                ),
+            ));
+        }
+        None => {}
+    }
+    check_folder(&dir)?;
     std::fs::create_dir_all(&dir)?;
     // ticotsord with socket paths: mount_nfs's local transport ("<>" is the
     // host). noac: attributes are never reused, so every read sees the
@@ -141,14 +172,111 @@ pub fn mount(socket: &Path) -> io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// Removes this engine's mount at `~/Kiri`, and nothing else: another
+/// mount there is someone else's.
 pub fn unmount() {
-    if let Ok(dir) = mount_point() {
+    let (Ok(dir), Ok(socket)) = (mount_point(), socket_path()) else {
+        return;
+    };
+    let Some(socket) = socket.to_str() else {
+        return;
+    };
+    if mounted_at(&dir).is_some_and(|m| m.is_ours(socket)) {
         let _ = std::process::Command::new("/sbin/umount")
             .arg("-f")
             .arg(&dir)
             .stderr(std::process::Stdio::null())
             .status();
     }
+}
+
+/// Whether `~/Kiri` shows this engine's container files. The window asks
+/// before it reads a container's folder there, so it never lists the Mac's
+/// own files as the container's.
+pub fn is_mounted() -> bool {
+    let (Ok(dir), Ok(socket)) = (mount_point(), socket_path()) else { return false };
+    socket.to_str().is_some_and(|s| mounted_at(&dir).is_some_and(|m| m.is_ours(s)))
+}
+
+/// Files Finder leaves in a folder it has shown; they may be covered.
+const FINDER_FILES: [&str; 2] = [".DS_Store", ".localized"];
+
+/// Whether `dir` may be mounted over: missing, or a real folder with
+/// nothing in it but Finder's own files.
+fn check_folder(dir: &Path) -> io::Result<()> {
+    let meta = match std::fs::symlink_metadata(dir) {
+        Ok(m) => m,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    if !meta.is_dir() {
+        return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{} is not a folder, so it was left alone", dir.display())));
+    }
+    let own = std::fs::read_dir(dir)?.flatten().any(|e| !FINDER_FILES.iter().any(|f| e.file_name() == *f));
+    if own {
+        return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{} already has files in it, so it was left alone; move them and restart the engine to see container files there", dir.display())));
+    }
+    Ok(())
+}
+
+/// A mount, as the kernel lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Mounted {
+    fstype: String,
+    from: String,
+}
+
+impl Mounted {
+    /// This engine's: NFS from its own socket. `mount_nfs` names the
+    /// socket as the source, `</path/nfs.sock>:/`.
+    fn is_ours(&self, socket: &str) -> bool {
+        self.fstype == "nfs" && self.from == format!("<{socket}>:/")
+    }
+}
+
+/// What is mounted on `dir`, if anything. Read from the kernel's table
+/// with `MNT_NOWAIT`, so a mount whose server died never blocks this.
+/// Names are compared without case, as the Mac's disks do by default, and
+/// against the folder's real path, which is what the table holds.
+fn mounted_at(dir: &Path) -> Option<Mounted> {
+    let real = match (dir.parent().and_then(|p| std::fs::canonicalize(p).ok()), dir.file_name()) {
+        (Some(p), Some(n)) => p.join(n),
+        _ => dir.to_path_buf(),
+    };
+    let trim = |p: &str| if p.len() > 1 { p.trim_end_matches('/').to_owned() } else { p.to_owned() };
+    let same = |on: &str| [dir, real.as_path()].iter().any(|d| d.to_str().is_some_and(|d| trim(d).eq_ignore_ascii_case(&trim(on))));
+    mounts().into_iter().find(|(on, _)| same(on)).map(|(_, m)| m)
+}
+
+/// Every mount: where it is, and what it is.
+fn mounts() -> Vec<(String, Mounted)> {
+    let text = |c: &[libc::c_char]| {
+        // SAFETY: c_char and u8 have the same size; the kernel NUL-terminates.
+        let b: &[u8] = unsafe { std::slice::from_raw_parts(c.as_ptr().cast(), c.len()) };
+        String::from_utf8_lossy(&b[..b.iter().position(|&x| x == 0).unwrap_or(b.len())]).into_owned()
+    };
+    for _ in 0..4 {
+        // SAFETY: a null buffer asks for the count only.
+        let n = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+        if n < 0 {
+            return Vec::new();
+        }
+        // Room for a few more, in case one is added in between.
+        let cap = n as usize + 8;
+        // SAFETY: statfs is plain data; all zeroes is a valid value.
+        let mut buf: Vec<libc::statfs> = vec![unsafe { std::mem::zeroed() }; cap];
+        let size = (cap * std::mem::size_of::<libc::statfs>()) as libc::c_int;
+        // SAFETY: the buffer holds `cap` entries, `size` bytes.
+        let got = unsafe { libc::getfsstat(buf.as_mut_ptr(), size, libc::MNT_NOWAIT) };
+        if got < 0 {
+            return Vec::new();
+        }
+        if (got as usize) < cap {
+            buf.truncate(got as usize);
+            return buf.iter().map(|s| (text(&s.f_mntonname), Mounted { fstype: text(&s.f_fstypename), from: text(&s.f_mntfromname) })).collect();
+        }
+    }
+    Vec::new()
 }
 
 /// What a handle names: the root, or a path inside a container.
@@ -928,5 +1056,64 @@ mod tests {
         assert_eq!(a.opaque(), Some(&b"abcde"[..]));
         assert_eq!(a.pos, 12);
         assert_eq!(a.u32(), None);
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("kiri-nfs-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// The folder is covered only when nothing of the person's would be
+    /// hidden: missing, empty, or holding only Finder's own files.
+    #[test]
+    fn mounts_only_over_an_empty_folder() {
+        let d = scratch("folder");
+        assert!(check_folder(&d.join("missing")).is_ok());
+        let empty = d.join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        assert!(check_folder(&empty).is_ok());
+        let finder = d.join("finder");
+        std::fs::create_dir(&finder).unwrap();
+        std::fs::write(finder.join(".DS_Store"), b"x").unwrap();
+        std::fs::write(finder.join(".localized"), b"").unwrap();
+        assert!(check_folder(&finder).is_ok());
+        let files = d.join("files");
+        std::fs::create_dir(&files).unwrap();
+        std::fs::write(files.join("keep.txt"), b"keep").unwrap();
+        assert_eq!(check_folder(&files).unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        let hidden = d.join("hidden");
+        std::fs::create_dir_all(hidden.join(".git")).unwrap();
+        assert!(check_folder(&hidden).is_err());
+        let file = d.join("file");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(check_folder(&file).is_err());
+        let link = d.join("link");
+        std::os::unix::fs::symlink(&empty, &link).unwrap();
+        assert!(check_folder(&link).is_err());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Only an NFS mount from this engine's own socket is this engine's.
+    #[test]
+    fn knows_its_own_mount() {
+        let sock = "/Users/a/.kiri/files/nfs.sock";
+        let m = |fstype: &str, from: &str| Mounted { fstype: fstype.into(), from: from.into() };
+        assert!(m("nfs", "</Users/a/.kiri/files/nfs.sock>:/").is_ours(sock));
+        assert!(!m("nfs", "</Users/a/.kiri-other/files/nfs.sock>:/").is_ours(sock));
+        assert!(!m("nfs", "server:/export").is_ours(sock));
+        assert!(!m("apfs", "/dev/disk5s1").is_ours(sock));
+        assert!(!m("hfs", "</Users/a/.kiri/files/nfs.sock>:/").is_ours(sock));
+    }
+
+    /// The kernel's table is read, and a folder with nothing on it has no mount.
+    #[test]
+    fn reads_the_mount_table() {
+        assert!(mounts().iter().any(|(on, _)| on == "/"));
+        assert_eq!(mounted_at(Path::new("/")).map(|m| m.from.is_empty()), Some(false));
+        let d = scratch("table");
+        assert_eq!(mounted_at(&d), None);
+        std::fs::remove_dir_all(&d).unwrap();
     }
 }

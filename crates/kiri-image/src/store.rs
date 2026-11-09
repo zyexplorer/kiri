@@ -80,8 +80,23 @@ impl Image {
     }
 
     /// `repo@digest` as Docker shows it, by the index's digest if there was one.
-    pub fn repo_digest(&self) -> String {
-        format!("{}@{}", self.repo(), self.index_digest.as_deref().unwrap_or(&self.digest))
+    /// None for an image no registry has yet (built, loaded, committed, tagged
+    /// for another repository): its digest is its config's, which a manifest's
+    /// can never be, as the manifest holds it.
+    pub fn repo_digest(&self) -> Option<String> {
+        let d = self.index_digest.as_deref().unwrap_or(&self.digest);
+        (d != self.config_digest).then(|| format!("{}@{d}", self.repo()))
+    }
+
+    /// This image under another name (`docker tag`). Its registry digests
+    /// belong to its repository: in another one it has none until a push.
+    pub fn tagged(&self, name: String) -> Image {
+        let mut i = Image { name, ..self.clone() };
+        if i.repo() != self.repo() {
+            i.digest = self.config_digest.clone();
+            i.index_digest = None;
+        }
+        i
     }
 
     /// True if `r` names this image: its name, or a digest of its repository
@@ -199,6 +214,20 @@ impl Store {
         let mut images = self.images()?;
         images.retain(|i| i.name != image.name);
         images.push(image);
+        self.write_index(&images)
+    }
+
+    /// Records the manifest a push of `name` left in its registry, so
+    /// RepoDigests names what the registry has, as Docker's does: deploy tools
+    /// pin to it. Every tag of the image in that repository gets it, as there.
+    /// Not if `name` became another image during the push.
+    pub fn set_pushed(&self, name: &str, config_digest: &str, digest: &str) -> io::Result<()> {
+        let mut images = self.images()?;
+        let Some(repo) = images.iter().find(|i| i.name == name && i.config_digest == config_digest).map(|i| i.repo().to_owned()) else { return Ok(()) };
+        for i in images.iter_mut().filter(|i| i.config_digest == config_digest && i.repo() == repo) {
+            i.digest = digest.to_owned();
+            i.index_digest = None;
+        }
         self.write_index(&images)
     }
 
@@ -384,12 +413,59 @@ mod tests {
             config: RunConfig::default(),
         };
         assert_eq!(image.repo(), "kindest/node");
-        assert_eq!(image.repo_digest(), format!("kindest/node@{index}"));
+        assert_eq!(image.repo_digest(), Some(format!("kindest/node@{index}")));
         store.put_image(image).unwrap();
         for name in [format!("kindest/node@{index}"), format!("kindest/node:v1.37.0@{index}"), format!("kindest/node@{manifest}"), manifest.clone()] {
             assert!(store.find(&name).unwrap().is_some(), "{name}");
         }
         assert!(store.find(&format!("other/node@{index}")).unwrap().is_none());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_push_leaves_the_registry_manifest_in_repo_digests() {
+        let root = std::env::temp_dir().join(format!("kiri-store-push-test-{}", std::process::id()));
+        let store = Store::open(&root).unwrap();
+        let d = |c: &str| format!("sha256:{}", c.repeat(64));
+        let image = |name: &str, config: &str, index: Option<String>| Image {
+            name: name.into(),
+            digest: d(config),
+            index_digest: index,
+            config_digest: d(config),
+            layers: Vec::new(),
+            size: 0,
+            platform: "linux/arm64".into(),
+            created: String::new(),
+            pulled_at: 0,
+            config: RunConfig::default(),
+        };
+        // Built here: no registry has it yet, so no RepoDigest, as with Docker.
+        store.put_image(image("localhost:5000/built:1", "1", None)).unwrap();
+        // The same image's other tags: one in its repository, one in another registry.
+        store.put_image(image("localhost:5000/built:latest", "1", None)).unwrap();
+        store.put_image(image("localhost:5001/built:1", "1", None)).unwrap();
+        // Pulled: alpine's index. Tagged in its repository it keeps that; in
+        // another it has none there, rather than a digest that one lacks.
+        let pulled = Image { digest: d("8"), ..image("alpine:latest", "2", Some(d("9"))) };
+        assert_eq!(pulled.tagged("alpine:old".into()).repo_digest(), Some(format!("alpine@{}", d("9"))));
+        store.put_image(pulled.tagged("localhost:5000/tagged:1".into())).unwrap();
+        store.put_image(image("localhost:5000/other:1", "3", None)).unwrap();
+        let repo_digest = |n: &str| store.find(n).unwrap().unwrap().repo_digest();
+        for n in ["localhost:5000/built:1", "localhost:5000/tagged:1", "localhost:5000/other:1"] {
+            assert_eq!(repo_digest(n), None, "{n}");
+        }
+        store.set_pushed("localhost:5000/built:1", &d("1"), &d("a")).unwrap();
+        store.set_pushed("localhost:5000/tagged:1", &d("2"), &d("b")).unwrap();
+        // The name now another image: that one keeps its own.
+        store.set_pushed("localhost:5000/other:1", &d("4"), &d("c")).unwrap();
+        assert_eq!(repo_digest("localhost:5000/built:1"), Some(format!("localhost:5000/built@{}", d("a"))));
+        // Pushing one tag gives the repository's other tags of it the digest; elsewhere it has none.
+        assert_eq!(repo_digest("localhost:5000/built:latest"), Some(format!("localhost:5000/built@{}", d("a"))));
+        assert_eq!(repo_digest("localhost:5001/built:1"), None);
+        assert_eq!(repo_digest("localhost:5000/tagged:1"), Some(format!("localhost:5000/tagged@{}", d("b"))));
+        assert_eq!(repo_digest("localhost:5000/other:1"), None);
+        // And a pull by the pushed digest finds the image here.
+        assert!(store.find(&format!("localhost:5000/built@{}", d("a"))).unwrap().is_some());
         fs::remove_dir_all(&root).unwrap();
     }
 

@@ -2,7 +2,9 @@
 # Kiri's `docker` (the full kiri package): the bundled docker CLI, talking to
 # Kiri's engine unless you chose otherwise. DOCKER_HOST, DOCKER_CONTEXT or a
 # `docker context use` of your own always win; Compose and buildx are found in
-# /usr/lib/docker/cli-plugins, one of the CLI's standard plugin directories.
+# /usr/lib/docker/cli-plugins, one of the CLI's standard plugin directories:
+# Kiri's (alternatives links to /usr/libexec/kiri/cli-plugins) or, where
+# Docker's packages already put theirs there, those.
 if [ -z "${DOCKER_HOST:-}" ] && [ -z "${DOCKER_CONTEXT:-}" ]; then
   cfg=${DOCKER_CONFIG:-$HOME/.docker}/config.json
   if [ ! -f "$cfg" ] || ! grep -q '"currentContext"' "$cfg" 2>/dev/null; then

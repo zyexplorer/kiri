@@ -51,6 +51,7 @@ Requires(pre):  shadow-utils
 %if 0%{?with_cli}
 Requires(post): %{_sbindir}/update-alternatives
 Requires(preun): %{_sbindir}/update-alternatives
+Requires(posttrans): %{_sbindir}/update-alternatives
 %endif
 
 %description
@@ -85,8 +86,8 @@ install -D -m 644 %{SOURCE18} %{buildroot}%{_datadir}/polkit-1/actions/dev.kiri.
 %if 0%{?with_cli}
 install -D -m 755 %{SOURCE5} %{buildroot}/usr/libexec/kiri/bin/docker
 install -D -m 755 %{SOURCE8} %{buildroot}/usr/libexec/kiri/docker
-install -D -m 755 %{SOURCE6} %{buildroot}/usr/lib/docker/cli-plugins/docker-compose
-install -D -m 755 %{SOURCE7} %{buildroot}/usr/lib/docker/cli-plugins/docker-buildx
+install -D -m 755 %{SOURCE6} %{buildroot}/usr/libexec/kiri/cli-plugins/docker-compose
+install -D -m 755 %{SOURCE7} %{buildroot}/usr/libexec/kiri/cli-plugins/docker-buildx
 %endif
 %if 0%{?with_window}
 install -D -m 755 %{SOURCE9} %{buildroot}/usr/lib/kiri/kiri-window
@@ -158,9 +159,67 @@ if [ "$1" -eq 0 ]; then
   done
 %if 0%{?with_cli}
   %{_sbindir}/update-alternatives --remove docker /usr/libexec/kiri/docker || :
+  for p in docker-compose docker-buildx; do
+    %{_sbindir}/update-alternatives --remove $p /usr/libexec/kiri/cli-plugins/$p || :
+  done
 %endif
 fi
 exit 0
+
+%if 0%{?with_cli}
+%posttrans
+# Compose and buildx into /usr/lib/docker/cli-plugins where the slot is free
+# and Docker's own copy isn't in another of the CLI's plugin folders; else
+# Kiri's link goes and Docker's copy is used. In %posttrans because an
+# upgrade from a Kiri that put real files there erases them only after %post;
+# again whenever another package changes Docker's plugin folders.
+mkdir -p /usr/lib/docker/cli-plugins
+for p in docker-compose docker-buildx; do
+  l=/usr/lib/docker/cli-plugins/$p
+  theirs=
+  for d in /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins /usr/libexec/docker/cli-plugins; do
+    [ -e $d/$p ] && theirs=1
+  done
+  if [ -z "$theirs" ] && { [ ! -e $l ] && [ ! -L $l ] || readlink $l 2>/dev/null | grep -q '^/etc/alternatives/'; }; then
+    %{_sbindir}/update-alternatives --install $l $p /usr/libexec/kiri/cli-plugins/$p 10 || :
+  elif %{_sbindir}/update-alternatives --display $p 2>/dev/null | grep -q "^/usr/libexec/kiri/cli-plugins/$p "; then
+    %{_sbindir}/update-alternatives --remove $p /usr/libexec/kiri/cli-plugins/$p || :
+  fi
+done
+exit 0
+
+%filetriggerin -- /usr/lib/docker/cli-plugins /usr/libexec/docker/cli-plugins /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins
+mkdir -p /usr/lib/docker/cli-plugins
+for p in docker-compose docker-buildx; do
+  l=/usr/lib/docker/cli-plugins/$p
+  theirs=
+  for d in /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins /usr/libexec/docker/cli-plugins; do
+    [ -e $d/$p ] && theirs=1
+  done
+  if [ -z "$theirs" ] && { [ ! -e $l ] && [ ! -L $l ] || readlink $l 2>/dev/null | grep -q '^/etc/alternatives/'; }; then
+    %{_sbindir}/update-alternatives --install $l $p /usr/libexec/kiri/cli-plugins/$p 10 || :
+  elif %{_sbindir}/update-alternatives --display $p 2>/dev/null | grep -q "^/usr/libexec/kiri/cli-plugins/$p "; then
+    %{_sbindir}/update-alternatives --remove $p /usr/libexec/kiri/cli-plugins/$p || :
+  fi
+done
+exit 0
+
+%filetriggerpostun -- /usr/lib/docker/cli-plugins /usr/libexec/docker/cli-plugins /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins
+mkdir -p /usr/lib/docker/cli-plugins
+for p in docker-compose docker-buildx; do
+  l=/usr/lib/docker/cli-plugins/$p
+  theirs=
+  for d in /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins /usr/libexec/docker/cli-plugins; do
+    [ -e $d/$p ] && theirs=1
+  done
+  if [ -z "$theirs" ] && { [ ! -e $l ] && [ ! -L $l ] || readlink $l 2>/dev/null | grep -q '^/etc/alternatives/'; }; then
+    %{_sbindir}/update-alternatives --install $l $p /usr/libexec/kiri/cli-plugins/$p 10 || :
+  elif %{_sbindir}/update-alternatives --display $p 2>/dev/null | grep -q "^/usr/libexec/kiri/cli-plugins/$p "; then
+    %{_sbindir}/update-alternatives --remove $p /usr/libexec/kiri/cli-plugins/$p || :
+  fi
+done
+exit 0
+%endif
 
 %postun
 if [ -d /run/systemd/system ]; then
@@ -183,10 +242,9 @@ exit 0
 %dir /usr/libexec/kiri/bin
 /usr/libexec/kiri/bin/docker
 /usr/libexec/kiri/docker
-%dir /usr/lib/docker
-%dir /usr/lib/docker/cli-plugins
-/usr/lib/docker/cli-plugins/docker-compose
-/usr/lib/docker/cli-plugins/docker-buildx
+%dir /usr/libexec/kiri/cli-plugins
+/usr/libexec/kiri/cli-plugins/docker-compose
+/usr/libexec/kiri/cli-plugins/docker-buildx
 %endif
 %if 0%{?with_window}
 %dir /usr/lib/kiri

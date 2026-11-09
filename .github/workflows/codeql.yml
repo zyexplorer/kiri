@@ -1,0 +1,74 @@
+# CodeQL on every pull request, contributors' forks included, on every push
+# to main, and once a week (new queries find old code).
+#
+# GitHub's default setup for code scanning skips pull requests from forks, so
+# a contributor's change was first scanned after it was merged. This replaces
+# it: turn default setup off (Settings > Code security > CodeQL analysis) when
+# this lands, as GitHub refuses results from a workflow while it is on.
+#
+# Safe for pull requests from forks: it uses pull_request (never
+# pull_request_target), so a fork's code runs with a read-only token and no
+# secrets, and nothing is built (build-mode: none), so no fork code executes.
+# If GitHub refuses a fork's upload, the analyze step fails: a pull request is
+# never shown as scanned when it wasn't. The alerts are in the run's summary
+# either way.
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "27 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, javascript-typescript, python, rust]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
+          output: sarif
+      - name: List the alerts in the summary
+        if: always()
+        run: |
+          ls sarif/*.sarif >/dev/null 2>&1 || { echo "No CodeQL results: the analysis did not finish." >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          python3 - sarif/*.sarif >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import json, sys
+          rows = []
+          for path in sys.argv[1:]:
+              for run in json.load(open(path))["runs"]:
+                  for r in run["results"]:
+                      loc = r["locations"][0]["physicalLocation"]
+                      text = r["message"]["text"].splitlines()[0].replace("|", "\\|")
+                      rows.append(f"| `{r['ruleId']}` | `{loc['artifactLocation']['uri']}:{loc['region'].get('startLine', '')}` | {text} |")
+          print(f"### CodeQL ({len(rows)} alerts, before dismissals)\n")
+          if rows:
+              print("| Rule | Where | What |\n|---|---|---|")
+              print("\n".join(rows))
+          EOF

@@ -297,6 +297,19 @@ fn linux_terminal(file: &std::path::Path) -> io::Result<()> {
 
 /// The container's root on the Mac (the Finder view), and `path` inside it.
 /// Only plain components are allowed, so nothing outside the container is read.
+/// `host_path`, once the engine's files are really at `~/Kiri`. On the Mac
+/// they are there only while the engine's Finder mount is: it is skipped
+/// when the folder already holds the person's own files, and those must
+/// never be listed as the container's.
+fn shown_path(name: &str, path: &str) -> io::Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    if !crate::daemon::nfs::is_mounted() {
+        let dir = crate::daemon::nfs::mount_point().map_or_else(|_| "~/Kiri".into(), |d| d.display().to_string());
+        return Err(io::Error::other(format!("Container files show through {dir}, and the engine has nothing mounted there now. If {dir} has your own files in it, Kiri leaves them alone: move them and restart the engine.")));
+    }
+    host_path(name, path)
+}
+
 fn host_path(name: &str, path: &str) -> io::Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -325,7 +338,7 @@ pub fn files(name: String, path: String) {
 }
 
 fn list(name: &str, path: &str) -> io::Result<Vec<Value>> {
-    let dir = host_path(name, path)?;
+    let dir = shown_path(name, path)?;
     let mut entries: Vec<Value> = Vec::new();
     for e in std::fs::read_dir(&dir)?.flatten() {
         let link = e.file_type().is_ok_and(|t| t.is_symlink());
@@ -363,7 +376,7 @@ pub fn preview(name: String, path: String) {
 
 /// The file's text, or `None` when it is binary or too large to show.
 fn read_text(name: &str, path: &str) -> io::Result<Option<String>> {
-    let file = host_path(name, path)?;
+    let file = shown_path(name, path)?;
     if std::fs::metadata(&file)?.len() > PREVIEW_MAX {
         return Ok(None);
     }
@@ -374,7 +387,7 @@ fn read_text(name: &str, path: &str) -> io::Result<Option<String>> {
 /// Copies a file out of the container into ~/Downloads (keeping one already
 /// there: `name 2.ext`), then shows it.
 pub fn download(name: &str, path: &str) -> io::Result<PathBuf> {
-    let from = host_path(name, path)?;
+    let from = shown_path(name, path)?;
     let file = from
         .file_name()
         .ok_or_else(|| io::Error::other("not a file"))?
@@ -405,7 +418,7 @@ pub fn download(name: &str, path: &str) -> io::Result<PathBuf> {
 
 /// Shows the file or folder in Finder.
 pub fn reveal(name: &str, path: &str) -> io::Result<()> {
-    let p = host_path(name, path)?;
+    let p = shown_path(name, path)?;
     super::reveal(&p);
     Ok(())
 }

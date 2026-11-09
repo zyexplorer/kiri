@@ -12,6 +12,34 @@ docker_slot_free() {
   case "$(readlink /usr/bin/docker 2>/dev/null)" in /etc/alternatives/*) return 0 ;; esac
   return 1
 }
+# The same for a plugin (by name) in /usr/lib/docker/cli-plugins, and taken
+# also when Docker's own copy is in another of the CLI's plugin folders
+# (docker-compose-plugin and docker-buildx-plugin use /usr/libexec), which
+# the CLI would otherwise search after Kiri's link.
+plugin_slot_free() {
+  for d in /usr/local/lib/docker/cli-plugins /usr/local/libexec/docker/cli-plugins /usr/libexec/docker/cli-plugins; do
+    [ -e "$d/$1" ] && return 1
+  done
+  l=/usr/lib/docker/cli-plugins/$1
+  [ -e "$l" ] || [ -L "$l" ] || return 0
+  case "$(readlink "$l" 2>/dev/null)" in /etc/alternatives/*) return 0 ;; esac
+  return 1
+}
+# Compose and buildx into /usr/lib/docker/cli-plugins where the slot is
+# free; where it isn't, Kiri's link goes (if it had one) and Docker's copy is
+# used. Run on configure and again, through the file triggers, whenever
+# another package adds or removes plugins in Docker's plugin folders.
+link_plugins() {
+  mkdir -p /usr/lib/docker/cli-plugins
+  for p in docker-compose docker-buildx; do
+    if plugin_slot_free "$p"; then
+      update-alternatives --install "/usr/lib/docker/cli-plugins/$p" "$p" "/usr/libexec/kiri/cli-plugins/$p" 10 || true
+    elif update-alternatives --list "$p" 2>/dev/null | grep -qx "/usr/libexec/kiri/cli-plugins/$p"; then
+      update-alternatives --remove "$p" "/usr/libexec/kiri/cli-plugins/$p" || true
+      echo "Docker's own $p is installed; Kiri's docker uses it."
+    fi
+  done
+}
 # A `kiri` that comes before /usr/bin on PATH runs instead of this package's:
 # often an older Kiri from a script or manual install. Not ours to delete.
 stale_kiri() {
@@ -23,6 +51,9 @@ stale_kiri() {
   done
 }
 case "$1" in
+  triggered)
+    [ -x /usr/libexec/kiri/docker ] && link_plugins
+    ;;
   configure)
     getent group kiri >/dev/null || groupadd --system kiri
     # The engine isn't started or enabled here: it starts when someone sets
@@ -47,6 +78,7 @@ case "$1" in
       else
         echo "Kiri is installed; /usr/bin/docker belongs to something else and stays. Kiri's CLI: /usr/libexec/kiri/docker"
       fi
+      link_plugins
     else
       echo "Kiri is installed (engine only). Point a docker CLI at it:"
       echo "  docker context create kiri --docker host=unix:///run/kiri/docker.sock && docker context use kiri"

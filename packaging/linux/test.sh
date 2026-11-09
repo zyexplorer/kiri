@@ -34,7 +34,7 @@ test_package() { # name full(0|1)
   check "deb lists kiri, kiri-init, unit, copyright" "dpkg-deb -c '$deb' | grep -q 'usr/bin/kiri$' && dpkg-deb -c '$deb' | grep -q usr/bin/kiri-init && dpkg-deb -c '$deb' | grep -q lib/systemd/system/kiri.service && dpkg-deb -c '$deb' | grep -q usr/share/doc/$name/copyright"
   check "deb carries LICENSE and NOTICE" "dpkg-deb -c '$deb' | grep -q usr/share/doc/$name/LICENSE && dpkg-deb -c '$deb' | grep -q usr/share/doc/$name/NOTICE"
   if [ "$full" = 1 ]; then
-    check "deb carries docker, compose, buildx" "dpkg-deb -c '$deb' | grep -q usr/libexec/kiri/bin/docker && dpkg-deb -c '$deb' | grep -q usr/lib/docker/cli-plugins/docker-compose && dpkg-deb -c '$deb' | grep -q usr/lib/docker/cli-plugins/docker-buildx"
+    check "deb carries docker, compose, buildx" "dpkg-deb -c '$deb' | grep -q usr/libexec/kiri/bin/docker && dpkg-deb -c '$deb' | grep -q usr/libexec/kiri/cli-plugins/docker-compose && dpkg-deb -c '$deb' | grep -q usr/libexec/kiri/cli-plugins/docker-buildx && ! dpkg-deb -c '$deb' | grep -q usr/lib/docker/"
   else
     check "deb carries no docker CLI" "! dpkg-deb -c '$deb' | grep -q libexec/kiri"
   fi

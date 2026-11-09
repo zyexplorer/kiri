@@ -3991,7 +3991,7 @@ mod image_lookup_tests {
         ] {
             assert!(found(&pulled, &name), "{name}");
         }
-        assert_eq!(pulled[0].repo_digest(), format!("kindest/node@{INDEX}"));
+        assert_eq!(pulled[0].repo_digest(), Some(format!("kindest/node@{INDEX}")));
     }
 
     #[test]
@@ -4011,7 +4011,7 @@ mod image_lookup_tests {
     #[test]
     fn an_image_without_an_index_shows_its_manifest_digest() {
         let pulled = image("alpine:latest", None);
-        assert_eq!(pulled.repo_digest(), format!("alpine@{ARM64}"));
+        assert_eq!(pulled.repo_digest(), Some(format!("alpine@{ARM64}")));
         assert!(found(&[pulled], &format!("alpine:3@{ARM64}")));
     }
 }

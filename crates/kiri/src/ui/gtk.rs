@@ -88,10 +88,10 @@ pub fn run(autostart: bool, view: Option<String>) -> io::Result<()> {
         settings.set_hardware_acceleration_policy(webkit2gtk::HardwareAccelerationPolicy::Never);
         settings.set_enable_write_console_messages_to_stdout(cfg!(debug_assertions));
     }
-    // The page paints its own background: no white flash before it does.
-    webview.set_background_color(&gtk::gdk::RGBA::new(0.0, 0.0, 0.0, 0.0));
     webview.load_html(&super::assemble::page(PAGE), None);
     window.add(&webview);
+    // Before set_appearance, which gives it its background.
+    WEBVIEW.with(|v| *v.borrow_mut() = Some(webview));
 
     set_appearance(prefs()["theme"].as_str().unwrap_or("system"));
     let quit_tx = tx;
@@ -101,7 +101,6 @@ pub fn run(autostart: bool, view: Option<String>) -> io::Result<()> {
         glib::Propagation::Proceed
     });
     window.show_all();
-    WEBVIEW.with(|v| *v.borrow_mut() = Some(webview));
     WINDOW.with(|v| *v.borrow_mut() = Some(window));
     gtk::main();
     let _ = engine.join();
@@ -166,14 +165,30 @@ pub(super) fn zoom() {
 pub(super) fn set_appearance(theme: &str) {
     let theme = theme.to_owned();
     glib::MainContext::default().invoke(move || {
+        let dark = match theme.as_str() {
+            "dark" => true,
+            "light" => false,
+            _ => desktop_dark(),
+        };
         if let Some(settings) = gtk::Settings::default() {
-            match theme.as_str() {
-                "dark" => settings.set_gtk_application_prefer_dark_theme(true),
-                "light" => settings.set_gtk_application_prefer_dark_theme(false),
-                _ => settings.set_gtk_application_prefer_dark_theme(desktop_dark()),
-            }
+            settings.set_gtk_application_prefer_dark_theme(dark);
         }
+        WEBVIEW.with(|v| {
+            if let Some(webview) = v.borrow().as_ref() {
+                webview.set_background_color(&page_background(dark));
+            }
+        });
     });
+}
+
+/// The view's background under the page: index.html's `--bg` for the scheme,
+/// so there is no white flash before the page paints. Opaque on purpose: with
+/// a transparent view and no GPU compositing (see `run`), WebKitGTK 2.54 keeps
+/// only the regions repainted in each frame, and the rest of the window
+/// flickers through to whatever is behind it.
+fn page_background(dark: bool) -> gtk::gdk::RGBA {
+    let (r, g, b) = if dark { (0x0F, 0x14, 0x19) } else { (0xF5, 0xF7, 0xFA) };
+    gtk::gdk::RGBA::new(f64::from(r) / 255.0, f64::from(g) / 255.0, f64::from(b) / 255.0, 1.0)
 }
 
 /// GNOME's (and most desktops') dark preference, through the settings portal's key.

@@ -300,6 +300,31 @@ fn write_config(engine: &Engine, id: &str) {
     if let Err(e) = copy_in(engine, id, "/etc", &mut io::Cursor::new(archive)) {
         crate::diag::warn!("builder config not written", error = format!("{e:?}"));
     }
+    if kiri_vmm::rosetta_installed() {
+        hide_amd64_qemu(engine, id);
+    }
+}
+
+/// BuildKit's x86-64 emulator, which it runs amd64 build steps under when it
+/// thinks the machine can't run them itself.
+const AMD64_QEMU: &str = "buildkit-qemu-x86_64";
+
+/// With Rosetta shared into the VM, amd64 build steps run through Rosetta,
+/// as `docker run --platform linux/amd64` does. BuildKit decides whether
+/// amd64 runs natively by starting a tiny amd64 program in an empty chroot,
+/// where Rosetta can't start (it needs `/proc/self/exe`), so it would run
+/// every amd64 step under its own QEMU instead: much slower, and some
+/// programs crash there (Bun aborts with "MemoryExhaustion"). With no
+/// executable emulator BuildKit runs the step directly, and the kernel
+/// hands it to Rosetta, which works inside the step's container. Other
+/// platforms (arm/v7, riscv64…) keep their emulators. An empty file, not
+/// executable, takes the emulator's place, so builders made before this
+/// change get it too.
+fn hide_amd64_qemu(engine: &Engine, id: &str) {
+    let archive = tar(&[(AMD64_QEMU, Some(&[]))]);
+    if let Err(e) = copy_in(engine, id, "/usr/bin", &mut io::Cursor::new(archive)) {
+        crate::diag::warn!("builder amd64 emulator not hidden", error = format!("{e:?}"));
+    }
 }
 
 /// `POST /containers/create` for the builder's name, from buildx when it
@@ -1365,6 +1390,17 @@ fn du_rows(text: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// BuildKit looks the emulator up by name and skips it when it isn't
+    /// executable, so the file taking its place must be a plain 0644 file.
+    #[test]
+    fn hidden_amd64_emulator_is_not_executable() {
+        let archive = tar(&[(AMD64_QEMU, Some(&[]))]);
+        assert_eq!(&archive[..AMD64_QEMU.len() + 1], format!("{AMD64_QEMU}\0").as_bytes());
+        assert_eq!(&archive[100..108], b"0000644\0");
+        assert_eq!(archive[156], b'0');
+        assert_eq!(&archive[124..136], b"00000000000\0");
+    }
 
     fn req(query: &[(&str, &str)]) -> Request {
         Request::internal("POST", "/build", query, Vec::new())

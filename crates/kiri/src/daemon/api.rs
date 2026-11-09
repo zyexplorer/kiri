@@ -532,7 +532,7 @@ fn images(req: &Request, engine: &Engine) -> Result<Value, Error> {
                     "Id": i.config_digest,
                     "ParentId": "",
                     "RepoTags": [i.name],
-                    "RepoDigests": [i.repo_digest()],
+                    "RepoDigests": i.repo_digest().into_iter().collect::<Vec<_>>(),
                     "Created": time::parse_unix(&i.created),
                     "Size": i.size,
                     "SharedSize": -1,
@@ -557,7 +557,7 @@ fn image_inspect(engine: &Engine, name: &str) -> Result<Value, Error> {
     Ok(json!({
         "Id": i.config_digest,
         "RepoTags": [i.name],
-        "RepoDigests": [i.repo_digest()],
+        "RepoDigests": i.repo_digest().into_iter().collect::<Vec<_>>(),
         "Created": i.created,
         "Size": i.size,
         "Architecture": i.platform.rsplit('/').next().unwrap_or(go_arch()),
@@ -635,10 +635,7 @@ fn image_tag(req: &Request, engine: &Engine, source: &str) -> Result<(), Error> 
     let name = Reference::parse(&full)
         .map(|r| r.short())
         .map_err(|e| Error::BadRequest(format!("invalid reference format: {e}")))?;
-    engine.store.put_image(kiri_image::Image {
-        name: name.clone(),
-        ..i.clone()
-    })?;
+    engine.store.put_image(i.tagged(name.clone()))?;
     engine.emit_image("tag", &i.config_digest, &name);
     Ok(())
 }
@@ -1034,6 +1031,9 @@ fn push(req: &Request, engine: &Engine, name: &str, w: &mut UnixStream) -> io::R
     });
     match result {
         Ok((digest, size)) => {
+            if let Err(e) = engine.store.set_pushed(&image.name, &image.config_digest, &digest) {
+                crate::diag::warn!("pushed digest not recorded", image = image.name, error = e);
+            }
             line(json!({"status": format!("{}: digest: {digest} size: {size}", target.reference)}));
             line(
                 json!({"progressDetail": {}, "aux": {"Tag": target.reference, "Digest": digest, "Size": size}}),
