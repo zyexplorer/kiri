@@ -29,7 +29,10 @@ pub struct Need {
 /// `{type: "needs", image, id, vars: [{name, alts, instead, why}]}`; no vars
 /// when the image needs nothing that Kiri can read, or can't be read.
 pub fn event(image: &str) -> String {
-    let id = client::get(&format!("/images/{}/json", esc(image))).ok().and_then(|v| v["Id"].as_str().map(str::to_owned)).unwrap_or_default();
+    let id = client::get(&format!("/images/{}/json", esc(image)))
+        .ok()
+        .and_then(|v| v["Id"].as_str().map(str::to_owned))
+        .unwrap_or_default();
     let vars: Vec<Value> = probe(image)
         .unwrap_or_default()
         .into_iter()
@@ -41,19 +44,40 @@ pub fn event(image: &str) -> String {
 fn probe(image: &str) -> io::Result<Vec<Need>> {
     let info = client::get(&format!("/images/{}/json", esc(image)))?;
     let cfg = &info["Config"];
-    let strs = |v: &Value| v.as_array().map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_owned)).collect::<Vec<_>>()).unwrap_or_default();
+    let strs = |v: &Value| {
+        v.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
     let env = strs(&cfg["Env"]);
-    let Some(start) = script_of(&strs(&cfg["Entrypoint"]), &strs(&cfg["Cmd"])) else { return Ok(Vec::new()) };
+    let Some(start) = script_of(&strs(&cfg["Entrypoint"]), &strs(&cfg["Cmd"])) else {
+        return Ok(Vec::new());
+    };
     let path = match start {
         Start::Inline(text) => return Ok(scan(&text, &env)),
         Start::Path(p) => p,
     };
-    let created = client::request("POST", "/containers/create", Some(&json!({"Image": image, "Entrypoint": ["true"], "Cmd": [], "Labels": {"io.kiri.probe": "1"}, "NetworkDisabled": true})))?;
+    let created = client::request(
+        "POST",
+        "/containers/create",
+        Some(
+            &json!({"Image": image, "Entrypoint": ["true"], "Cmd": [], "Labels": {"io.kiri.probe": "1"}, "NetworkDisabled": true}),
+        ),
+    )?;
     if !created.ok() {
         return Err(io::Error::other(created.error()));
     }
     let id = created.json()["Id"].as_str().unwrap_or_default().to_owned();
-    let text = read_script(&id, &path, &env, cfg["WorkingDir"].as_str().unwrap_or_default());
+    let text = read_script(
+        &id,
+        &path,
+        &env,
+        cfg["WorkingDir"].as_str().unwrap_or_default(),
+    );
     let _ = client::request("DELETE", &format!("/containers/{id}?force=1&v=1"), None);
     Ok(text.map(|t| scan(&t, &env)).unwrap_or_default())
 }
@@ -69,7 +93,17 @@ fn script_of(entrypoint: &[String], cmd: &[String]) -> Option<Start> {
     let argv: Vec<&str> = entrypoint.iter().chain(cmd).map(String::as_str).collect();
     let base = |s: &str| s.rsplit('/').next().unwrap_or(s).to_owned();
     let mut i = 0;
-    while i < argv.len() && ["tini", "tini-static", "dumb-init", "gosu", "su-exec", "catatonit"].contains(&base(argv[i]).as_str()) {
+    while i < argv.len()
+        && [
+            "tini",
+            "tini-static",
+            "dumb-init",
+            "gosu",
+            "su-exec",
+            "catatonit",
+        ]
+        .contains(&base(argv[i]).as_str())
+    {
         i += 1;
         while i < argv.len() && argv[i].starts_with('-') {
             i += 1;
@@ -93,22 +127,51 @@ fn read_script(id: &str, path: &str, env: &[String], workdir: &str) -> Option<St
     let candidates: Vec<String> = if path.starts_with('/') {
         vec![path.to_owned()]
     } else if path.contains('/') {
-        vec![format!("{}/{path}", if workdir.is_empty() { "" } else { workdir.trim_end_matches('/') })]
+        vec![format!(
+            "{}/{path}",
+            if workdir.is_empty() {
+                ""
+            } else {
+                workdir.trim_end_matches('/')
+            }
+        )]
     } else {
-        let dirs = env.iter().find_map(|e| e.strip_prefix("PATH=")).unwrap_or("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-        dirs.split(':').filter(|d| !d.is_empty()).map(|d| format!("{}/{path}", d.trim_end_matches('/'))).collect()
+        let dirs = env
+            .iter()
+            .find_map(|e| e.strip_prefix("PATH="))
+            .unwrap_or("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+        dirs.split(':')
+            .filter(|d| !d.is_empty())
+            .map(|d| format!("{}/{path}", d.trim_end_matches('/')))
+            .collect()
     };
     for mut p in candidates {
         for _ in 0..4 {
-            let Ok(r) = client::request("GET", &format!("/containers/{id}/archive?path={}", esc(&p)), None) else { break };
+            let Ok(r) = client::request(
+                "GET",
+                &format!("/containers/{id}/archive?path={}", esc(&p)),
+                None,
+            ) else {
+                break;
+            };
             if !r.ok() {
                 break;
             }
             match first_entry(&r.body) {
-                Some(Entry::Link(to)) => p = if to.starts_with('/') { to } else { format!("{}/{to}", p.rsplit_once('/').map_or("", |(d, _)| d)) },
+                Some(Entry::Link(to)) => {
+                    p = if to.starts_with('/') {
+                        to
+                    } else {
+                        format!("{}/{to}", p.rsplit_once('/').map_or("", |(d, _)| d))
+                    }
+                }
                 Some(Entry::File(data)) => {
                     let text = String::from_utf8_lossy(&data);
-                    return text.lines().next().is_some_and(|l| l.starts_with("#!") && l.contains("sh")).then(|| text.into_owned());
+                    return text
+                        .lines()
+                        .next()
+                        .is_some_and(|l| l.starts_with("#!") && l.contains("sh"))
+                        .then(|| text.into_owned());
                 }
                 None => break,
             }
@@ -130,7 +193,12 @@ fn first_entry(tar: &[u8]) -> Option<Entry> {
         if h.iter().all(|&b| b == 0) {
             return None;
         }
-        let field = |a: usize, b: usize| String::from_utf8_lossy(&h[a..b]).trim_end_matches('\0').trim().to_owned();
+        let field = |a: usize, b: usize| {
+            String::from_utf8_lossy(&h[a..b])
+                .trim_end_matches('\0')
+                .trim()
+                .to_owned()
+        };
         let size = usize::from_str_radix(&field(124, 136), 8).ok()?;
         let data = at + 512;
         match h[156] {
@@ -145,7 +213,15 @@ fn first_entry(tar: &[u8]) -> Option<Entry> {
 /// For a URL path or query; `:` and `@` stay as they are, since Kiri's engine
 /// matches an image name without decoding them.
 fn esc(s: &str) -> String {
-    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"/-._:@".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"/-._:@".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
 }
 
 /// One line of the script as the shell reads it: continuations joined, and
@@ -190,24 +266,40 @@ fn heredoc_term(code: &str) -> Option<String> {
     if rest.starts_with('<') {
         return None;
     }
-    let rest = rest.trim_start_matches('-').trim_start().trim_start_matches(['\'', '"']);
-    let term: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+    let rest = rest
+        .trim_start_matches('-')
+        .trim_start()
+        .trim_start_matches(['\'', '"']);
+    let term: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
     (!term.is_empty()).then_some(term)
 }
 
 fn is_env_name(s: &str) -> bool {
-    s.len() >= 2 && s.starts_with(|c: char| c.is_ascii_uppercase()) && s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    s.len() >= 2
+        && s.starts_with(|c: char| c.is_ascii_uppercase())
+        && s.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
 /// The variable at the start of `s`, just past a `$`: `VAR`, `{VAR}` or `{VAR:-}`.
 fn var_at(s: &str) -> String {
     let s = s.strip_prefix('{').unwrap_or(s);
-    s.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect()
+    s.chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect()
 }
 
 /// The statements of a line, split at `;`, `&&`, `||` and braces.
 fn statements(code: &str) -> Vec<String> {
-    code.replace("&&", ";").replace("||", ";").split([';', '{', '}']).map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect()
+    code.replace("&&", ";")
+        .replace("||", ";")
+        .split([';', '{', '}'])
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn first_word(stmt: &str) -> &str {
@@ -216,7 +308,12 @@ fn first_word(stmt: &str) -> &str {
 
 fn exits(stmt: &str) -> bool {
     let mut w = stmt.split_whitespace();
-    w.next() == Some("exit") && w.next().is_some_and(|n| n.trim_matches(['"', '\'']).parse::<i32>().is_ok_and(|n| n != 0))
+    w.next() == Some("exit")
+        && w.next().is_some_and(|n| {
+            n.trim_matches(['"', '\''])
+                .parse::<i32>()
+                .is_ok_and(|n| n != 0)
+        })
 }
 
 /// Functions that end the script: they exit, or call one that does.
@@ -225,7 +322,12 @@ fn fatal_functions(ls: &[Line]) -> HashSet<String> {
     let mut cur: Option<(String, Vec<String>)> = None;
     for l in ls {
         let t = l.code.trim();
-        if let Some(name) = t.strip_suffix('{').map(str::trim).and_then(|s| s.strip_suffix("()")).map(|s| s.trim().trim_start_matches("function ").trim()) {
+        if let Some(name) = t
+            .strip_suffix('{')
+            .map(str::trim)
+            .and_then(|s| s.strip_suffix("()"))
+            .map(|s| s.trim().trim_start_matches("function ").trim())
+        {
             cur = Some((name.to_owned(), Vec::new()));
         } else if l.code.starts_with('}') {
             bodies.extend(cur.take());
@@ -236,7 +338,10 @@ fn fatal_functions(ls: &[Line]) -> HashSet<String> {
     let mut fatal = HashSet::new();
     for _ in 0..3 {
         for (name, body) in &bodies {
-            if body.iter().any(|s| exits(s) || fatal.contains(first_word(s))) {
+            if body
+                .iter()
+                .any(|s| exits(s) || fatal.contains(first_word(s)))
+            {
                 fatal.insert(name.clone());
             }
         }
@@ -252,8 +357,13 @@ fn assigned(ls: &[Line]) -> HashSet<String> {
     for l in ls {
         for s in statements(&l.code) {
             let mut w = s.split_whitespace();
-            if w.next().is_some_and(|f| ["local", "declare", "typeset", "readonly"].contains(&f)) {
-                set.extend(w.filter(|f| !f.starts_with('-')).map(|f| f.split('=').next().unwrap_or_default().to_owned()));
+            if w.next()
+                .is_some_and(|f| ["local", "declare", "typeset", "readonly"].contains(&f))
+            {
+                set.extend(
+                    w.filter(|f| !f.starts_with('-'))
+                        .map(|f| f.split('=').next().unwrap_or_default().to_owned()),
+                );
             }
         }
         let mut rest = l.code.as_str();
@@ -293,9 +403,17 @@ fn zero_tests(cond: &str) -> Option<(Vec<String>, bool, Vec<String>)> {
         }
         if t == "!=" {
             // `[ 'trust' != "$VAR" ]`: setting it is another way past.
-            let (a, b) = (toks.get(i.wrapping_sub(1)).map(|v| unq(v)).unwrap_or_default(), toks.get(i + 1).map(|v| unq(v)).unwrap_or_default());
+            let (a, b) = (
+                toks.get(i.wrapping_sub(1))
+                    .map(|v| unq(v))
+                    .unwrap_or_default(),
+                toks.get(i + 1).map(|v| unq(v)).unwrap_or_default(),
+            );
             let (var, lit) = if a.starts_with('$') { (a, b) } else { (b, a) };
-            let name = var.strip_prefix('$').map(var_at).filter(|n| is_env_name(n))?;
+            let name = var
+                .strip_prefix('$')
+                .map(var_at)
+                .filter(|n| is_env_name(n))?;
             if lit.starts_with('$') || lit.is_empty() {
                 return None;
             }
@@ -304,7 +422,9 @@ fn zero_tests(cond: &str) -> Option<(Vec<String>, bool, Vec<String>)> {
             continue;
         }
         // `[ "$VAR" ]` alone: only when it's set.
-        if t.trim_matches('"').starts_with('$') && toks.get(i + 1).is_some_and(|n| n.starts_with(']')) {
+        if t.trim_matches('"').starts_with('$')
+            && toks.get(i + 1).is_some_and(|n| n.starts_with(']'))
+        {
             return None;
         }
         i += 1;
@@ -316,17 +436,28 @@ fn zero_tests(cond: &str) -> Option<(Vec<String>, bool, Vec<String>)> {
 /// What the script says when it stops: the heredoc it prints, or the first
 /// quoted text in the block.
 fn message(block: &[&Line]) -> String {
-    let text = block.iter().flat_map(|l| l.here.iter()).find(|l| !l.trim().is_empty()).cloned().or_else(|| {
-        block.iter().find_map(|l| {
-            let c = &l.code;
-            let q = c.find(['"', '\''])?;
-            let quote = c[q..].chars().next()?;
-            let end = c[q + 1..].find(quote)?;
-            Some(c[q + 1..q + 1 + end].to_owned()).filter(|s| s.chars().any(char::is_alphabetic) && !s.starts_with('$'))
-        })
-    });
+    let text = block
+        .iter()
+        .flat_map(|l| l.here.iter())
+        .find(|l| !l.trim().is_empty())
+        .cloned()
+        .or_else(|| {
+            block.iter().find_map(|l| {
+                let c = &l.code;
+                let q = c.find(['"', '\''])?;
+                let quote = c[q..].chars().next()?;
+                let end = c[q + 1..].find(quote)?;
+                Some(c[q + 1..q + 1 + end].to_owned())
+                    .filter(|s| s.chars().any(char::is_alphabetic) && !s.starts_with('$'))
+            })
+        });
     let t = text.unwrap_or_default();
-    let t = t.trim().trim_start_matches("Error:").trim_start_matches("error:").trim_start_matches("ERROR:").trim();
+    let t = t
+        .trim()
+        .trim_start_matches("Error:")
+        .trim_start_matches("error:")
+        .trim_start_matches("ERROR:")
+        .trim();
     t.chars().take(240).collect()
 }
 
@@ -336,22 +467,47 @@ pub fn scan(script: &str, image_env: &[String]) -> Vec<Need> {
     let ls = lines(script);
     let fatal = fatal_functions(&ls);
     let own = assigned(&ls);
-    let has_default = |n: &str| image_env.iter().any(|e| e.split_once('=').is_some_and(|(k, v)| k == n && !v.is_empty()));
-    let ends = |stmts: &[String]| stmts.iter().any(|s| exits(s) || fatal.contains(first_word(s)));
-    let mut found: Vec<Need> = Vec::new();
-    let add = |vars: Vec<String>, any: bool, instead: Vec<String>, why: String, found: &mut Vec<Need>| {
-        let vars: Vec<String> = vars.into_iter().filter(|v| is_env_name(v) && !own.contains(v)).collect();
-        if vars.is_empty() || vars.iter().any(|v| has_default(v)) && !any {
-            return;
-        }
-        let groups: Vec<Vec<String>> = if any { vars.into_iter().filter(|v| !has_default(v)).map(|v| vec![v]).collect() } else { vec![vars] };
-        for g in groups {
-            if found.iter().any(|n| n.name == g[0]) {
-                continue;
-            }
-            found.push(Need { name: g[0].clone(), alts: g[1..].to_vec(), instead: instead.clone(), why: why.clone() });
-        }
+    let has_default = |n: &str| {
+        image_env.iter().any(|e| {
+            e.split_once('=')
+                .is_some_and(|(k, v)| k == n && !v.is_empty())
+        })
     };
+    let ends = |stmts: &[String]| {
+        stmts
+            .iter()
+            .any(|s| exits(s) || fatal.contains(first_word(s)))
+    };
+    let mut found: Vec<Need> = Vec::new();
+    let add =
+        |vars: Vec<String>, any: bool, instead: Vec<String>, why: String, found: &mut Vec<Need>| {
+            let vars: Vec<String> = vars
+                .into_iter()
+                .filter(|v| is_env_name(v) && !own.contains(v))
+                .collect();
+            if vars.is_empty() || vars.iter().any(|v| has_default(v)) && !any {
+                return;
+            }
+            let groups: Vec<Vec<String>> = if any {
+                vars.into_iter()
+                    .filter(|v| !has_default(v))
+                    .map(|v| vec![v])
+                    .collect()
+            } else {
+                vec![vars]
+            };
+            for g in groups {
+                if found.iter().any(|n| n.name == g[0]) {
+                    continue;
+                }
+                found.push(Need {
+                    name: g[0].clone(),
+                    alts: g[1..].to_vec(),
+                    instead: instead.clone(),
+                    why: why.clone(),
+                });
+            }
+        };
     let mut i = 0;
     while i < ls.len() {
         let t = ls[i].code.trim();
@@ -367,9 +523,26 @@ pub fn scan(script: &str, image_env: &[String]) -> Vec<Need> {
             let (cond, inline) = cond.split_once("then").unwrap_or((&cond, ""));
             let cond = cond.trim().trim_end_matches(';').to_owned();
             // if …; then exit 1; fi, on one line.
-            if let Some(body) = inline.trim().strip_suffix("fi").filter(|_| inline.trim() != "") {
-                if statements(body).iter().any(|s| exits(s) || fatal.contains(first_word(s))) && let Some((vars, any, instead)) = zero_tests(&cond) {
-                    add(vars, any, instead, message(&[&Line { code: body.to_owned(), here: Vec::new() }]), &mut found);
+            if let Some(body) = inline
+                .trim()
+                .strip_suffix("fi")
+                .filter(|_| inline.trim() != "")
+            {
+                if statements(body)
+                    .iter()
+                    .any(|s| exits(s) || fatal.contains(first_word(s)))
+                    && let Some((vars, any, instead)) = zero_tests(&cond)
+                {
+                    add(
+                        vars,
+                        any,
+                        instead,
+                        message(&[&Line {
+                            code: body.to_owned(),
+                            here: Vec::new(),
+                        }]),
+                        &mut found,
+                    );
                 }
                 i = j + 1;
                 continue;
@@ -377,7 +550,10 @@ pub fn scan(script: &str, image_env: &[String]) -> Vec<Need> {
             let (mut depth, mut k, mut block) = (0, j + 1, Vec::new());
             while k < ls.len() {
                 let w = first_word(ls[k].code.trim());
-                if w == "if" && !ls[k].code.contains("; fi") && !ls[k].code.trim_end().ends_with(" fi") {
+                if w == "if"
+                    && !ls[k].code.contains("; fi")
+                    && !ls[k].code.trim_end().ends_with(" fi")
+                {
                     depth += 1;
                 } else if w == "fi" || (depth == 0 && (w == "else" || w == "elif")) {
                     if depth == 0 {
@@ -390,7 +566,9 @@ pub fn scan(script: &str, image_env: &[String]) -> Vec<Need> {
                 k += 1;
             }
             let stmts: Vec<String> = block.iter().flat_map(|l| statements(&l.code)).collect();
-            if ends(&stmts) && let Some((vars, any, instead)) = zero_tests(&cond) {
+            if ends(&stmts)
+                && let Some((vars, any, instead)) = zero_tests(&cond)
+            {
                 add(vars, any, instead, message(&block), &mut found);
             }
         }
@@ -405,8 +583,13 @@ pub fn scan(script: &str, image_env: &[String]) -> Vec<Need> {
                     k += 1;
                 }
             }
-            let stmts: Vec<String> = statements(rest).into_iter().chain(block[1..].iter().flat_map(|l| statements(&l.code))).collect();
-            if ends(&stmts) && let Some((vars, any, instead)) = zero_tests(cond) {
+            let stmts: Vec<String> = statements(rest)
+                .into_iter()
+                .chain(block[1..].iter().flat_map(|l| statements(&l.code)))
+                .collect();
+            if ends(&stmts)
+                && let Some((vars, any, instead)) = zero_tests(cond)
+            {
                 add(vars, any, instead, message(&block), &mut found);
             }
         }
@@ -416,7 +599,12 @@ pub fn scan(script: &str, image_env: &[String]) -> Vec<Need> {
             let name = var_at(&rest[at + 1..]);
             let after = &rest[at + 2 + name.len()..];
             if let Some(msg) = after.strip_prefix(":?").or_else(|| after.strip_prefix('?')) {
-                let why = msg.split('}').next().unwrap_or_default().trim_matches(['"', '\'']).to_owned();
+                let why = msg
+                    .split('}')
+                    .next()
+                    .unwrap_or_default()
+                    .trim_matches(['"', '\''])
+                    .to_owned();
                 add(vec![name], false, Vec::new(), why, &mut found);
             }
             rest = &rest[at + 2..];
@@ -440,7 +628,10 @@ mod tests {
         let n = scan(s, &[]);
         assert_eq!(names(&n), ["APP_PASSWORD"]);
         assert_eq!(n[0].why, "APP_PASSWORD is not specified.");
-        assert!(scan(s, &["APP_PASSWORD=x".into()]).is_empty(), "the image sets it");
+        assert!(
+            scan(s, &["APP_PASSWORD=x".into()]).is_empty(),
+            "the image sets it"
+        );
     }
 
     #[test]
@@ -452,25 +643,59 @@ mod tests {
         let my = "mysql_error() {\n\tmysql_log ERROR \"$@\" >&2\n\texit 1\n}\nf() {\n\tif [ -z \"$MYSQL_ROOT_PASSWORD\" -a -z \"$MYSQL_ALLOW_EMPTY_PASSWORD\" -a -z \"$MYSQL_RANDOM_ROOT_PASSWORD\" ]; then\n\t\tmysql_error <<-'EOF'\n\t\t\tDatabase is uninitialized and password option is not specified\n\t\tEOF\n\tfi\n\tif [ -n \"$MYSQL_USER\" ] && [ -z \"$MYSQL_PASSWORD\" ]; then\n\t\tmysql_error 'no'\n\tfi\n}\n";
         let n = scan(my, &[]);
         assert_eq!(names(&n), ["MYSQL_ROOT_PASSWORD"]);
-        assert_eq!(n[0].alts, ["MYSQL_ALLOW_EMPTY_PASSWORD", "MYSQL_RANDOM_ROOT_PASSWORD"]);
+        assert_eq!(
+            n[0].alts,
+            ["MYSQL_ALLOW_EMPTY_PASSWORD", "MYSQL_RANDOM_ROOT_PASSWORD"]
+        );
     }
 
     #[test]
     fn other_forms_and_what_isnt_a_need() {
-        assert_eq!(names(&scan(": \"${API_KEY:?set API_KEY}\"\n", &[])), ["API_KEY"]);
-        assert_eq!(names(&scan("[ -z \"$TOKEN\" ] && { echo 'TOKEN is required' >&2; exit 1; }\n", &[])), ["TOKEN"]);
-        assert_eq!(names(&scan("if [ -z \"$A_KEY\" ] || [ -z \"$B_KEY\" ]; then exit 1; fi\n", &[])), ["A_KEY", "B_KEY"]);
-        assert!(scan("if [ -z \"$QUIET_LOGS\" ]; then\n\techo hi\nfi\n", &[]).is_empty(), "doesn't stop");
+        assert_eq!(
+            names(&scan(": \"${API_KEY:?set API_KEY}\"\n", &[])),
+            ["API_KEY"]
+        );
+        assert_eq!(
+            names(&scan(
+                "[ -z \"$TOKEN\" ] && { echo 'TOKEN is required' >&2; exit 1; }\n",
+                &[]
+            )),
+            ["TOKEN"]
+        );
+        assert_eq!(
+            names(&scan(
+                "if [ -z \"$A_KEY\" ] || [ -z \"$B_KEY\" ]; then exit 1; fi\n",
+                &[]
+            )),
+            ["A_KEY", "B_KEY"]
+        );
+        assert!(
+            scan("if [ -z \"$QUIET_LOGS\" ]; then\n\techo hi\nfi\n", &[]).is_empty(),
+            "doesn't stop"
+        );
         assert!(scan("if [ ! -z \"$GF_X\" ]; then exit 1; fi\n", &[]).is_empty());
-        assert!(scan("if [ \"$IS_SERVER\" ] && [ -z \"$SKIP_X\" ]; then exit 1; fi\n", &[]).is_empty());
-        assert!(scan("if [ -z \"$dbPath\" ]; then exit 1; fi\n", &[]).is_empty(), "a script variable");
+        assert!(
+            scan(
+                "if [ \"$IS_SERVER\" ] && [ -z \"$SKIP_X\" ]; then exit 1; fi\n",
+                &[]
+            )
+            .is_empty()
+        );
+        assert!(
+            scan("if [ -z \"$dbPath\" ]; then exit 1; fi\n", &[]).is_empty(),
+            "a script variable"
+        );
         assert!(scan(": \"${PGDATA:=/var/lib}\"\n", &[]).is_empty());
     }
 
     #[test]
     fn finds_the_script_and_reads_tar() {
-        assert!(matches!(script_of(&["tini".into(), "--".into(), "docker-entrypoint.sh".into()], &["redis-server".into()]), Some(Start::Path(p)) if p == "docker-entrypoint.sh"));
-        assert!(matches!(script_of(&["/bin/sh".into(), "-c".into(), "exit 1".into()], &[]), Some(Start::Inline(s)) if s == "exit 1"));
+        assert!(
+            matches!(script_of(&["tini".into(), "--".into(), "docker-entrypoint.sh".into()], &["redis-server".into()]), Some(Start::Path(p)) if p == "docker-entrypoint.sh")
+        );
+        assert!(
+            matches!(script_of(&["/bin/sh".into(), "-c".into(), "exit 1".into()], &[]), Some(Start::Inline(s)) if s == "exit 1")
+        );
         let mut tar = vec![0u8; 512];
         tar[..4].copy_from_slice(b"x.sh");
         tar[124..135].copy_from_slice(b"00000000003");

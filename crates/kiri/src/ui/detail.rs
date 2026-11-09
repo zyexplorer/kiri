@@ -32,9 +32,11 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
 }
 
 pub fn inspect(id: String) {
-    spawn("kiri-inspect", move || match client::get(&format!("/containers/{id}/json")) {
-        Ok(info) => emit(json!({"type": "inspect", "id": id, "info": info}).to_string()),
-        Err(e) => emit(notice("error", &e.to_string())),
+    spawn("kiri-inspect", move || {
+        match client::get(&format!("/containers/{id}/json")) {
+            Ok(info) => emit(json!({"type": "inspect", "id": id, "info": info}).to_string()),
+            Err(e) => emit(notice("error", &e.to_string())),
+        }
     });
 }
 
@@ -44,8 +46,12 @@ pub fn logs(id: String) {
     stop_logs();
     let generation = LOGS_GEN.load(Ordering::SeqCst);
     spawn("kiri-logs", move || {
-        let tty = client::get(&format!("/containers/{id}/json")).is_ok_and(|v| v["Config"]["Tty"] == true);
-        let mut stream = match client::Stream::open(&format!("/containers/{id}/logs?follow=1&stdout=1&stderr=1&tail={}", super::lastlogs::LIVE_TAIL)) {
+        let tty = client::get(&format!("/containers/{id}/json"))
+            .is_ok_and(|v| v["Config"]["Tty"] == true);
+        let mut stream = match client::Stream::open(&format!(
+            "/containers/{id}/logs?follow=1&stdout=1&stderr=1&tail={}",
+            super::lastlogs::LIVE_TAIL
+        )) {
             Ok(s) => s,
             Err(e) => return emit(notice("error", &format!("Logs: {e}"))),
         };
@@ -65,7 +71,11 @@ pub fn logs(id: String) {
                         }
                     }
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(mpsc::RecvTimeoutError::Disconnected) if LOGS_GEN.load(Ordering::SeqCst) != generation => return,
+                    Err(mpsc::RecvTimeoutError::Disconnected)
+                        if LOGS_GEN.load(Ordering::SeqCst) != generation =>
+                    {
+                        return;
+                    }
                     Err(mpsc::RecvTimeoutError::Disconnected) => {
                         send_batch(&flush_id, &mut batch);
                         return emit(json!({"type": "logs-end", "id": flush_id}).to_string());
@@ -89,7 +99,8 @@ pub fn logs(id: String) {
             // Docker's 8-byte frame headers: stream, 3 zero bytes, big-endian length.
             pending.extend_from_slice(&c);
             while pending.len() >= 8 {
-                let len = u32::from_be_bytes([pending[4], pending[5], pending[6], pending[7]]) as usize;
+                let len =
+                    u32::from_be_bytes([pending[4], pending[5], pending[6], pending[7]]) as usize;
                 if pending.len() < 8 + len {
                     break;
                 }
@@ -106,7 +117,10 @@ fn send_batch(id: &str, batch: &mut Vec<(bool, Vec<u8>)>) {
     if batch.is_empty() {
         return;
     }
-    let parts: Vec<Value> = batch.drain(..).map(|(err, d)| json!({"e": err, "t": String::from_utf8_lossy(&d)})).collect();
+    let parts: Vec<Value> = batch
+        .drain(..)
+        .map(|(err, d)| json!({"e": err, "t": String::from_utf8_lossy(&d)}))
+        .collect();
     emit(json!({"type": "logs", "id": id, "parts": parts}).to_string());
 }
 
@@ -114,10 +128,18 @@ fn send_batch(id: &str, batch: &mut Vec<(bool, Vec<u8>)>) {
 /// `{type: "lastlogs", id, lines}`; no lines if the log can't be read.
 pub fn last_logs(id: String) {
     spawn("kiri-lastlogs", move || {
-        let tty = client::get(&format!("/containers/{id}/json")).is_ok_and(|v| v["Config"]["Tty"] == true);
-        let lines = client::request("GET", &format!("/containers/{id}/logs?stdout=1&stderr=1&tail={}", super::lastlogs::KEEP), None)
-            .map(|r| super::lastlogs::lines(&r.body, tty, super::lastlogs::KEEP))
-            .unwrap_or_default();
+        let tty = client::get(&format!("/containers/{id}/json"))
+            .is_ok_and(|v| v["Config"]["Tty"] == true);
+        let lines = client::request(
+            "GET",
+            &format!(
+                "/containers/{id}/logs?stdout=1&stderr=1&tail={}",
+                super::lastlogs::KEEP
+            ),
+            None,
+        )
+        .map(|r| super::lastlogs::lines(&r.body, tty, super::lastlogs::KEEP))
+        .unwrap_or_default();
         emit(json!({"type": "lastlogs", "id": id, "lines": lines}).to_string());
     });
 }
@@ -136,7 +158,10 @@ pub fn stats(id: String) {
     stop_stats();
     let generation = STATS_GEN.load(Ordering::SeqCst);
     spawn("kiri-stats", move || {
-        let Ok(mut stream) = client::Stream::open(&format!("/containers/{id}/stats?stream=1")) else { return };
+        let Ok(mut stream) = client::Stream::open(&format!("/containers/{id}/stats?stream=1"))
+        else {
+            return;
+        };
         if let Ok(closer) = stream.closer() {
             *STATS.lock().unwrap_or_else(|e| e.into_inner()) = Some(closer);
         }
@@ -161,16 +186,28 @@ pub fn stats(id: String) {
 
 fn sample(id: &str, s: &Value) -> Value {
     let n = |v: &Value| v.as_f64().unwrap_or(0.0);
-    let cpu_delta = n(&s["cpu_stats"]["cpu_usage"]["total_usage"]) - n(&s["precpu_stats"]["cpu_usage"]["total_usage"]);
-    let sys_delta = n(&s["cpu_stats"]["system_cpu_usage"]) - n(&s["precpu_stats"]["system_cpu_usage"]);
+    let cpu_delta = n(&s["cpu_stats"]["cpu_usage"]["total_usage"])
+        - n(&s["precpu_stats"]["cpu_usage"]["total_usage"]);
+    let sys_delta =
+        n(&s["cpu_stats"]["system_cpu_usage"]) - n(&s["precpu_stats"]["system_cpu_usage"]);
     let cpus = n(&s["cpu_stats"]["online_cpus"]).max(1.0);
     let has_pre = s["precpu_stats"]["system_cpu_usage"].is_number();
     // A share of all the CPUs the container can use (100% = every one busy),
     // not docker's per-core figure, which reads 250% on a busy four-CPU engine.
-    let cpu = if has_pre && sys_delta > 0.0 && cpu_delta >= 0.0 { (cpu_delta / sys_delta * 100.0).min(100.0) } else { 0.0 };
+    let cpu = if has_pre && sys_delta > 0.0 && cpu_delta >= 0.0 {
+        (cpu_delta / sys_delta * 100.0).min(100.0)
+    } else {
+        0.0
+    };
     let mem = n(&s["memory_stats"]["usage"]) - n(&s["memory_stats"]["stats"]["inactive_file"]);
     let io = |op: &str| {
-        s["blkio_stats"]["io_service_bytes_recursive"].as_array().into_iter().flatten().filter(|e| e["op"] == op).map(|e| n(&e["value"])).sum::<f64>()
+        s["blkio_stats"]["io_service_bytes_recursive"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|e| e["op"] == op)
+            .map(|e| n(&e["value"]))
+            .sum::<f64>()
     };
     json!({
         "type": "stats", "id": id, "first": !has_pre,
@@ -193,8 +230,12 @@ pub fn stop_stats() {
 pub fn exec(id: String, cmd: String) {
     spawn("kiri-exec", move || {
         let event = match client::exec(&id, &["sh", "-c", &cmd]) {
-            Ok((code, output)) => json!({"type": "exec", "id": id, "cmd": cmd, "code": code, "output": output}),
-            Err(e) => json!({"type": "exec", "id": id, "cmd": cmd, "code": -1, "output": e.to_string()}),
+            Ok((code, output)) => {
+                json!({"type": "exec", "id": id, "cmd": cmd, "code": code, "output": output})
+            }
+            Err(e) => {
+                json!({"type": "exec", "id": id, "cmd": cmd, "code": -1, "output": e.to_string()})
+            }
         };
         emit(event.to_string());
     });
@@ -202,20 +243,31 @@ pub fn exec(id: String, cmd: String) {
 
 /// A full interactive shell in a terminal window (Terminal.app on the Mac), through the docker CLI.
 pub fn terminal(name: &str) -> io::Result<()> {
-    if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b)) {
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+    {
         return Err(io::Error::other("not a container name"));
     }
     let docker = client::docker_cli().ok_or_else(|| io::Error::other("no docker CLI found"))?;
-    let line = format!("'{}' --context kiri exec -it {name} sh -c 'exec $(command -v bash || command -v sh)'", docker.display());
+    let line = format!(
+        "'{}' --context kiri exec -it {name} sh -c 'exec $(command -v bash || command -v sh)'",
+        docker.display()
+    );
     // A .command file Terminal opens, rather than scripting Terminal, which
     // would make macOS ask for permission to control it. It removes itself.
-    let dir = super::state_dir().ok_or_else(|| io::Error::other("HOME is not set"))?.join("run");
+    let dir = super::state_dir()
+        .ok_or_else(|| io::Error::other("HOME is not set"))?
+        .join("run");
     std::fs::create_dir_all(&dir)?;
     let file = dir.join(format!("shell-{name}.command"));
     std::fs::write(&file, format!("#!/bin/sh\nrm -f \"$0\"\nexec {line}\n"))?;
     std::fs::set_permissions(&file, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
     #[cfg(target_os = "macos")]
-    std::process::Command::new("/usr/bin/open").args(["-a", "Terminal"]).arg(&file).spawn()?;
+    std::process::Command::new("/usr/bin/open")
+        .args(["-a", "Terminal"])
+        .arg(&file)
+        .spawn()?;
     #[cfg(target_os = "linux")]
     linux_terminal(&file)?;
     Ok(())
@@ -225,7 +277,13 @@ pub fn terminal(name: &str) -> io::Result<()> {
 /// GNOME's (Ptyxis, then the older GNOME Terminal), KDE's and xterm.
 #[cfg(target_os = "linux")]
 fn linux_terminal(file: &std::path::Path) -> io::Result<()> {
-    let tries: [(&str, &[&str]); 5] = [("x-terminal-emulator", &["-e"]), ("ptyxis", &["--new-window", "--"]), ("gnome-terminal", &["--"]), ("konsole", &["-e"]), ("xterm", &["-e"])];
+    let tries: [(&str, &[&str]); 5] = [
+        ("x-terminal-emulator", &["-e"]),
+        ("ptyxis", &["--new-window", "--"]),
+        ("gnome-terminal", &["--"]),
+        ("konsole", &["-e"]),
+        ("xterm", &["-e"]),
+    ];
     for (app, args) in tries {
         match std::process::Command::new(app).args(args).arg(file).spawn() {
             Ok(_) => return Ok(()),
@@ -240,7 +298,9 @@ fn linux_terminal(file: &std::path::Path) -> io::Result<()> {
 /// The container's root on the Mac (the Finder view), and `path` inside it.
 /// Only plain components are allowed, so nothing outside the container is read.
 fn host_path(name: &str, path: &str) -> io::Result<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| io::Error::other("HOME is not set"))?;
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("HOME is not set"))?;
     let root = home.join(crate::flavor::APP.get()).join(name);
     if name.is_empty() || name.contains('/') || name.starts_with('.') {
         return Err(io::Error::other("not a container name"));
@@ -256,7 +316,9 @@ pub fn files(name: String, path: String) {
     spawn("kiri-files", move || {
         let event = match list(&name, &path) {
             Ok(entries) => json!({"type": "files", "name": name, "path": path, "entries": entries}),
-            Err(e) => json!({"type": "files", "name": name, "path": path, "entries": [], "error": e.to_string()}),
+            Err(e) => {
+                json!({"type": "files", "name": name, "path": path, "entries": [], "error": e.to_string()})
+            }
         };
         emit(event.to_string());
     });
@@ -269,11 +331,20 @@ fn list(name: &str, path: &str) -> io::Result<Vec<Value>> {
         let link = e.file_type().is_ok_and(|t| t.is_symlink());
         let meta = std::fs::metadata(e.path()).or_else(|_| e.metadata());
         let (is_dir, size, mtime) = meta.map_or((false, 0, 0), |m| {
-            (m.is_dir(), m.len(), m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs()))
+            (
+                m.is_dir(),
+                m.len(),
+                m.modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs()),
+            )
         });
         entries.push(json!({"name": e.file_name().to_string_lossy(), "dir": is_dir, "size": size, "mtime": mtime, "link": link}));
     }
-    entries.sort_by(|a, b| (b["dir"].as_bool(), a["name"].as_str()).cmp(&(a["dir"].as_bool(), b["name"].as_str())));
+    entries.sort_by(|a, b| {
+        (b["dir"].as_bool(), a["name"].as_str()).cmp(&(a["dir"].as_bool(), b["name"].as_str()))
+    });
     Ok(entries)
 }
 
@@ -282,7 +353,9 @@ pub fn preview(name: String, path: String) {
         let event = match read_text(&name, &path) {
             Ok(Some(text)) => json!({"type": "preview", "name": name, "path": path, "text": text}),
             Ok(None) => json!({"type": "preview", "name": name, "path": path, "binary": true}),
-            Err(e) => json!({"type": "preview", "name": name, "path": path, "error": e.to_string()}),
+            Err(e) => {
+                json!({"type": "preview", "name": name, "path": path, "error": e.to_string()})
+            }
         };
         emit(event.to_string());
     });
@@ -302,10 +375,25 @@ fn read_text(name: &str, path: &str) -> io::Result<Option<String>> {
 /// there: `name 2.ext`), then shows it.
 pub fn download(name: &str, path: &str) -> io::Result<PathBuf> {
     let from = host_path(name, path)?;
-    let file = from.file_name().ok_or_else(|| io::Error::other("not a file"))?.to_owned();
-    let downloads = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| io::Error::other("HOME is not set"))?.join("Downloads");
+    let file = from
+        .file_name()
+        .ok_or_else(|| io::Error::other("not a file"))?
+        .to_owned();
+    let downloads = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("HOME is not set"))?
+        .join("Downloads");
     let mut to = downloads.join(&file);
-    let (stem, ext) = (Path::new(&file).file_stem().unwrap_or_default().to_string_lossy().into_owned(), Path::new(&file).extension().map(|e| format!(".{}", e.to_string_lossy())));
+    let (stem, ext) = (
+        Path::new(&file)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        Path::new(&file)
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy())),
+    );
     let mut n = 2;
     while to.exists() {
         to = downloads.join(format!("{stem} {n}{}", ext.as_deref().unwrap_or("")));
@@ -331,18 +419,39 @@ mod tests {
         if std::env::var_os("KIRI_LIVE").is_none() {
             return;
         }
-        let mut s = crate::client::Stream::open("/containers/myapp/logs?follow=1&stdout=1&stderr=1").unwrap();
+        let mut s =
+            crate::client::Stream::open("/containers/myapp/logs?follow=1&stdout=1&stderr=1")
+                .unwrap();
         let first = s.next().unwrap();
-        assert!(first.len() > 8 && (first[0] == 1 || first[0] == 2), "framed output: {first:?}");
-        s.closer().unwrap().shutdown(std::net::Shutdown::Both).unwrap();
+        assert!(
+            first.len() > 8 && (first[0] == 1 || first[0] == 2),
+            "framed output: {first:?}"
+        );
+        s.closer()
+            .unwrap()
+            .shutdown(std::net::Shutdown::Both)
+            .unwrap();
         // What was already buffered may still come out, then it ends.
-        assert!((0..10_000).any(|_| s.next().is_none()), "closer ends the stream");
+        assert!(
+            (0..10_000).any(|_| s.next().is_none()),
+            "closer ends the stream"
+        );
         let etc = super::list("myapp", "/etc").unwrap();
-        assert!(etc.iter().any(|e| e["name"] == "nginx" && e["dir"] == true), "{etc:?}");
-        let conf = super::read_text("myapp", "/etc/nginx/nginx.conf").unwrap().unwrap();
+        assert!(
+            etc.iter().any(|e| e["name"] == "nginx" && e["dir"] == true),
+            "{etc:?}"
+        );
+        let conf = super::read_text("myapp", "/etc/nginx/nginx.conf")
+            .unwrap()
+            .unwrap();
         assert!(conf.contains("worker_processes"));
-        assert_eq!(super::read_text("myapp", "/bin/busybox").unwrap(), None, "binary is not previewed");
-        let (code, out) = crate::client::exec("myapp", &["sh", "-c", "nginx -v 2>&1; exit 3"]).unwrap();
+        assert_eq!(
+            super::read_text("myapp", "/bin/busybox").unwrap(),
+            None,
+            "binary is not previewed"
+        );
+        let (code, out) =
+            crate::client::exec("myapp", &["sh", "-c", "nginx -v 2>&1; exit 3"]).unwrap();
         assert_eq!((code, out.contains("nginx version")), (3, true), "{out}");
         // Two stats samples: the second has a CPU figure and sane memory.
         let mut st = crate::client::Stream::open("/containers/myapp/stats?stream=1").unwrap();
@@ -351,12 +460,23 @@ mod tests {
         while lines.len() < 2 {
             buf.extend_from_slice(&st.next().unwrap());
             while let Some(i) = buf.iter().position(|&b| b == b'\n') {
-                lines.push(super::sample("myapp", &serde_json::from_slice(&buf.drain(..=i).collect::<Vec<_>>()).unwrap()));
+                lines.push(super::sample(
+                    "myapp",
+                    &serde_json::from_slice(&buf.drain(..=i).collect::<Vec<_>>()).unwrap(),
+                ));
             }
         }
         let (a, b) = (&lines[0], &lines[1]);
-        assert_eq!((a["first"].as_bool(), b["first"].as_bool()), (Some(true), Some(false)));
-        let (cpu, mem, limit, pids) = (b["cpu"].as_f64().unwrap(), b["mem"].as_f64().unwrap(), b["limit"].as_f64().unwrap(), b["pids"].as_f64().unwrap());
+        assert_eq!(
+            (a["first"].as_bool(), b["first"].as_bool()),
+            (Some(true), Some(false))
+        );
+        let (cpu, mem, limit, pids) = (
+            b["cpu"].as_f64().unwrap(),
+            b["mem"].as_f64().unwrap(),
+            b["limit"].as_f64().unwrap(),
+            b["pids"].as_f64().unwrap(),
+        );
         assert!((0.0..=400.0).contains(&cpu), "cpu {cpu}");
         assert!(mem > 1e6 && mem < limit, "mem {mem} of {limit}");
         assert!(pids >= 2.0, "nginx has a master and workers: {pids}");
@@ -365,7 +485,11 @@ mod tests {
 
     #[test]
     fn keeps_paths_inside_the_container() {
-        assert!(super::host_path("web", "/etc/nginx/nginx.conf").unwrap().ends_with("Kiri/web/etc/nginx/nginx.conf"));
+        assert!(
+            super::host_path("web", "/etc/nginx/nginx.conf")
+                .unwrap()
+                .ends_with("Kiri/web/etc/nginx/nginx.conf")
+        );
         assert!(super::host_path("web", "").unwrap().ends_with("Kiri/web"));
         assert!(super::host_path("web", "/etc/../../other").is_err());
         assert!(super::host_path("../web", "/").is_err());

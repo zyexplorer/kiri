@@ -11,8 +11,8 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{Sender, channel};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -33,7 +33,10 @@ struct Session {
 static SESSIONS: Mutex<Option<HashMap<String, Session>>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut HashMap<String, Session>) -> R) -> R {
-    f(SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new))
+    f(SESSIONS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashMap::new))
 }
 
 /// One `term` command from the page.
@@ -48,7 +51,10 @@ pub fn handle(action: &str, id: &str, value: &Value, emit: fn(String)) {
             let asked = value["shell"].as_str().unwrap_or("");
             let (list, default) = shells();
             // Only a shell from the list: the page never names a program.
-            let path = list.iter().find(|s| s.id == asked).map_or(default, |s| s.id.clone());
+            let path = list
+                .iter()
+                .find(|s| s.id == asked)
+                .map_or(default, |s| s.id.clone());
             if let Err(e) = open(id, Path::new(&path), cols, rows, emit) {
                 emit(termwire::exit(id, None, Some(&e.to_string())));
             }
@@ -102,8 +108,18 @@ fn hang_up(pid: i32) {
 /// The shells in /etc/shells that a person would open, plus Homebrew's, and
 /// which one is the user's own.
 fn shells() -> (Vec<Shell>, String) {
-    let mut paths: Vec<PathBuf> = std::fs::read_to_string("/etc/shells").unwrap_or_default().lines().map(str::trim).filter(|l| l.starts_with('/')).map(PathBuf::from).collect();
-    for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin"] {
+    let mut paths: Vec<PathBuf> = std::fs::read_to_string("/etc/shells")
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with('/'))
+        .map(PathBuf::from)
+        .collect();
+    for dir in [
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/home/linuxbrew/.linuxbrew/bin",
+    ] {
         for name in ["zsh", "bash", "fish", "nu", "pwsh"] {
             paths.push(Path::new(dir).join(name));
         }
@@ -113,9 +129,26 @@ fn shells() -> (Vec<Shell>, String) {
     let mut seen = Vec::new();
     let mut list: Vec<Shell> = Vec::new();
     for p in paths {
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_owned();
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_owned();
         // Shells nobody opens a tab of, and the ones that only refuse logins.
-        if name.is_empty() || ["nologin", "false", "true", "rbash", "git-shell", "screen", "tmux", "sh"].contains(&name.as_str()) || !executable(&p) {
+        if name.is_empty()
+            || [
+                "nologin",
+                "false",
+                "true",
+                "rbash",
+                "git-shell",
+                "screen",
+                "tmux",
+                "sh",
+            ]
+            .contains(&name.as_str())
+            || !executable(&p)
+        {
             continue;
         }
         // /bin/bash and /usr/bin/bash are one file where /bin is a link.
@@ -124,12 +157,33 @@ fn shells() -> (Vec<Shell>, String) {
             continue;
         }
         seen.push(real);
-        let label = if list.iter().any(|s| s.label == name) { format!("{name} ({})", p.parent().map_or(String::new(), |d| d.display().to_string())) } else { name };
-        list.push(Shell { id: p.display().to_string(), label, group: "" });
+        let label = if list.iter().any(|s| s.label == name) {
+            format!(
+                "{name} ({})",
+                p.parent()
+                    .map_or(String::new(), |d| d.display().to_string())
+            )
+        } else {
+            name
+        };
+        list.push(Shell {
+            id: p.display().to_string(),
+            label,
+            group: "",
+        });
     }
-    let default = if list.iter().any(|s| Path::new(&s.id) == own) { own.display().to_string() } else { list.first().map_or_else(|| "/bin/sh".to_owned(), |s| s.id.clone()) };
+    let default = if list.iter().any(|s| Path::new(&s.id) == own) {
+        own.display().to_string()
+    } else {
+        list.first()
+            .map_or_else(|| "/bin/sh".to_owned(), |s| s.id.clone())
+    };
     if list.is_empty() {
-        list.push(Shell { id: default.clone(), label: "sh".into(), group: "" });
+        list.push(Shell {
+            id: default.clone(),
+            label: "sh".into(),
+            group: "",
+        });
     }
     (list, default)
 }
@@ -143,9 +197,22 @@ fn login_shell() -> PathBuf {
     // pw_shell is read at once, before another call could replace it.
     let from_passwd = unsafe {
         let pw = libc::getpwuid(libc::getuid());
-        (!pw.is_null() && !(*pw).pw_shell.is_null()).then(|| CStr::from_ptr((*pw).pw_shell).to_string_lossy().into_owned())
+        (!pw.is_null() && !(*pw).pw_shell.is_null()).then(|| {
+            CStr::from_ptr((*pw).pw_shell)
+                .to_string_lossy()
+                .into_owned()
+        })
     };
-    from_passwd.map_or_else(|| PathBuf::from(if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/bash" }), PathBuf::from)
+    from_passwd.map_or_else(
+        || {
+            PathBuf::from(if cfg!(target_os = "macos") {
+                "/bin/zsh"
+            } else {
+                "/bin/bash"
+            })
+        },
+        PathBuf::from,
+    )
 }
 
 fn executable(p: &Path) -> bool {
@@ -158,13 +225,23 @@ fn executable(p: &Path) -> bool {
 fn tool_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(home).join(crate::flavor::STATE.get()).join("bin"));
+        dirs.push(
+            PathBuf::from(home)
+                .join(crate::flavor::STATE.get())
+                .join("bin"),
+        );
     }
-    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf))
+    {
         dirs.push(exe_dir.join("../Resources/bin"));
         dirs.push(exe_dir);
     }
-    dirs.into_iter().filter(|d| d.is_dir()).filter_map(|d| std::fs::canonicalize(d).ok()).collect()
+    dirs.into_iter()
+        .filter(|d| d.is_dir())
+        .filter_map(|d| std::fs::canonicalize(d).ok())
+        .collect()
 }
 
 /// A new pseudo-terminal: its master, and the path of its other side.
@@ -193,7 +270,11 @@ fn slave_name(fd: i32) -> std::io::Result<PathBuf> {
         return Err(std::io::Error::last_os_error());
     }
     // SAFETY: on success buf holds a NUL-terminated path.
-    Ok(PathBuf::from(unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().into_owned()))
+    Ok(PathBuf::from(
+        unsafe { CStr::from_ptr(buf.as_ptr()) }
+            .to_string_lossy()
+            .into_owned(),
+    ))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -207,12 +288,19 @@ fn slave_name(fd: i32) -> std::io::Result<PathBuf> {
         if p.is_null() {
             return Err(std::io::Error::last_os_error());
         }
-        Ok(PathBuf::from(CStr::from_ptr(p).to_string_lossy().into_owned()))
+        Ok(PathBuf::from(
+            CStr::from_ptr(p).to_string_lossy().into_owned(),
+        ))
     }
 }
 
 fn set_size(master: &File, cols: u16, rows: u16) {
-    let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    let ws = libc::winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
     // SAFETY: TIOCSWINSZ reads one winsize.
     unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCSWINSZ, &ws) };
 }
@@ -224,7 +312,11 @@ fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::
     }
     let (master, slave_path) = new_pty()?;
     let master = Arc::new(File::from(master));
-    let slave = std::fs::OpenOptions::new().read(true).write(true).custom_flags_noctty().open(&slave_path)?;
+    let slave = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags_noctty()
+        .open(&slave_path)?;
     // After the other side is open: macOS forgets a size set before.
     set_size(&master, cols, rows);
 
@@ -236,15 +328,22 @@ fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::
         cmd.arg0(format!("-{name}"));
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let path = std::env::join_paths(tool_dirs().into_iter().chain(std::env::split_paths(&path))).unwrap_or(path);
-    cmd.env("PATH", path).env("TERM", "xterm-256color").env("COLORTERM", "truecolor").env("TERM_PROGRAM", "Kiri").env_remove("TERM_PROGRAM_VERSION");
+    let path = std::env::join_paths(tool_dirs().into_iter().chain(std::env::split_paths(&path)))
+        .unwrap_or(path);
+    cmd.env("PATH", path)
+        .env("TERM", "xterm-256color")
+        .env("COLORTERM", "truecolor")
+        .env("TERM_PROGRAM", "Kiri")
+        .env_remove("TERM_PROGRAM_VERSION");
     if std::env::var_os("LANG").is_none() {
         cmd.env("LANG", "en_US.UTF-8");
     }
     if let Some(home) = std::env::var_os("HOME") {
         cmd.current_dir(home);
     }
-    cmd.stdin(Stdio::from(slave.try_clone()?)).stdout(Stdio::from(slave.try_clone()?)).stderr(Stdio::from(slave));
+    cmd.stdin(Stdio::from(slave.try_clone()?))
+        .stdout(Stdio::from(slave.try_clone()?))
+        .stderr(Stdio::from(slave));
     // SAFETY: setsid and ioctl are async-signal-safe; they run in the child
     // after its stdio is the terminal, making it the controlling terminal
     // of the shell's own session.
@@ -264,7 +363,17 @@ fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::
 
     let (input, typed) = channel::<Vec<u8>>();
     let done = Arc::new(AtomicBool::new(false));
-    with(|s| s.insert(id.to_owned(), Session { master: master.clone(), pid, input, done: done.clone() }));
+    with(|s| {
+        s.insert(
+            id.to_owned(),
+            Session {
+                master: master.clone(),
+                pid,
+                input,
+                done: done.clone(),
+            },
+        )
+    });
 
     // Writes go through their own thread: a shell that stops reading can't
     // hold up the window.
@@ -314,7 +423,11 @@ fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::
             mine
         });
         if mine {
-            emit(termwire::exit(&id, *code.lock().unwrap_or_else(|e| e.into_inner()), None));
+            emit(termwire::exit(
+                &id,
+                *code.lock().unwrap_or_else(|e| e.into_inner()),
+                None,
+            ));
         }
     });
     Ok(())
@@ -380,18 +493,41 @@ mod tests {
     fn a_shell_runs_on_a_real_terminal_and_says_when_it_ends() {
         let rx = listen();
         let (list, default) = shells();
-        assert!(list.iter().any(|s| s.id == default), "default {default} not in the list");
+        assert!(
+            list.iter().any(|s| s.id == default),
+            "default {default} not in the list"
+        );
 
-        handle("open", "t1", &serde_json::json!({"shell": "/bin/bash", "cols": 91, "rows": 17}), record);
-        let typed = |s: &str| handle("input", "t1", &Value::String(termwire::b64(s.as_bytes())), record);
+        handle(
+            "open",
+            "t1",
+            &serde_json::json!({"shell": "/bin/bash", "cols": 91, "rows": 17}),
+            record,
+        );
+        let typed = |s: &str| {
+            handle(
+                "input",
+                "t1",
+                &Value::String(termwire::b64(s.as_bytes())),
+                record,
+            )
+        };
         // A terminal of the size asked for, Kiri's tools on the PATH, and
         // the TERM programs expect.
         typed("stty size; echo \"T=$TERM\"; test -t 0 && echo IS-A-TTY; echo DONE$((40+2))\n");
         let (out, _) = output_until(&rx, "t1", "DONE42");
         assert!(out.contains("17 91"), "{out}");
-        assert!(out.contains("T=xterm-256color") && out.contains("IS-A-TTY"), "{out}");
+        assert!(
+            out.contains("T=xterm-256color") && out.contains("IS-A-TTY"),
+            "{out}"
+        );
 
-        handle("resize", "t1", &serde_json::json!({"cols": 120, "rows": 30}), record);
+        handle(
+            "resize",
+            "t1",
+            &serde_json::json!({"cols": 120, "rows": 30}),
+            record,
+        );
         typed("stty size; echo AGAIN$((1+1))\n");
         let (out, _) = output_until(&rx, "t1", "AGAIN2");
         assert!(out.contains("30 120"), "{out}");
@@ -405,8 +541,18 @@ mod tests {
     #[test]
     fn closing_hangs_up_the_shell_and_what_it_started() {
         let rx = listen();
-        handle("open", "t2", &serde_json::json!({"shell": "/bin/bash"}), record);
-        handle("input", "t2", &Value::String(termwire::b64(b"sleep 600 & echo STARTED$((2*3))\n")), record);
+        handle(
+            "open",
+            "t2",
+            &serde_json::json!({"shell": "/bin/bash"}),
+            record,
+        );
+        handle(
+            "input",
+            "t2",
+            &Value::String(termwire::b64(b"sleep 600 & echo STARTED$((2*3))\n")),
+            record,
+        );
         output_until(&rx, "t2", "STARTED6");
         let pid = with(|s| s["t2"].pid);
         handle("close", "t2", &Value::Null, record);
@@ -421,8 +567,18 @@ mod tests {
     #[test]
     fn a_shell_that_ignores_the_hang_up_still_goes() {
         let rx = listen();
-        handle("open", "t3", &serde_json::json!({"shell": "/bin/bash"}), record);
-        handle("input", "t3", &Value::String(termwire::b64(b"trap '' HUP; echo TRAPPED$((3*3))\n")), record);
+        handle(
+            "open",
+            "t3",
+            &serde_json::json!({"shell": "/bin/bash"}),
+            record,
+        );
+        handle(
+            "input",
+            "t3",
+            &Value::String(termwire::b64(b"trap '' HUP; echo TRAPPED$((3*3))\n")),
+            record,
+        );
         output_until(&rx, "t3", "TRAPPED9");
         let pid = with(|s| s["t3"].pid);
         handle("close", "t3", &Value::Null, record);
@@ -437,7 +593,11 @@ mod tests {
     #[test]
     fn a_page_can_only_start_a_listed_shell() {
         let (list, default) = shells();
-        assert!(!list.iter().any(|s| s.id.ends_with("/nologin") || s.id.ends_with("/false")));
+        assert!(
+            !list
+                .iter()
+                .any(|s| s.id.ends_with("/nologin") || s.id.ends_with("/false"))
+        );
         assert!(Path::new(&default).is_absolute());
     }
 }

@@ -39,12 +39,22 @@ fn flavor() -> Option<&'static str> {
         .get_or_init(|| {
             let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
             let plist = std::fs::read_to_string(exe.parent()?.parent()?.join("Info.plist")).ok()?;
-            let id = plist.split("<key>CFBundleIdentifier</key>").nth(1)?.split("<string>").nth(1)?.split("</string>").next()?.trim();
+            let id = plist
+                .split("<key>CFBundleIdentifier</key>")
+                .nth(1)?
+                .split("<string>")
+                .nth(1)?
+                .split("</string>")
+                .next()?
+                .trim();
             if id == DEV_APP_ID {
                 return Some(String::new());
             }
             let f = id.strip_prefix("dev.kiri.app.")?;
-            (!f.is_empty() && f.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())).then(|| f.to_owned())
+            (!f.is_empty()
+                && f.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
+            .then(|| f.to_owned())
         })
         .as_deref()
 }
@@ -56,7 +66,9 @@ fn featured(dev_name: &str, feature: &str) -> String {
     if let Some(head) = dev_name.strip_suffix(".dev") {
         return format!("{head}.{feature}");
     }
-    dev_name.replacen(" Dev", &format!(" {title}"), 1).replacen("-dev", &format!("-{feature}"), 1)
+    dev_name
+        .replacen(" Dev", &format!(" {title}"), 1)
+        .replacen("-dev", &format!("-{feature}"), 1)
 }
 
 /// A name with a Dev counterpart. Displays as the one this binary uses.
@@ -68,7 +80,8 @@ impl Name {
             None => self.0,
             Some("") => self.1,
             Some(f) => {
-                static NAMES: std::sync::Mutex<Vec<(&str, &str)>> = std::sync::Mutex::new(Vec::new());
+                static NAMES: std::sync::Mutex<Vec<(&str, &str)>> =
+                    std::sync::Mutex::new(Vec::new());
                 let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some((_, n)) = names.iter().find(|(d, _)| *d == self.1) {
                     return n;
@@ -102,7 +115,14 @@ pub fn init() {
     if dev() && std::env::var_os("KIRI_DATA_DIR").is_none() {
         if let Some(home) = std::env::var_os("HOME") {
             // SAFETY: called first thing in main, before any other thread.
-            unsafe { std::env::set_var("KIRI_DATA_DIR", std::path::Path::new(&home).join("Library/Application Support").join(APP.get())) };
+            unsafe {
+                std::env::set_var(
+                    "KIRI_DATA_DIR",
+                    std::path::Path::new(&home)
+                        .join("Library/Application Support")
+                        .join(APP.get()),
+                )
+            };
         }
     }
 }
@@ -112,7 +132,10 @@ mod tests {
     #[test]
     fn a_test_binary_is_not_dev() {
         assert!(!super::dev());
-        assert_eq!((super::STATE.get(), super::CONTEXT.to_string()), (".kiri", "kiri".to_owned()));
+        assert_eq!(
+            (super::STATE.get(), super::CONTEXT.to_string()),
+            (".kiri", "kiri".to_owned())
+        );
     }
 
     #[test]
@@ -122,7 +145,13 @@ mod tests {
         assert_eq!(featured(".kiri-dev", "builds"), ".kiri-builds");
         assert_eq!(featured("kiri-dev", "builds"), "kiri-builds");
         assert_eq!(featured("kiri-dev-build", "builds"), "kiri-builds-build");
-        assert_eq!(featured("dev.kiri.daemon.dev", "builds"), "dev.kiri.daemon.builds");
-        assert_eq!(featured("dev.kiri.app.dev", "builds"), "dev.kiri.app.builds");
+        assert_eq!(
+            featured("dev.kiri.daemon.dev", "builds"),
+            "dev.kiri.daemon.builds"
+        );
+        assert_eq!(
+            featured("dev.kiri.app.dev", "builds"),
+            "dev.kiri.app.builds"
+        );
     }
 }

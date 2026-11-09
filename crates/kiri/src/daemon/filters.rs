@@ -9,14 +9,25 @@ pub struct Filters(Vec<(String, Vec<String>)>);
 
 impl Filters {
     pub fn parse(raw: Option<&str>) -> Result<Filters, String> {
-        let Some(raw) = raw.filter(|r| !r.is_empty()) else { return Ok(Filters::default()) };
+        let Some(raw) = raw.filter(|r| !r.is_empty()) else {
+            return Ok(Filters::default());
+        };
         let v: Value = serde_json::from_str(raw).map_err(|e| format!("invalid filters: {e}"))?;
-        let Value::Object(map) = v else { return Err("invalid filters: not an object".into()) };
+        let Value::Object(map) = v else {
+            return Err("invalid filters: not an object".into());
+        };
         let mut out = Vec::with_capacity(map.len());
         for (k, v) in map {
             let values = match v {
-                Value::Array(a) => a.into_iter().filter_map(|s| s.as_str().map(str::to_owned)).collect(),
-                Value::Object(o) => o.into_iter().filter(|(_, on)| on.as_bool().unwrap_or(false)).map(|(s, _)| s).collect(),
+                Value::Array(a) => a
+                    .into_iter()
+                    .filter_map(|s| s.as_str().map(str::to_owned))
+                    .collect(),
+                Value::Object(o) => o
+                    .into_iter()
+                    .filter(|(_, on)| on.as_bool().unwrap_or(false))
+                    .map(|(s, _)| s)
+                    .collect(),
                 Value::String(s) => vec![s],
                 _ => Vec::new(),
             };
@@ -34,7 +45,11 @@ impl Filters {
     }
 
     pub fn values(&self, key: &str) -> Option<&[String]> {
-        self.0.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_slice()).filter(|v| !v.is_empty())
+        self.0
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_slice())
+            .filter(|v| !v.is_empty())
     }
 
     /// True when `key` is absent or any of its values satisfies `f`.
@@ -49,7 +64,11 @@ impl Filters {
             Some((k, v)) => labels.get(k).and_then(Value::as_str) == Some(v),
             None => labels.get(want).is_some(),
         };
-        self.values("label").is_none_or(|v| v.iter().all(|w| has(w))) && self.values("label!").is_none_or(|v| !v.iter().any(|w| has(w)))
+        self.values("label")
+            .is_none_or(|v| v.iter().all(|w| has(w)))
+            && self
+                .values("label!")
+                .is_none_or(|v| !v.iter().any(|w| has(w)))
     }
 
     /// The `name` filter, which Docker matches as a regular expression:
@@ -62,7 +81,9 @@ impl Filters {
 
     /// `true`/`1` or `false`/`0` for a boolean filter, if given.
     pub fn bool(&self, key: &str) -> Option<bool> {
-        self.values(key).and_then(|v| v.first()).map(|s| matches!(s.as_str(), "true" | "1"))
+        self.values(key)
+            .and_then(|v| v.first())
+            .map(|s| matches!(s.as_str(), "true" | "1"))
     }
 }
 

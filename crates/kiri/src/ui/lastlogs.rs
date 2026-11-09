@@ -26,7 +26,11 @@ pub fn lines(body: &[u8], tty: bool, keep: usize) -> Vec<String> {
         }
     }
     let text = String::from_utf8_lossy(&text);
-    let all: Vec<String> = text.split('\n').map(|l| l.trim_end_matches('\r').to_owned()).filter(|l| !l.trim().is_empty()).collect();
+    let all: Vec<String> = text
+        .split('\n')
+        .map(|l| l.trim_end_matches('\r').to_owned())
+        .filter(|l| !l.trim().is_empty())
+        .collect();
     all[all.len().saturating_sub(keep)..].to_vec()
 }
 
@@ -45,7 +49,10 @@ mod tests {
     fn reads_framed_and_tty_logs() {
         let mut body = frame(1, "starting\n");
         body.extend(frame(2, "Error: You must specify POSTGRES_PASSWORD\n\n"));
-        assert_eq!(lines(&body, false, 60), ["starting", "Error: You must specify POSTGRES_PASSWORD"]);
+        assert_eq!(
+            lines(&body, false, 60),
+            ["starting", "Error: You must specify POSTGRES_PASSWORD"]
+        );
         assert_eq!(lines(b"a\r\nb\r\nc\r\n", true, 2), ["b", "c"]);
         assert!(lines(b"", false, 60).is_empty());
     }

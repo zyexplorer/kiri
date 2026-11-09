@@ -18,6 +18,9 @@ mod app;
 #[path = "../../kiri/src/ui/assemble.rs"]
 mod assemble;
 #[cfg(windows)]
+#[path = "../../kiri/src/ui/notes.rs"]
+mod notes;
+#[cfg(windows)]
 mod client;
 #[cfg(windows)]
 mod detail;

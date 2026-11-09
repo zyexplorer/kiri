@@ -28,12 +28,18 @@ pub struct Request {
 
 impl Request {
     pub fn query(&self, key: &str) -> Option<&str> {
-        self.query.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.query
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 
     /// Every value of a repeated key (`names=a&names=b`).
     pub fn queries<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-        self.query.iter().filter(move |(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.query
+            .iter()
+            .filter(move |(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 
     /// Docker sends booleans as `1`/`true`/`0`/`false`.
@@ -42,21 +48,36 @@ impl Request {
     }
 
     pub fn header(&self, key: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+            .map(|(_, v)| v.as_str())
     }
 
     /// A request the daemon makes of itself (the managed builder's
     /// container create), so it goes through the same code as a client's.
     pub fn internal(method: &str, path: &str, query: &[(&str, &str)], body: Vec<u8>) -> Request {
-        let query = query.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
-        Request { method: method.to_owned(), path: path.to_owned(), query, headers: Vec::new(), body }
+        let query = query
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        Request {
+            method: method.to_owned(),
+            path: path.to_owned(),
+            query,
+            headers: Vec::new(),
+            body,
+        }
     }
 }
 
 /// Reads the next request on a connection. `Ok(None)` is a clean close.
 /// When `stream(method, path)` is true the body stays unread: the handler
 /// reads it through [`Body`].
-pub fn read_request(r: &mut BufReader<UnixStream>, stream: impl Fn(&str, &str) -> bool) -> io::Result<Option<Request>> {
+pub fn read_request(
+    r: &mut BufReader<UnixStream>,
+    stream: impl Fn(&str, &str) -> bool,
+) -> io::Result<Option<Request>> {
     // The request line and headers are read through a cap, so a client
     // cannot exhaust memory with an endless line. The body is read after.
     let (method, path, query, headers) = {
@@ -67,7 +88,10 @@ pub fn read_request(r: &mut BufReader<UnixStream>, stream: impl Fn(&str, &str) -
         }
         let mut parts = line.split_whitespace();
         let (Some(method), Some(target)) = (parts.next(), parts.next()) else {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "bad request line"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bad request line",
+            ));
         };
         let method = method.to_owned();
         let (raw_path, raw_query) = target.split_once('?').unwrap_or((target, ""));
@@ -84,7 +108,10 @@ pub fn read_request(r: &mut BufReader<UnixStream>, stream: impl Fn(&str, &str) -
         loop {
             line.clear();
             if head.read_line(&mut line)? == 0 {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "headers too large or cut short"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "headers too large or cut short",
+                ));
             }
             let l = line.trim_end();
             if l.is_empty() {
@@ -97,11 +124,20 @@ pub fn read_request(r: &mut BufReader<UnixStream>, stream: impl Fn(&str, &str) -
         (method, path, query, headers)
     };
     let streamed = stream(&method, &path);
-    let mut req = Request { method, path, query, headers, body: Vec::new() };
+    let mut req = Request {
+        method,
+        path,
+        query,
+        headers,
+        body: Vec::new(),
+    };
     if streamed {
         return Ok(Some(req));
     }
-    if req.header("transfer-encoding").is_some_and(|v| v.eq_ignore_ascii_case("chunked")) {
+    if req
+        .header("transfer-encoding")
+        .is_some_and(|v| v.eq_ignore_ascii_case("chunked"))
+    {
         let mut line = String::new();
         loop {
             line.clear();
@@ -111,7 +147,10 @@ pub fn read_request(r: &mut BufReader<UnixStream>, stream: impl Fn(&str, &str) -
             let n = usize::from_str_radix(size, 16)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad chunk size"))?;
             if n > MAX_BODY || req.body.len().checked_add(n).is_none_or(|t| t > MAX_BODY) {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "request body too large"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "request body too large",
+                ));
             }
             let start = req.body.len();
             req.body.resize(start + n, 0);
@@ -122,9 +161,15 @@ pub fn read_request(r: &mut BufReader<UnixStream>, stream: impl Fn(&str, &str) -
                 break;
             }
         }
-    } else if let Some(len) = req.header("content-length").and_then(|v| v.parse::<usize>().ok()) {
+    } else if let Some(len) = req
+        .header("content-length")
+        .and_then(|v| v.parse::<usize>().ok())
+    {
         if len > MAX_BODY {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "request body too large"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "request body too large",
+            ));
         }
         req.body.resize(len, 0);
         r.read_exact(&mut req.body)?;
@@ -143,9 +188,22 @@ pub struct Body<'a> {
 
 impl<'a> Body<'a> {
     pub fn new(req: &Request, r: &'a mut BufReader<UnixStream>) -> Body<'a> {
-        let chunked = req.header("transfer-encoding").is_some_and(|v| v.eq_ignore_ascii_case("chunked"));
-        let left = if chunked { 0 } else { req.header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0) };
-        Body { r, chunked, left, done: !chunked && left == 0 }
+        let chunked = req
+            .header("transfer-encoding")
+            .is_some_and(|v| v.eq_ignore_ascii_case("chunked"));
+        let left = if chunked {
+            0
+        } else {
+            req.header("content-length")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0)
+        };
+        Body {
+            r,
+            chunked,
+            left,
+            done: !chunked && left == 0,
+        }
     }
 }
 
@@ -159,7 +217,8 @@ impl Read for Body<'_> {
             self.r.read_line(&mut line)?;
             // A chunk size may carry extensions after a semicolon.
             let size = line.trim().split(';').next().unwrap_or("");
-            self.left = u64::from_str_radix(size, 16).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad chunk size"))?;
+            self.left = u64::from_str_radix(size, 16)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad chunk size"))?;
             if self.left == 0 {
                 // Trailers, then the blank line.
                 loop {
@@ -175,7 +234,10 @@ impl Read for Body<'_> {
         let want = buf.len().min(self.left.min(usize::MAX as u64) as usize);
         let n = self.r.read(&mut buf[..want])?;
         if n == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "request body cut short"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "request body cut short",
+            ));
         }
         self.left -= n as u64;
         if self.left == 0 {
@@ -194,9 +256,10 @@ impl Read for Body<'_> {
 fn strip_version(path: &str) -> &str {
     if let Some(rest) = path.strip_prefix("/v")
         && let Some(i) = rest.find('/')
-            && rest[..i].bytes().all(|b| b.is_ascii_digit() || b == b'.') {
-                return &rest[i..];
-            }
+        && rest[..i].bytes().all(|b| b.is_ascii_digit() || b == b'.')
+    {
+        return &rest[i..];
+    }
     path
 }
 
@@ -252,9 +315,24 @@ fn note_failure(status: u16) {
     SERVING.with(|s| {
         let (method, path) = &*s.borrow();
         match status {
-            404 => crate::diag::debug!("request failed", method = method, path = path, status = status),
-            400..=499 => crate::diag::warn!("request failed", method = method, path = path, status = status),
-            _ => crate::diag::error!("request failed", method = method, path = path, status = status),
+            404 => crate::diag::debug!(
+                "request failed",
+                method = method,
+                path = path,
+                status = status
+            ),
+            400..=499 => crate::diag::warn!(
+                "request failed",
+                method = method,
+                path = path,
+                status = status
+            ),
+            _ => crate::diag::error!(
+                "request failed",
+                method = method,
+                path = path,
+                status = status
+            ),
         }
     });
 }
@@ -275,7 +353,10 @@ pub fn respond(w: &mut impl Write, status: u16, content_type: &str, body: &[u8])
     let extra = if status == 204 || status == 304 {
         String::new()
     } else {
-        format!("Content-Type: {content_type}\r\nContent-Length: {}\r\n", body.len())
+        format!(
+            "Content-Type: {content_type}\r\nContent-Length: {}\r\n",
+            body.len()
+        )
     };
     head(w, status, &extra)?;
     w.write_all(body)?;
@@ -283,8 +364,21 @@ pub fn respond(w: &mut impl Write, status: u16, content_type: &str, body: &[u8])
 }
 
 /// `respond` plus extra header lines, each ending in CRLF.
-pub fn respond_with(w: &mut impl Write, status: u16, content_type: &str, extra: &str, body: &[u8]) -> io::Result<()> {
-    head(w, status, &format!("Content-Type: {content_type}\r\nContent-Length: {}\r\n{extra}", body.len()))?;
+pub fn respond_with(
+    w: &mut impl Write,
+    status: u16,
+    content_type: &str,
+    extra: &str,
+    body: &[u8],
+) -> io::Result<()> {
+    head(
+        w,
+        status,
+        &format!(
+            "Content-Type: {content_type}\r\nContent-Length: {}\r\n{extra}",
+            body.len()
+        ),
+    )?;
     w.write_all(body)?;
     w.flush()
 }
@@ -299,7 +393,11 @@ pub fn no_content(w: &mut impl Write) -> io::Result<()> {
 
 /// Docker's error shape: `{"message": "..."}`.
 pub fn error(w: &mut impl Write, status: u16, message: &str) -> io::Result<()> {
-    json(w, status, &serde_json::json!({ "message": message }).to_string())
+    json(
+        w,
+        status,
+        &serde_json::json!({ "message": message }).to_string(),
+    )
 }
 
 /// Starts a streamed response; follow with [`chunk`] calls and [`end`].
@@ -308,8 +406,17 @@ pub fn begin_stream(w: &mut impl Write, status: u16, content_type: &str) -> io::
 }
 
 /// `begin_stream` plus extra header lines, each ending in CRLF.
-pub fn begin_stream_with(w: &mut impl Write, status: u16, content_type: &str, extra: &str) -> io::Result<()> {
-    head(w, status, &format!("Content-Type: {content_type}\r\nTransfer-Encoding: chunked\r\n{extra}"))?;
+pub fn begin_stream_with(
+    w: &mut impl Write,
+    status: u16,
+    content_type: &str,
+    extra: &str,
+) -> io::Result<()> {
+    head(
+        w,
+        status,
+        &format!("Content-Type: {content_type}\r\nTransfer-Encoding: chunked\r\n{extra}"),
+    )?;
     w.flush()
 }
 
@@ -337,7 +444,11 @@ pub fn end(w: &mut impl Write) -> io::Result<()> {
 /// Switches the connection to Docker's raw stream for `attach`. After this
 /// the connection carries multiplexed output frames until it closes.
 pub fn upgrade(w: &mut impl Write) -> io::Result<()> {
-    head(w, 101, "Content-Type: application/vnd.docker.raw-stream\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n")?;
+    head(
+        w,
+        101,
+        "Content-Type: application/vnd.docker.raw-stream\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n",
+    )?;
     w.flush()
 }
 
@@ -364,7 +475,10 @@ mod tests {
 
     #[test]
     fn decodes_query_values() {
-        assert_eq!(percent_decode("docker.io%2Flibrary%2Falpine"), "docker.io/library/alpine");
+        assert_eq!(
+            percent_decode("docker.io%2Flibrary%2Falpine"),
+            "docker.io/library/alpine"
+        );
         assert_eq!(percent_decode("a+b"), "a b");
         assert_eq!(percent_decode("100%"), "100%");
         assert_eq!(percent_decode("%7B%22a%22%3A1%7D"), "{\"a\":1}");

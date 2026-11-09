@@ -35,16 +35,18 @@ fn due(last: Option<SystemTime>, now: SystemTime) -> bool {
 pub fn start(check: fn()) {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let _ = std::thread::Builder::new().name("kiri-recheck".into()).spawn(move || {
-            loop {
-                std::thread::sleep(TICK);
-                let last = *LAST.lock().unwrap_or_else(PoisonError::into_inner);
-                if due(last, SystemTime::now()) {
-                    checked();
-                    check();
+        let _ = std::thread::Builder::new()
+            .name("kiri-recheck".into())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(TICK);
+                    let last = *LAST.lock().unwrap_or_else(PoisonError::into_inner);
+                    if due(last, SystemTime::now()) {
+                        checked();
+                        check();
+                    }
                 }
-            }
-        });
+            });
     });
 }
 

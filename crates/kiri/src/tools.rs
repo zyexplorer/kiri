@@ -18,7 +18,11 @@ pub fn dir() -> io::Result<PathBuf> {
 }
 
 /// The three files, as they sit in `dir()`.
-const FILES: [&str; 3] = ["docker", "cli-plugins/docker-compose", "cli-plugins/docker-buildx"];
+const FILES: [&str; 3] = [
+    "docker",
+    "cli-plugins/docker-compose",
+    "cli-plugins/docker-buildx",
+];
 
 pub fn installed() -> bool {
     dir().is_ok_and(|d| FILES.iter().all(|f| d.join(f).is_file()))
@@ -64,15 +68,30 @@ pub fn verify(path: &Path, want: &str) -> io::Result<()> {
     let got = sha256(path)?;
     if got != want {
         let _ = std::fs::remove_file(path);
-        return Err(io::Error::other(format!("{}: checksum {got} is not the expected {want}", path.file_name().unwrap_or_default().to_string_lossy())));
+        return Err(io::Error::other(format!(
+            "{}: checksum {got} is not the expected {want}",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        )));
     }
     Ok(())
 }
 
 /// One download into `to`, reporting percent as it goes.
-pub(crate) fn download(agent: &ureq::Agent, url: &str, to: &Path, progress: &mut dyn FnMut(u8)) -> io::Result<()> {
-    let resp = agent.get(url).call().map_err(|e| io::Error::other(format!("{url}: {e}")))?;
-    let total: Option<u64> = resp.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
+pub(crate) fn download(
+    agent: &ureq::Agent,
+    url: &str,
+    to: &Path,
+    progress: &mut dyn FnMut(u8),
+) -> io::Result<()> {
+    let resp = agent
+        .get(url)
+        .call()
+        .map_err(|e| io::Error::other(format!("{url}: {e}")))?;
+    let total: Option<u64> = resp
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse().ok());
     let mut body = resp.into_body().into_reader();
     let mut out = std::fs::File::create(to)?;
     let (mut got, mut last) = (0u64, 255u8);
@@ -108,7 +127,11 @@ pub fn ensure(progress: &mut dyn FnMut(&str, usize, usize, u8)) -> io::Result<()
         // This Mac's builds: Apple Silicon or Intel.
         let mac = MacArch::HOST;
         let [(dv, dsum), (cv, csum), (bv, bsum)] = mac.tools();
-        let items = [("docker", mac.docker_url(dv), dsum, FILES[0]), ("Compose", mac.compose_url(cv), csum, FILES[1]), ("buildx", mac.buildx_url(bv), bsum, FILES[2])];
+        let items = [
+            ("docker", mac.docker_url(dv), dsum, FILES[0]),
+            ("Compose", mac.compose_url(cv), csum, FILES[1]),
+            ("buildx", mac.buildx_url(bv), bsum, FILES[2]),
+        ];
         for (i, (label, url, sum, file)) in items.iter().enumerate() {
             let dest = dir.join(file);
             if dest.is_file() {
@@ -116,11 +139,19 @@ pub fn ensure(progress: &mut dyn FnMut(&str, usize, usize, u8)) -> io::Result<()
                 continue;
             }
             let part = tmp.join(format!("{i}.part"));
-            download(&agent, url, &part, &mut |pct| progress(label, i + 1, items.len(), pct))?;
+            download(&agent, url, &part, &mut |pct| {
+                progress(label, i + 1, items.len(), pct)
+            })?;
             verify(&part, sum)?;
             let ready = if *file == "docker" {
                 // The CLI is docker/docker inside the release tarball.
-                let st = std::process::Command::new("/usr/bin/tar").arg("-xzf").arg(&part).arg("-C").arg(&tmp).arg("docker/docker").status()?;
+                let st = std::process::Command::new("/usr/bin/tar")
+                    .arg("-xzf")
+                    .arg(&part)
+                    .arg("-C")
+                    .arg(&tmp)
+                    .arg("docker/docker")
+                    .status()?;
                 if !st.success() {
                     return Err(io::Error::other("could not unpack the docker CLI"));
                 }

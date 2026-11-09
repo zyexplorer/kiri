@@ -46,9 +46,11 @@ pub(crate) enum Cmd {
     Refresh,
     Pull(String),
     RemoveImage(String),
-    /// Image, env from the Run popover, container name, and an optional host
-    /// port (None = PublishAllPorts only).
-    Run(String, Vec<String>, String, Option<u16>),
+    /// Image, env from the Run popover, container name, an optional host
+    /// port (None = PublishAllPorts only), and optional command line that
+    /// replaces the image's `CMD` (empty keeps the image default; stored as
+    /// `kiri.start.command`).
+    Run(String, Vec<String>, String, Option<u16>, String),
     Container { action: String, id: String },
     RemoveVolume(String),
     RemoveNetwork(String),
@@ -79,6 +81,10 @@ struct PageCmd {
     /// Optional host port for `run` (`docker run -p`). `0` means unset.
     #[serde(default)]
     port: u64,
+    /// Optional command for `run` (`docker run IMAGE …`). Empty keeps the
+    /// image's `CMD`.
+    #[serde(default)]
+    command: String,
 }
 
 /// What the engine needs from the rest of kiri-win.
@@ -188,10 +194,10 @@ fn engine(rx: &Receiver<Cmd>, tx: Sender<Cmd>) {
                 refresh();
             }
             Ok(Cmd::Pull(name)) => pull(name),
-            Ok(Cmd::Run(name, env, container, host_port)) => {
+            Ok(Cmd::Run(name, env, container, host_port, command)) => {
                 // The page shows its spinner until this says how it went.
                 // Name/port conflicts stay on the Run popover (`message`).
-                let result = run_image(&name, &env, &container, host_port);
+                let result = run_image(&name, &env, &container, host_port, command.as_str());
                 let message = result.as_ref().err().map(std::string::ToString::to_string);
                 emit(json!({"type": "ran", "name": name, "error": message.is_some(), "message": message}).to_string());
             }
@@ -638,14 +644,127 @@ fn primary_exposed(image: &str) -> Option<String> {
     keys.iter().find(|k| k.ends_with("/tcp")).cloned().or_else(|| keys.into_iter().next())
 }
 
-fn run_image(image: &str, env: &[String], container: &str, host_port: Option<u16>) -> io::Result<()> {
+fn flatten_continuations(s: &str) -> String {
+    let mut out = String::new();
+    for line in s.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let cont = t.ends_with('\\')
+            && t.as_bytes().iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 1;
+        let piece = if cont { t[..t.len() - 1].trim_end() } else { t };
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(piece);
+    }
+    out
+}
+
+/// Splits a Run popover command the way a simple shell would: whitespace
+/// separates args; single or double quotes keep spaces inside one arg.
+fn split_command(s: &str) -> Vec<String> {
+    let flat = flatten_continuations(s);
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in flat.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            None => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn shell_arg(s: &str) -> String {
+    if s.is_empty() {
+        return "''".into();
+    }
+    if s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/=@+,".contains(c)) {
+        s.to_owned()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
+fn docker_run_line(
+    image: &str,
+    env: &[String],
+    name: &str,
+    bindings: &serde_json::Map<String, Value>,
+    command: &str,
+) -> String {
+    let mut lines: Vec<String> = vec!["docker run -d -it -P".into()];
+    if !name.is_empty() {
+        lines.push(format!("  --name {}", shell_arg(name)));
+    }
+    for e in env {
+        lines.push(format!("  -e {}", shell_arg(e)));
+    }
+    let mut keys: Vec<_> = bindings.keys().cloned().collect();
+    keys.sort();
+    for key in keys {
+        let Some(list) = bindings.get(&key).and_then(|v| v.as_array()) else { continue };
+        let host = list.first().and_then(|b| b.get("HostPort")).and_then(|p| p.as_str()).unwrap_or("");
+        let (port, proto) = match key.split_once('/') {
+            Some((p, "udp")) => (p, "/udp"),
+            Some((p, _)) => (p, ""),
+            None => (key.as_str(), ""),
+        };
+        if host.is_empty() {
+            continue;
+        }
+        lines.push(format!("  -p {host}:{port}{proto}"));
+    }
+    lines.push(format!("  {}", shell_arg(image)));
+    let argv = split_command(command);
+    if !argv.is_empty() {
+        lines.push(format!("  {}", argv.iter().map(|a| shell_arg(a)).collect::<Vec<_>>().join(" ")));
+    }
+    let last = lines.len().saturating_sub(1);
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(i, line)| if i == last { line } else { format!("{line} \\") })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn run_image(image: &str, env: &[String], container: &str, host_port: Option<u16>, command: &str) -> io::Result<()> {
     let mut bindings = serde_json::Map::new();
     if let Some(hp) = host_port {
         let key = primary_exposed(image).ok_or_else(|| io::Error::other("this image exposes no ports to publish on the host"))?;
         bindings.insert(key, json!([{"HostIp": "", "HostPort": hp.to_string()}]));
     }
-    let body = json!({"Image": image, "Tty": true, "OpenStdin": true, "Env": env,
+    let name = container.trim().trim_start_matches('/');
+    let start_cmd = command.trim();
+    let argv = split_command(start_cmd);
+    // Labels must stay single-line without `\` continuations; the page
+    // pretty-prints with line breaks again.
+    let run_line = docker_run_line(image, env, name, &bindings, start_cmd)
+        .lines()
+        .map(|l| l.trim().trim_end_matches('\\').trim())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut body = json!({"Image": image, "Tty": true, "OpenStdin": true, "Env": env,
+        "Labels": {"kiri.start.command": run_line},
         "HostConfig": {"PublishAllPorts": true, "PortBindings": bindings}});
+    if !argv.is_empty() {
+        body["Cmd"] = json!(argv);
+    }
     let began = std::time::Instant::now();
     let path = match container.trim() {
         "" => "/containers/create".to_owned(),
@@ -923,7 +1042,7 @@ pub fn on_message(msg: &str) {
         "run" => {
             let env = c.value.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
             let host_port = u16::try_from(c.port).ok().filter(|&p| p > 0);
-            send(Cmd::Run(c.name, env, c.container, host_port));
+            send(Cmd::Run(c.name, env, c.container, host_port, c.command));
         }
         "container" => send(Cmd::Container { action: c.action, id: c.id }),
         "ports" => send(Cmd::Ports { id: c.id, ports: c.ports }),
@@ -1163,6 +1282,14 @@ pub fn on_message(msg: &str) {
             crate::diag::handle(cmd, c.name, c.id, &c.value);
         }
         "importsources" => emit(json!({"type": "importsources", "sources": []}).to_string()),
+        // Personal Markdown notes under %LOCALAPPDATA%\Kiri\notes.
+        "notes" | "noteread" | "notesave" | "notedelete" | "notemkdir" | "notermdir" | "noterename" | "notemove" => {
+            let (cmd, id, value) = (c.cmd.clone(), if c.id.is_empty() { c.name.clone() } else { c.id.clone() }, c.value);
+            std::thread::spawn(move || {
+                let state = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri"));
+                crate::notes::handle(&cmd, &id, &value, state, emit);
+            });
+        }
         "zoom" => Handle.run(crate::app::Ui::toggle_maximized),
         // The window has Windows' own title bar to drag.
         "drag" | "toolsretry" | "inventory" | "import" => {}

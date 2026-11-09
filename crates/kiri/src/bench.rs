@@ -39,7 +39,12 @@ const ENGINES: [(&str, &str, &str); 3] = [
 ];
 
 pub fn run(args: &[String]) -> io::Result<()> {
-    let mut o = Opts { runs: 50, image: "alpine:latest".into(), bridge: false, only: None };
+    let mut o = Opts {
+        runs: 50,
+        image: "alpine:latest".into(),
+        bridge: false,
+        only: None,
+    };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let bad = || io::Error::new(io::ErrorKind::InvalidInput, USAGE);
@@ -52,9 +57,16 @@ pub fn run(args: &[String]) -> io::Result<()> {
         }
     }
     let warmup = 5;
-    println!("Container lifecycle: {} → `true` → exit → removed, {} runs (+{warmup} warm-up)\n", o.image, o.runs);
+    println!(
+        "Container lifecycle: {} → `true` → exit → removed, {} runs (+{warmup} warm-up)\n",
+        o.image, o.runs
+    );
 
-    let wanted = |name: &str| o.only.as_deref().is_none_or(|w| name.to_ascii_lowercase().starts_with(w));
+    let wanted = |name: &str| {
+        o.only
+            .as_deref()
+            .is_none_or(|w| name.to_ascii_lowercase().starts_with(w))
+    };
     let mut rows: Vec<(String, Vec<Duration>)> = Vec::new();
     if o.bridge {
         // The engine-only path has no networking; the daemon rows below cover Kiri.
@@ -62,13 +74,20 @@ pub fn run(args: &[String]) -> io::Result<()> {
         // The daemon holds the data disk; a second VM may not open it.
         let daemon_up = crate::daemon::socket_path().is_ok_and(|p| UnixStream::connect(p).is_ok());
         if daemon_up {
-            println!("  Kiri engine-only row skipped: the daemon is running (measured through it below)");
+            println!(
+                "  Kiri engine-only row skipped: the daemon is running (measured through it below)"
+            );
         } else {
-            rows.push(("Kiri — engine (vsock to guest agent)".into(), kiri(&o, warmup)?));
+            rows.push((
+                "Kiri — engine (vsock to guest agent)".into(),
+                kiri(&o, warmup)?,
+            ));
         }
     }
     let net = if o.bridge { "bridge" } else { "none" };
-    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| io::Error::other("HOME is not set"))?;
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("HOME is not set"))?;
     for (name, socket, context) in ENGINES {
         if !wanted(name) {
             continue;
@@ -79,8 +98,14 @@ pub fn run(args: &[String]) -> io::Result<()> {
             continue;
         }
         eprintln!("  measuring {name}…");
-        rows.push((format!("{name} — Docker API, --network {net}"), docker_api(&socket, &o, net, warmup)?));
-        rows.push((format!("{name} — docker CLI, --network {net}"), docker_cli(context, &o, net, warmup)?));
+        rows.push((
+            format!("{name} — Docker API, --network {net}"),
+            docker_api(&socket, &o, net, warmup)?,
+        ));
+        rows.push((
+            format!("{name} — docker CLI, --network {net}"),
+            docker_cli(context, &o, net, warmup)?,
+        ));
     }
 
     let ms = |d: Duration| d.as_secs_f64() * 1e3;
@@ -97,10 +122,17 @@ pub fn run(args: &[String]) -> io::Result<()> {
     for (name, v) in &rows {
         let mean = v.iter().sum::<Duration>() / v.len().max(1) as u32;
         let ratio = match kiri_on(path_of(name)) {
-            Some(b) if !b.is_zero() && !name.starts_with("Kiri") => format!("   {:.0}× Kiri", pct(v, 50).as_secs_f64() / b.as_secs_f64()),
+            Some(b) if !b.is_zero() && !name.starts_with("Kiri") => {
+                format!("   {:.0}× Kiri", pct(v, 50).as_secs_f64() / b.as_secs_f64())
+            }
             _ => String::new(),
         };
-        println!("{name:44} {:>6.2} ms {:>6.2} ms {:>6.2} ms{ratio}", ms(pct(v, 50)), ms(pct(v, 99)), ms(mean));
+        println!(
+            "{name:44} {:>6.2} ms {:>6.2} ms {:>6.2} ms{ratio}",
+            ms(pct(v, 50)),
+            ms(pct(v, 99)),
+            ms(mean)
+        );
     }
     Ok(())
 }
@@ -108,13 +140,18 @@ pub fn run(args: &[String]) -> io::Result<()> {
 fn pct(v: &[Duration], p: usize) -> Duration {
     let mut s = v.to_vec();
     s.sort_unstable();
-    s.get((s.len() * p / 100).min(s.len().saturating_sub(1))).copied().unwrap_or_default()
+    s.get((s.len() * p / 100).min(s.len().saturating_sub(1)))
+        .copied()
+        .unwrap_or_default()
 }
 
 fn kiri(o: &Opts, warmup: usize) -> io::Result<Vec<Duration>> {
     let store = Store::open(Store::default_root()?)?;
     let image = image(&store, &o.image)?;
-    let mut guest = Guest::boot(&BootOptions { data_disk: true, ..Default::default() })?;
+    let mut guest = Guest::boot(&BootOptions {
+        data_disk: true,
+        ..Default::default()
+    })?;
     ensure_layers(&mut guest, &store, &image)?;
     let layers = layers_top_down(&image);
     let argv = vec!["true".to_owned()];
@@ -155,32 +192,55 @@ fn kiri(o: &Opts, warmup: usize) -> io::Result<Vec<Duration>> {
 
 fn docker_api(socket: &PathBuf, o: &Opts, net: &str, warmup: usize) -> io::Result<Vec<Duration>> {
     let image = o.image.clone();
-    let body = format!(r#"{{"Image":"{image}","Cmd":["true"],"HostConfig":{{"AutoRemove":true,"NetworkMode":"{net}"}}}}"#);
+    let body = format!(
+        r#"{{"Image":"{image}","Cmd":["true"],"HostConfig":{{"AutoRemove":true,"NetworkMode":"{net}"}}}}"#
+    );
     let mut times = Vec::with_capacity(o.runs);
     for i in 0..warmup + o.runs {
         let t = Instant::now();
         let (status, resp) = http(socket, "POST", "/v1.41/containers/create", Some(&body))?;
         if status != 201 {
-            return Err(io::Error::other(format!("create: HTTP {status}: {}", String::from_utf8_lossy(&resp))));
+            return Err(io::Error::other(format!(
+                "create: HTTP {status}: {}",
+                String::from_utf8_lossy(&resp)
+            )));
         }
         let id = json_field(&resp, "Id").ok_or_else(|| io::Error::other("create: no Id"))?;
         // Ask to be told about removal before starting, and wait until the
         // engine has registered that (it answers with headers right away);
         // otherwise a fast container can be gone before the wait exists.
-        let wait = http_send(socket, "POST", &format!("/v1.41/containers/{id}/wait?condition=removed"), None)?;
+        let wait = http_send(
+            socket,
+            "POST",
+            &format!("/v1.41/containers/{id}/wait?condition=removed"),
+            None,
+        )?;
         let mut wait = io::BufReader::new(wait);
         let head = read_head(&mut wait)?;
-        let status: u16 = head.split_whitespace().nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
-        let (started, resp) = http(socket, "POST", &format!("/v1.41/containers/{id}/start"), None)?;
+        let status: u16 = head
+            .split_whitespace()
+            .nth(1)
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+        let (started, resp) = http(
+            socket,
+            "POST",
+            &format!("/v1.41/containers/{id}/start"),
+            None,
+        )?;
         if started != 204 {
-            return Err(io::Error::other(format!("start: HTTP {started}: {}", String::from_utf8_lossy(&resp))));
+            return Err(io::Error::other(format!(
+                "start: HTTP {started}: {}",
+                String::from_utf8_lossy(&resp)
+            )));
         }
         if status == 200 {
             // The body (one chunk with the exit status) arrives once removed.
             loop {
                 let mut line = String::new();
                 io::BufRead::read_line(&mut wait, &mut line)?;
-                let n = usize::from_str_radix(line.trim(), 16).map_err(|_| io::Error::other("wait: bad chunk"))?;
+                let n = usize::from_str_radix(line.trim(), 16)
+                    .map_err(|_| io::Error::other("wait: bad chunk"))?;
                 let mut chunk = vec![0u8; n + 2];
                 wait.read_exact(&mut chunk)?;
                 if n == 0 {
@@ -204,7 +264,16 @@ fn docker_cli(context: &str, o: &Opts, net: &str, warmup: usize) -> io::Result<V
     for i in 0..warmup + o.runs {
         let t = Instant::now();
         let status = Command::new("docker")
-            .args(["--context", context, "run", "--rm", "--network", net, &o.image, "true"])
+            .args([
+                "--context",
+                context,
+                "run",
+                "--rm",
+                "--network",
+                net,
+                &o.image,
+                "true",
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()?;
@@ -219,12 +288,22 @@ fn docker_cli(context: &str, o: &Opts, net: &str, warmup: usize) -> io::Result<V
 }
 
 /// One HTTP/1.1 request over a Unix socket, `Connection: close`.
-fn http(socket: &PathBuf, method: &str, path: &str, body: Option<&str>) -> io::Result<(u16, Vec<u8>)> {
+fn http(
+    socket: &PathBuf,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> io::Result<(u16, Vec<u8>)> {
     let mut s = http_send(socket, method, path, body)?;
     http_read(&mut s)
 }
 
-fn http_send(socket: &PathBuf, method: &str, path: &str, body: Option<&str>) -> io::Result<UnixStream> {
+fn http_send(
+    socket: &PathBuf,
+    method: &str,
+    path: &str,
+    body: Option<&str>,
+) -> io::Result<UnixStream> {
     let mut s = UnixStream::connect(socket)?;
     // A stalled engine becomes an error, not a hung benchmark.
     s.set_read_timeout(Some(Duration::from_secs(30)))?;
@@ -243,14 +322,19 @@ fn http_send(socket: &PathBuf, method: &str, path: &str, body: Option<&str>) -> 
 fn http_read(s: &mut UnixStream) -> io::Result<(u16, Vec<u8>)> {
     let mut r = io::BufReader::new(s);
     let head = read_head(&mut r)?;
-    let status = head.split_whitespace().nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
     let lower = head.to_ascii_lowercase();
     let mut body = Vec::new();
     if lower.contains("transfer-encoding: chunked") {
         loop {
             let mut line = String::new();
             io::BufRead::read_line(&mut r, &mut line)?;
-            let n = usize::from_str_radix(line.trim(), 16).map_err(|_| io::Error::other("bad chunk size"))?;
+            let n = usize::from_str_radix(line.trim(), 16)
+                .map_err(|_| io::Error::other("bad chunk size"))?;
             let mut chunk = vec![0u8; n + 2];
             r.read_exact(&mut chunk)?;
             if n == 0 {

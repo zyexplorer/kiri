@@ -26,20 +26,33 @@ const SOCKET: &str = crate::client::SERVICE_SOCKET;
 pub const SIGN_IN_AGAIN: u8 = 10;
 
 pub fn run(args: &[String]) -> io::Result<u8> {
-    let [user] = args else { return Err(io::Error::other("usage: kiri host-access USER")) };
+    let [user] = args else {
+        return Err(io::Error::other("usage: kiri host-access USER"));
+    };
     // SAFETY: geteuid has no preconditions.
     if unsafe { libc::geteuid() } != 0 {
-        return Err(io::Error::other(format!("needs root: sudo kiri host-access {user}")));
+        return Err(io::Error::other(format!(
+            "needs root: sudo kiri host-access {user}"
+        )));
     }
     if crate::daemon::access::uid(user).is_none() {
         return Err(io::Error::other(format!("no account named {user}")));
     }
     if crate::daemon::access::members(GROUP).is_err() {
-        must(Command::new("groupadd").args(["--system", GROUP]), "groupadd")?;
+        must(
+            Command::new("groupadd").args(["--system", GROUP]),
+            "groupadd",
+        )?;
     }
-    if !crate::daemon::access::members(GROUP)?.iter().any(|m| m == user) {
+    if !crate::daemon::access::members(GROUP)?
+        .iter()
+        .any(|m| m == user)
+    {
         // usermod everywhere we package for; gpasswd where it isn't.
-        let added = Command::new("usermod").args(["-aG", GROUP, user]).status().is_ok_and(|s| s.success());
+        let added = Command::new("usermod")
+            .args(["-aG", GROUP, user])
+            .status()
+            .is_ok_and(|s| s.success());
         if !added {
             must(Command::new("gpasswd").args(["-a", user, GROUP]), "gpasswd")?;
         }
@@ -52,10 +65,14 @@ pub fn run(args: &[String]) -> io::Result<u8> {
             Ok(0)
         }
         Err(e) if crate::daemon::access::unsupported(&e) => {
-            println!("{user} can use Kiri after logging out and back in (this system keeps no access lists)");
+            println!(
+                "{user} can use Kiri after logging out and back in (this system keeps no access lists)"
+            );
             Ok(SIGN_IN_AGAIN)
         }
-        Err(e) => Err(io::Error::other(format!("couldn't give {user} the socket: {e}"))),
+        Err(e) => Err(io::Error::other(format!(
+            "couldn't give {user} the socket: {e}"
+        ))),
     }
 }
 
@@ -64,11 +81,20 @@ fn engine() -> io::Result<()> {
     if answers() {
         return Ok(());
     }
-    let active = Command::new("systemctl").args(["is-active", "--quiet", "kiri"]).status().is_ok_and(|s| s.success());
+    let active = Command::new("systemctl")
+        .args(["is-active", "--quiet", "kiri"])
+        .status()
+        .is_ok_and(|s| s.success());
     if active {
-        must(Command::new("systemctl").args(["restart", "kiri"]), "systemctl restart kiri")?;
+        must(
+            Command::new("systemctl").args(["restart", "kiri"]),
+            "systemctl restart kiri",
+        )?;
     } else {
-        must(Command::new("systemctl").args(["enable", "--now", "kiri"]), "systemctl enable --now kiri")?;
+        must(
+            Command::new("systemctl").args(["enable", "--now", "kiri"]),
+            "systemctl enable --now kiri",
+        )?;
     }
     let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
@@ -77,7 +103,9 @@ fn engine() -> io::Result<()> {
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    Err(io::Error::other("Kiri's engine didn't start: journalctl -u kiri says why"))
+    Err(io::Error::other(
+        "Kiri's engine didn't start: journalctl -u kiri says why",
+    ))
 }
 
 fn answers() -> bool {
@@ -85,6 +113,12 @@ fn answers() -> bool {
 }
 
 fn must(cmd: &mut Command, what: &str) -> io::Result<()> {
-    let status = cmd.status().map_err(|e| io::Error::other(format!("{what}: {e}")))?;
-    if status.success() { Ok(()) } else { Err(io::Error::other(format!("{what} failed ({status})"))) }
+    let status = cmd
+        .status()
+        .map_err(|e| io::Error::other(format!("{what}: {e}")))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!("{what} failed ({status})")))
+    }
 }

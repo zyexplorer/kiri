@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::cli_pins;
 
@@ -30,7 +30,18 @@ const GRYPE: (&str, &str) = cli_pins::LINUX_ARM64_GRYPE;
 const GRYPE: (&str, &str) = cli_pins::LINUX_GRYPE;
 
 fn grype_url(v: &str) -> String {
-    if cfg!(target_os = "macos") { cli_pins::MacArch::HOST.grype_url(v) } else { cli_pins::linux_grype_url(v, if cfg!(target_arch = "aarch64") { "arm64" } else { "amd64" }) }
+    if cfg!(target_os = "macos") {
+        cli_pins::MacArch::HOST.grype_url(v)
+    } else {
+        cli_pins::linux_grype_url(
+            v,
+            if cfg!(target_arch = "aarch64") {
+                "arm64"
+            } else {
+                "amd64"
+            },
+        )
+    }
 }
 
 /// Images being scanned now, so a second click doesn't start another.
@@ -51,21 +62,30 @@ const KEEP: usize = 20;
 
 /// An image's scans, one folder each: Grype's JSON report, the SBOM and a summary.
 fn scan_dir(config_digest: &str) -> io::Result<PathBuf> {
-    Ok(root()?.join("scans").join(kiri_image::store::digest_hex(config_digest)?))
+    Ok(root()?
+        .join("scans")
+        .join(kiri_image::store::digest_hex(config_digest)?))
 }
 
 /// The image's scans, newest first, by their time. A scan kept before there
 /// was a history (the files straight in the image's folder) moves into one.
 fn scan_times(dir: &Path) -> Vec<u64> {
     if let Ok(m) = std::fs::metadata(dir.join("grype.json")) {
-        let at = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+        let at = m
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs());
         let to = dir.join(at.to_string());
         if std::fs::create_dir_all(&to).is_ok() {
             let _ = std::fs::rename(dir.join("grype.json"), to.join("grype.json"));
             let _ = std::fs::rename(dir.join("sbom.cdx.json"), to.join("sbom.cdx.json"));
         }
     }
-    let mut at: Vec<u64> = std::fs::read_dir(dir).into_iter().flatten().flatten()
+    let mut at: Vec<u64> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
         .filter(|e| e.path().join("grype.json").is_file())
         .filter_map(|e| e.file_name().to_str()?.parse().ok())
         .collect();
@@ -99,7 +119,16 @@ fn run(mut c: Command, what: &str) -> io::Result<()> {
     }
     let err = String::from_utf8_lossy(&out.stderr);
     // Grype's log lines carry colour codes; keep the last plain line.
-    let line = err.lines().rev().map(|l| l.replace('\u{1b}', "")).map(|l| l.trim_start_matches(|c: char| c == '[' || c.is_ascii_digit() || c == ';' || c == 'm').to_string()).find(|l| !l.trim().is_empty()).unwrap_or_default();
+    let line = err
+        .lines()
+        .rev()
+        .map(|l| l.replace('\u{1b}', ""))
+        .map(|l| {
+            l.trim_start_matches(|c: char| c == '[' || c.is_ascii_digit() || c == ';' || c == 'm')
+                .to_string()
+        })
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_default();
     Err(io::Error::other(format!("{what}: {}", line.trim())))
 }
 
@@ -120,11 +149,24 @@ fn ensure_grype(progress: &mut dyn FnMut(u8)) -> io::Result<()> {
         crate::tools::download(&crate::tools::agent(), &grype_url(v), &part, progress)?;
         crate::tools::verify(&part, sum)?;
         // busybox's tar in Kiri Linux; /bin is /usr/bin on Ubuntu.
-        let st = Command::new(if cfg!(target_os = "macos") { "/usr/bin/tar" } else { "/bin/tar" }).arg("-xzf").arg(&part).arg("-C").arg(&tmp).arg("grype").status()?;
+        let st = Command::new(if cfg!(target_os = "macos") {
+            "/usr/bin/tar"
+        } else {
+            "/bin/tar"
+        })
+        .arg("-xzf")
+        .arg(&part)
+        .arg("-C")
+        .arg(&tmp)
+        .arg("grype")
+        .status()?;
         if !st.success() {
             return Err(io::Error::other("could not unpack Grype"));
         }
-        std::fs::set_permissions(tmp.join("grype"), std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+        std::fs::set_permissions(
+            tmp.join("grype"),
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )?;
         std::fs::rename(tmp.join("grype"), &dest)
     })();
     let _ = std::fs::remove_dir_all(&tmp);
@@ -157,11 +199,16 @@ fn layout(store: &kiri_image::Store, i: &kiri_image::Image, to: &Path) -> io::Re
         "layers": layers,
     }))?;
     let digest = kiri_image::store::sha256_digest(&manifest);
-    std::fs::write(blobs.join(kiri_image::store::digest_hex(&digest)?), &manifest)?;
+    std::fs::write(
+        blobs.join(kiri_image::store::digest_hex(&digest)?),
+        &manifest,
+    )?;
     std::fs::write(to.join("oci-layout"), br#"{"imageLayoutVersion":"1.0.0"}"#)?;
     std::fs::write(
         to.join("index.json"),
-        serde_json::to_vec(&json!({"schemaVersion": 2, "manifests": [{"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": digest, "size": manifest.len()}]}))?,
+        serde_json::to_vec(
+            &json!({"schemaVersion": 2, "manifests": [{"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": digest, "size": manifest.len()}]}),
+        )?,
     )
 }
 
@@ -172,33 +219,55 @@ pub fn scan(name: &str, progress: &mut dyn FnMut(&str, u8)) -> io::Result<Value>
     let (i, ..) = crate::builds::stored(&store, name)?;
     {
         let mut r = RUNNING.lock().unwrap();
-        if !r.get_or_insert_with(HashSet::new).insert(i.config_digest.clone()) {
+        if !r
+            .get_or_insert_with(HashSet::new)
+            .insert(i.config_digest.clone())
+        {
             return Err(io::Error::other("this image is being scanned already"));
         }
     }
     let result = (|| {
         ensure_grype(&mut |pct| progress("scanner", pct))?;
         progress("database", 0);
-        let has_db = root()?.join("scanner/db").read_dir().is_ok_and(|mut d| d.next().is_some());
+        let has_db = root()?
+            .join("scanner/db")
+            .read_dir()
+            .is_ok_and(|mut d| d.next().is_some());
         // Offline with a database already here: scan with what's here, and
         // Grype says so itself if it's too old.
-        if let Err(e) = run(command(&["db", "update", "-q"])?, "Could not update the vulnerability database") {
+        if let Err(e) = run(
+            command(&["db", "update", "-q"])?,
+            "Could not update the vulnerability database",
+        ) {
             if !has_db {
                 return Err(e);
             }
         }
         progress("scanning", 0);
-        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
         let dir = scan_dir(&i.config_digest)?.join(at.to_string());
         std::fs::create_dir_all(&dir)?;
-        let tmp = store.root().join("tmp").join(format!("scan-{}-{}", std::process::id(), kiri_image::store::digest_hex(&i.config_digest)?));
+        let tmp = store.root().join("tmp").join(format!(
+            "scan-{}-{}",
+            std::process::id(),
+            kiri_image::store::digest_hex(&i.config_digest)?
+        ));
         let _ = std::fs::remove_dir_all(&tmp);
         layout(&store, &i, &tmp)?;
         let report = dir.join("grype.json.part");
         let sbom = dir.join("sbom.cdx.json.part");
         let target = format!("oci-dir:{}", tmp.display());
         let out = (|| {
-            let mut c = command(&["-q", &target, "-o", &format!("json={}", report.display()), "-o", &format!("cyclonedx-json={}", sbom.display())])?;
+            let mut c = command(&[
+                "-q",
+                &target,
+                "-o",
+                &format!("json={}", report.display()),
+                "-o",
+                &format!("cyclonedx-json={}", sbom.display()),
+            ])?;
             c.env("GRYPE_DB_AUTO_UPDATE", "false");
             run(c, "The scan failed")
         })();
@@ -216,7 +285,11 @@ pub fn scan(name: &str, progress: &mut dyn FnMut(&str, u8)) -> io::Result<Value>
         }
         open(name, Some(at))?.ok_or_else(|| io::Error::other("the scan wrote no report"))
     })();
-    RUNNING.lock().unwrap().as_mut().map(|r| r.remove(&i.config_digest));
+    RUNNING
+        .lock()
+        .unwrap()
+        .as_mut()
+        .map(|r| r.remove(&i.config_digest));
     result
 }
 
@@ -229,10 +302,15 @@ pub fn history(name: &str) -> io::Result<Value> {
     let mut list = Vec::new();
     for at in scan_times(&all) {
         let path = all.join(at.to_string()).join("summary.json");
-        let summary = match std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+        let summary = match std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        {
             Some(v) => v,
             None => {
-                let Some(full) = open(name, Some(at))? else { continue };
+                let Some(full) = open(name, Some(at))? else {
+                    continue;
+                };
                 let mut counts = serde_json::Map::new();
                 for v in full["vulns"].as_array().into_iter().flatten() {
                     let k = v["severity"].as_str().unwrap_or("Unknown").to_owned();
@@ -240,7 +318,12 @@ pub fn history(name: &str) -> io::Result<Value> {
                     counts.insert(k, json!(n + 1));
                 }
                 let vulns = full["vulns"].as_array().map_or(0, Vec::len);
-                let fixable = full["vulns"].as_array().into_iter().flatten().filter(|v| v["fixed"].as_array().is_some_and(|f| !f.is_empty())).count();
+                let fixable = full["vulns"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|v| v["fixed"].as_array().is_some_and(|f| !f.is_empty()))
+                    .count();
                 let v = json!({"scanned": at, "counts": counts, "vulns": vulns, "fixable": fixable, "packages": full["packages"], "db": full["db"], "grype": full["grype"]});
                 let _ = std::fs::write(&path, v.to_string());
                 v
@@ -257,12 +340,24 @@ pub fn open(name: &str, at: Option<u64>) -> io::Result<Option<Value>> {
     let store = kiri_image::Store::open(root()?)?;
     let (i, manifest, config) = crate::builds::stored(&store, name)?;
     let all = scan_dir(&i.config_digest)?;
-    let Some(when) = at.or_else(|| scan_times(&all).first().copied()) else { return Ok(None) };
+    let Some(when) = at.or_else(|| scan_times(&all).first().copied()) else {
+        return Ok(None);
+    };
     let dir = all.join(when.to_string());
-    let Ok(raw) = std::fs::read(dir.join("grype.json")) else { return Ok(None) };
+    let Ok(raw) = std::fs::read(dir.join("grype.json")) else {
+        return Ok(None);
+    };
     let report: Value = serde_json::from_slice(&raw).map_err(io::Error::other)?;
-    let packages = std::fs::read(dir.join("sbom.cdx.json")).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).and_then(|s| s["components"].as_array().map(|c| c.len())).unwrap_or(0);
-    let s = summarize(&report, &image_lines(&manifest, &config, &i.platform), &config);
+    let packages = std::fs::read(dir.join("sbom.cdx.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|s| s["components"].as_array().map(|c| c.len()))
+        .unwrap_or(0);
+    let s = summarize(
+        &report,
+        &image_lines(&manifest, &config, &i.platform),
+        &config,
+    );
     let mut links = LINKS.lock().unwrap();
     let links = links.get_or_insert_with(HashSet::new);
     for v in s["vulns"].as_array().into_iter().flatten() {
@@ -270,20 +365,38 @@ pub fn open(name: &str, at: Option<u64>) -> io::Result<Option<Value>> {
             links.insert(u.to_owned());
         }
     }
-    Ok(Some(json!({"id": i.config_digest, "scanned": when, "packages": packages, "db": report["descriptor"]["db"]["status"]["built"], "grype": GRYPE.0, "vulns": s["vulns"]})))
+    Ok(Some(
+        json!({"id": i.config_digest, "scanned": when, "packages": packages, "db": report["descriptor"]["db"]["status"]["built"], "grype": GRYPE.0, "vulns": s["vulns"]}),
+    ))
 }
 
 /// The layer lines with a layer, in order, as builds::image pairs them.
 fn image_lines(manifest: &Value, config: &Value, platform: &str) -> Vec<Value> {
     let im = crate::builds::image(manifest, config, Some(platform));
-    im["layers"].as_array().into_iter().flatten().filter(|l| l["empty"] != true).cloned().collect()
+    im["layers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|l| l["empty"] != true)
+        .cloned()
+        .collect()
 }
 
 /// One row per vulnerability and package, worst first, each with the layer
 /// it's in: Grype names the layer by its diff ID, the config's rootfs order.
 fn summarize(report: &Value, lines: &[Value], config: &Value) -> Value {
-    let diff_ids: Vec<&str> = config["rootfs"]["diff_ids"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-    let rank = |s: &str| ["Critical", "High", "Medium", "Low", "Negligible", "Unknown"].iter().position(|x| *x == s).unwrap_or(9);
+    let diff_ids: Vec<&str> = config["rootfs"]["diff_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let rank = |s: &str| {
+        ["Critical", "High", "Medium", "Low", "Negligible", "Unknown"]
+            .iter()
+            .position(|x| *x == s)
+            .unwrap_or(9)
+    };
     let mut seen = HashSet::new();
     let mut vulns: Vec<Value> = Vec::new();
     for m in report["matches"].as_array().into_iter().flatten() {
@@ -292,9 +405,14 @@ fn summarize(report: &Value, lines: &[Value], config: &Value) -> Value {
         if !seen.insert(key) {
             continue;
         }
-        let layer = a["locations"][0]["layerID"].as_str().and_then(|d| diff_ids.iter().position(|x| *x == d));
+        let layer = a["locations"][0]["layerID"]
+            .as_str()
+            .and_then(|d| diff_ids.iter().position(|x| *x == d));
         let line = layer.and_then(|n| lines.get(n));
-        let url = v["dataSource"].as_str().filter(|u| u.starts_with("https://")).unwrap_or_default();
+        let url = v["dataSource"]
+            .as_str()
+            .filter(|u| u.starts_with("https://"))
+            .unwrap_or_default();
         vulns.push(json!({
             "id": v["id"], "severity": v["severity"].as_str().unwrap_or("Unknown"),
             "package": a["name"], "version": a["version"], "kind": a["type"],
@@ -306,7 +424,10 @@ fn summarize(report: &Value, lines: &[Value], config: &Value) -> Value {
     }
     vulns.sort_by(|a, b| {
         let fix = |v: &Value| v["fixed"].as_array().is_none_or(|f| f.is_empty());
-        rank(a["severity"].as_str().unwrap_or_default()).cmp(&rank(b["severity"].as_str().unwrap_or_default())).then(fix(a).cmp(&fix(b))).then(a["package"].as_str().cmp(&b["package"].as_str()))
+        rank(a["severity"].as_str().unwrap_or_default())
+            .cmp(&rank(b["severity"].as_str().unwrap_or_default()))
+            .then(fix(a).cmp(&fix(b)))
+            .then(a["package"].as_str().cmp(&b["package"].as_str()))
     });
     json!({"vulns": vulns})
 }
@@ -315,7 +436,9 @@ fn summarize(report: &Value, lines: &[Value], config: &Value) -> Value {
 pub fn sbom(name: &str, at: u64) -> io::Result<PathBuf> {
     let store = kiri_image::Store::open(root()?)?;
     let (i, ..) = crate::builds::stored(&store, name)?;
-    let from = scan_dir(&i.config_digest)?.join(at.to_string()).join("sbom.cdx.json");
+    let from = scan_dir(&i.config_digest)?
+        .join(at.to_string())
+        .join("sbom.cdx.json");
     if !from.is_file() {
         return Err(io::Error::other("scan the image first"));
     }
@@ -325,9 +448,25 @@ pub fn sbom(name: &str, at: u64) -> io::Result<PathBuf> {
 /// Saves one scan's SBOM to Downloads as `<file>.cdx.json`, and returns where.
 pub fn save_sbom(name: &str, at: u64, file: &str) -> io::Result<PathBuf> {
     let from = sbom(name, at)?;
-    let stem: String = file.chars().map(|c| if c.is_ascii_alphanumeric() || "-_.".contains(c) { c } else { '-' }).collect();
-    let stem = if stem.trim_matches(['-', '.']).is_empty() { "image".to_owned() } else { stem };
-    let downloads = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| io::Error::other("HOME is not set"))?.join("Downloads");
+    let stem: String = file
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "-_.".contains(c) {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let stem = if stem.trim_matches(['-', '.']).is_empty() {
+        "image".to_owned()
+    } else {
+        stem
+    };
+    let downloads = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("HOME is not set"))?
+        .join("Downloads");
     let mut to = downloads.join(format!("{stem}.cdx.json"));
     let mut n = 2;
     while to.exists() {
@@ -340,7 +479,12 @@ pub fn save_sbom(name: &str, at: u64, file: &str) -> io::Result<PathBuf> {
 
 /// Opens an advisory page, only if a scan listed it.
 pub fn open_advisory(url: &str) {
-    if LINKS.lock().unwrap().as_ref().is_some_and(|l| l.contains(url)) {
+    if LINKS
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|l| l.contains(url))
+    {
         let _ = Command::new("/usr/bin/open").arg(url).spawn();
     }
 }
@@ -359,13 +503,33 @@ mod tests {
             {"vulnerability": {"id": "CVE-2", "severity": "Critical", "fix": {"state": "fixed", "versions": ["2"]}},
              "artifact": {"name": "app", "version": "1", "type": "npm", "locations": [{"layerID": "sha256:d1"}]}},
         ]});
-        let lines = [json!({"by": "ADD rootfs /", "base": true}), json!({"by": "COPY . /app", "base": false})];
+        let lines = [
+            json!({"by": "ADD rootfs /", "base": true}),
+            json!({"by": "COPY . /app", "base": false}),
+        ];
         let config = json!({"rootfs": {"diff_ids": ["sha256:d0", "sha256:d1"]}});
-        let v = summarize(&report, &lines, &config)["vulns"].as_array().unwrap().clone();
+        let v = summarize(&report, &lines, &config)["vulns"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert_eq!(v.len(), 2, "the same CVE in the same package once");
-        assert_eq!((v[0]["id"].as_str(), v[0]["base"].as_bool(), v[0]["by"].as_str()), (Some("CVE-2"), Some(false), Some("COPY . /app")));
+        assert_eq!(
+            (
+                v[0]["id"].as_str(),
+                v[0]["base"].as_bool(),
+                v[0]["by"].as_str()
+            ),
+            (Some("CVE-2"), Some(false), Some("COPY . /app"))
+        );
         assert_eq!(v[0]["url"], "", "only https advisories");
-        assert_eq!((v[1]["layer"].as_u64(), v[1]["base"].as_bool(), v[1]["fixed"].as_array().map(Vec::len)), (Some(0), Some(true), Some(0)));
+        assert_eq!(
+            (
+                v[1]["layer"].as_u64(),
+                v[1]["base"].as_bool(),
+                v[1]["fixed"].as_array().map(Vec::len)
+            ),
+            (Some(0), Some(true), Some(0))
+        );
     }
 
     /// A real scan of an image in a real store, Grype and its database downloaded on first use:
@@ -374,15 +538,34 @@ mod tests {
     #[ignore]
     fn scan_live() {
         let name = std::env::var("KIRI_LIVE_IMAGE").unwrap();
-        let r = scan(&name, &mut |phase, pct| if pct % 25 == 0 { eprintln!("{phase} {pct}%") }).unwrap();
+        let r = scan(&name, &mut |phase, pct| {
+            if pct % 25 == 0 {
+                eprintln!("{phase} {pct}%")
+            }
+        })
+        .unwrap();
         println!("{}", history(&name).unwrap());
         if let Some(out) = std::env::var_os("KIRI_LIVE_OUT") {
             std::fs::write(out, r.to_string()).unwrap();
         }
         let v = r["vulns"].as_array().unwrap();
-        println!("{} vulnerabilities, {} packages, database {}", v.len(), r["packages"], r["db"]);
+        println!(
+            "{} vulnerabilities, {} packages, database {}",
+            v.len(),
+            r["packages"],
+            r["db"]
+        );
         for x in v.iter().take(5) {
-            println!("  {} {} {} {} fixed {} layer {} base {}", x["severity"], x["id"], x["package"], x["version"], x["fixed"], x["layer"], x["base"]);
+            println!(
+                "  {} {} {} {} fixed {} layer {} base {}",
+                x["severity"],
+                x["id"],
+                x["package"],
+                x["version"],
+                x["fixed"],
+                x["layer"],
+                x["base"]
+            );
         }
     }
 }

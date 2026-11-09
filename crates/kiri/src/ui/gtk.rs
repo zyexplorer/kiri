@@ -14,7 +14,10 @@ use gtk::gdk_pixbuf::{Pixbuf, PixbufLoader};
 use gtk::glib;
 use gtk::prelude::*;
 use javascriptcore::ValueExt;
-use webkit2gtk::{SettingsExt, UserContentInjectedFrames, UserContentManager, UserContentManagerExt, UserScript, UserScriptInjectionTime, WebView, WebViewExt};
+use webkit2gtk::{
+    SettingsExt, UserContentInjectedFrames, UserContentManager, UserContentManagerExt, UserScript,
+    UserScriptInjectionTime, WebView, WebViewExt,
+};
 
 use super::{Cmd, PAGE, engine, prefs};
 
@@ -38,7 +41,9 @@ pub fn run(autostart: bool, view: Option<String>) -> io::Result<()> {
     gtk::init().map_err(|e| io::Error::other(format!("no display to open the window on ({e})")))?;
     let (tx, rx) = mpsc::channel();
     let engine_tx = tx.clone();
-    let engine = std::thread::Builder::new().name("kiri-engine".into()).spawn(move || engine(rx, engine_tx))?;
+    let engine = std::thread::Builder::new()
+        .name("kiri-engine".into())
+        .spawn(move || engine(rx, engine_tx))?;
 
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
     window.set_title(crate::flavor::APP.get());
@@ -47,7 +52,10 @@ pub fn run(autostart: bool, view: Option<String>) -> io::Result<()> {
     }
     // 1280x800, never more than nine tenths of the screen, as on the Mac and Windows.
     let (mut w, mut h) = (1280, 800);
-    if let Some(area) = gtk::gdk::Display::default().and_then(|d| d.primary_monitor().or_else(|| d.monitor(0))).map(|m| m.workarea()) {
+    if let Some(area) = gtk::gdk::Display::default()
+        .and_then(|d| d.primary_monitor().or_else(|| d.monitor(0)))
+        .map(|m| m.workarea())
+    {
         w = w.min(area.width() * 9 / 10);
         h = h.min(area.height() * 9 / 10);
     }
@@ -56,7 +64,13 @@ pub fn run(autostart: bool, view: Option<String>) -> io::Result<()> {
     window.set_position(gtk::WindowPosition::Center);
 
     let content = UserContentManager::new();
-    content.add_script(&UserScript::new(SHIM, UserContentInjectedFrames::TopFrame, UserScriptInjectionTime::Start, &[], &[]));
+    content.add_script(&UserScript::new(
+        SHIM,
+        UserContentInjectedFrames::TopFrame,
+        UserScriptInjectionTime::Start,
+        &[],
+        &[],
+    ));
     content.register_script_message_handler("kiri");
     let page_tx = tx.clone();
     content.connect_script_message_received(Some("kiri"), move |_, message| {
@@ -106,7 +120,13 @@ pub(super) fn eval(js: String) {
     glib::MainContext::default().invoke(move || {
         WEBVIEW.with(|v| {
             if let Some(webview) = v.borrow().as_ref() {
-                webview.evaluate_javascript(&js, None, None, None::<&gtk::gio::Cancellable>, |_| {});
+                webview.evaluate_javascript(
+                    &js,
+                    None,
+                    None,
+                    None::<&gtk::gio::Cancellable>,
+                    |_| {},
+                );
             }
         });
     });
@@ -131,7 +151,11 @@ pub(super) fn zoom() {
     glib::MainContext::default().invoke(|| {
         WINDOW.with(|v| {
             if let Some(window) = v.borrow().as_ref() {
-                if window.is_maximized() { window.unmaximize() } else { window.maximize() }
+                if window.is_maximized() {
+                    window.unmaximize()
+                } else {
+                    window.maximize()
+                }
             }
         });
     });
@@ -174,18 +198,30 @@ pub(super) fn copy(text: &str) {
 /// The clipboard's text, handed to `done` once GTK has it.
 pub(super) fn paste(done: impl FnOnce(String) + Send + 'static) {
     glib::MainContext::default().invoke(move || {
-        gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).request_text(move |_, text| done(text.map(|t| t.to_string()).unwrap_or_default()));
+        gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD)
+            .request_text(move |_, text| done(text.map(|t| t.to_string()).unwrap_or_default()));
     });
 }
 
 /// The installed font families, sorted; `mono` keeps the fixed-pitch ones.
 pub(super) fn font_families(mono: bool) -> Vec<String> {
     let spacing = if mono { ":spacing=mono" } else { ":" };
-    let Ok(out) = std::process::Command::new("fc-list").args([spacing, "family"]).output() else { return Vec::new() };
+    let Ok(out) = std::process::Command::new("fc-list")
+        .args([spacing, "family"])
+        .output()
+    else {
+        return Vec::new();
+    };
     let mut names: Vec<String> = String::from_utf8_lossy(&out.stdout)
         .lines()
         // "DejaVu Sans,DejaVu Sans Condensed": the first name is the family.
-        .filter_map(|l| l.split(',').next().map(str::trim).filter(|n| !n.is_empty() && !n.starts_with('.')).map(str::to_owned))
+        .filter_map(|l| {
+            l.split(',')
+                .next()
+                .map(str::trim)
+                .filter(|n| !n.is_empty() && !n.starts_with('.'))
+                .map(str::to_owned)
+        })
         .collect();
     names.sort_by_key(|n| n.to_lowercase());
     names.dedup();

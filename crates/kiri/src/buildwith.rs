@@ -80,7 +80,14 @@ fn read_json(path: &Path) -> io::Result<Value> {
     match std::fs::read(path) {
         // A BOM, as Windows PowerShell writes: docker itself tolerates none,
         // but reading through one costs nothing.
-        Ok(b) => serde_json::from_slice(b.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&b)).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", path.display()))),
+        Ok(b) => {
+            serde_json::from_slice(b.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&b)).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("{}: {e}", path.display()),
+                )
+            })
+        }
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(json!({})),
         Err(e) => Err(e),
     }
@@ -97,7 +104,10 @@ fn write_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 fn write_json(path: &Path, v: &Value) -> io::Result<()> {
-    write_bytes(path, &serde_json::to_vec_pretty(v).map_err(io::Error::other)?)
+    write_bytes(
+        path,
+        &serde_json::to_vec_pretty(v).map_err(io::Error::other)?,
+    )
 }
 
 impl Places {
@@ -139,7 +149,9 @@ impl Places {
     pub fn taken(&self) -> bool {
         let cfg = read_json(&self.config()).unwrap_or_default();
         let cur = read_json(&self.current()).unwrap_or_default();
-        cfg["aliases"]["builder"] == "buildx" && cur["Name"] == self.builder.as_str() && cur["Global"] == true
+        cfg["aliases"]["builder"] == "buildx"
+            && cur["Name"] == self.builder.as_str()
+            && cur["Global"] == true
     }
 
     /// The builder named after Kiri's context: Kiri's builder under that
@@ -165,8 +177,16 @@ impl Places {
 
     /// Whether a builder is Kiri's copy: its nodes are Kiri's builder's.
     fn copied(&self, instance: &Value) -> bool {
-        let nodes = instance["Nodes"].as_array().map(Vec::as_slice).unwrap_or_default();
-        !nodes.is_empty() && nodes.iter().all(|n| n["Name"].as_str().is_some_and(|name| name.starts_with(&self.builder)))
+        let nodes = instance["Nodes"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        !nodes.is_empty()
+            && nodes.iter().all(|n| {
+                n["Name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with(&self.builder))
+            })
     }
 
     fn save(&self, with: With, auto: bool) -> io::Result<()> {
@@ -225,7 +245,9 @@ impl Places {
                         a.remove("builder");
                     }
                     if before["aliases"] != true
-                        && cfg["aliases"].as_object().is_some_and(serde_json::Map::is_empty)
+                        && cfg["aliases"]
+                            .as_object()
+                            .is_some_and(serde_json::Map::is_empty)
                         && let Some(o) = cfg.as_object_mut()
                     {
                         o.remove("aliases");
@@ -281,7 +303,11 @@ impl Places {
     /// For the window: {with, ask, engine, taken, ready, builder, context}.
     pub fn status(&self, other: Option<&str>) -> Value {
         // Not chosen yet: Docker's, which is what happens until someone does.
-        let with = self.saved().unwrap_or(if other.is_some() { With::Docker } else { With::Kiri });
+        let with = self.saved().unwrap_or(if other.is_some() {
+            With::Docker
+        } else {
+            With::Kiri
+        });
         json!({"type": "buildwith", "with": with.name(), "ask": self.ask(other), "engine": other, "taken": self.taken(), "ready": self.ready(), "builder": self.builder, "context": self.context})
     }
 
@@ -300,16 +326,22 @@ impl Places {
 }
 
 fn docker_dir(home: &Path) -> PathBuf {
-    std::env::var_os("DOCKER_CONFIG").filter(|d| !d.is_empty()).map_or_else(|| home.join(".docker"), PathBuf::from)
+    std::env::var_os("DOCKER_CONFIG")
+        .filter(|d| !d.is_empty())
+        .map_or_else(|| home.join(".docker"), PathBuf::from)
 }
 
 fn buildx_dir(docker: &Path) -> PathBuf {
-    std::env::var_os("BUILDX_CONFIG").filter(|d| !d.is_empty()).map_or_else(|| docker.join("buildx"), PathBuf::from)
+    std::env::var_os("BUILDX_CONFIG")
+        .filter(|d| !d.is_empty())
+        .map_or_else(|| docker.join("buildx"), PathBuf::from)
 }
 
 #[cfg(unix)]
 pub fn places() -> io::Result<Places> {
-    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| io::Error::other("HOME is not set"))?;
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("HOME is not set"))?;
     let docker = docker_dir(&home);
     Ok(Places {
         buildx: buildx_dir(&docker),
@@ -322,21 +354,37 @@ pub fn places() -> io::Result<Places> {
 
 #[cfg(windows)]
 pub fn places() -> io::Result<Places> {
-    let home = std::env::var_os("USERPROFILE").map(PathBuf::from).ok_or_else(|| io::Error::other("USERPROFILE is not set"))?;
-    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).ok_or_else(|| io::Error::other("LOCALAPPDATA is not set"))?;
+    let home = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("USERPROFILE is not set"))?;
+    let local = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("LOCALAPPDATA is not set"))?;
     let docker = docker_dir(&home);
-    Ok(Places { buildx: buildx_dir(&docker), docker, state: local.join("Kiri").join("build.json"), builder: crate::builds::BUILDER.get().to_owned(), context: crate::flavor::CONTEXT.get().to_owned() })
+    Ok(Places {
+        buildx: buildx_dir(&docker),
+        docker,
+        state: local.join("Kiri").join("build.json"),
+        builder: crate::builds::BUILDER.get().to_owned(),
+        context: crate::flavor::CONTEXT.get().to_owned(),
+    })
 }
 
 /// The engine besides Kiri on this machine, by name, if there is one.
 #[cfg(unix)]
 pub fn other_engine() -> Option<&'static str> {
     let home = PathBuf::from(std::env::var_os("HOME")?);
-    let ours = crate::client::socket().ok().and_then(|s| s.canonicalize().ok());
+    let ours = crate::client::socket()
+        .ok()
+        .and_then(|s| s.canonicalize().ok());
     // A socket that is Kiri's own (a /var/run/docker.sock pointing at Kiri) isn't another engine.
     let live = |p: &Path| p.exists() && p.canonicalize().ok() != ours;
     let name = |p: &Path| {
-        let t = p.canonicalize().unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().into_owned();
+        let t = p
+            .canonicalize()
+            .unwrap_or_else(|_| p.to_path_buf())
+            .to_string_lossy()
+            .into_owned();
         if t.contains(".orbstack") {
             "OrbStack"
         } else if t.contains("/.docker/") {
@@ -362,25 +410,46 @@ pub fn other_engine() -> Option<&'static str> {
         PathBuf::from("/run/docker.sock"),
         PathBuf::from("/run/podman/podman.sock"),
     ];
-    if let Some(s) = sockets.iter().chain(xdg.map(|x| x.join("podman/podman.sock")).as_ref()).find(|s| live(s)) {
+    if let Some(s) = sockets
+        .iter()
+        .chain(xdg.map(|x| x.join("podman/podman.sock")).as_ref())
+        .find(|s| live(s))
+    {
         return Some(name(s));
     }
     // Installed, though not running now.
     let apps: &[(&str, &str)] = if cfg!(target_os = "macos") {
-        &[("/Applications/OrbStack.app", "OrbStack"), ("/Applications/Docker.app", "Docker Desktop"), ("/Applications/Rancher Desktop.app", "Rancher Desktop")]
+        &[
+            ("/Applications/OrbStack.app", "OrbStack"),
+            ("/Applications/Docker.app", "Docker Desktop"),
+            ("/Applications/Rancher Desktop.app", "Rancher Desktop"),
+        ]
     } else {
-        &[("/usr/bin/dockerd", "Docker"), ("/opt/docker-desktop", "Docker Desktop"), ("/opt/rancher-desktop", "Rancher Desktop")]
+        &[
+            ("/usr/bin/dockerd", "Docker"),
+            ("/opt/docker-desktop", "Docker Desktop"),
+            ("/opt/rancher-desktop", "Rancher Desktop"),
+        ]
     };
-    apps.iter().find(|(p, _)| Path::new(p).exists()).map(|(_, n)| *n)
+    apps.iter()
+        .find(|(p, _)| Path::new(p).exists())
+        .map(|(_, n)| *n)
 }
 
 /// The engine besides Kiri on this PC, by name, if there is one.
 #[cfg(windows)]
 pub fn other_engine() -> Option<&'static str> {
-    let under = |var: &str, rel: &str| std::env::var_os(var).is_some_and(|d| Path::new(&d).join(rel).is_file());
+    let under = |var: &str, rel: &str| {
+        std::env::var_os(var).is_some_and(|d| Path::new(&d).join(rel).is_file())
+    };
     if under("ProgramFiles", r"Docker\Docker\Docker Desktop.exe") {
         Some("Docker Desktop")
-    } else if under("ProgramFiles", r"Rancher Desktop\Rancher Desktop.exe") || under("LOCALAPPDATA", r"Programs\Rancher Desktop\Rancher Desktop.exe") {
+    } else if under("ProgramFiles", r"Rancher Desktop\Rancher Desktop.exe")
+        || under(
+            "LOCALAPPDATA",
+            r"Programs\Rancher Desktop\Rancher Desktop.exe",
+        )
+    {
         Some("Rancher Desktop")
     } else if under("ProgramFiles", r"RedHat\Podman\podman.exe") {
         Some("Podman")
@@ -423,7 +492,8 @@ pub fn cli(args: &[String]) -> io::Result<()> {
     let p = places()?;
     let other = other_engine();
     if let Some(a) = args.first() {
-        let with = With::parse(a).ok_or_else(|| io::Error::other("usage: kiri build-with [docker|kiri]"))?;
+        let with = With::parse(a)
+            .ok_or_else(|| io::Error::other("usage: kiri build-with [docker|kiri]"))?;
         p.choose(with)?;
         if with == With::Kiri && !p.ready() {
             crate::builds::ensure_builder();
@@ -432,12 +502,19 @@ pub fn cli(args: &[String]) -> io::Result<()> {
     let s = p.status(other);
     let builder = &p.builder;
     match (s["with"].as_str(), other) {
-        (Some("kiri"), _) if !p.ready() => println!("docker build builds on Kiri once its builder `{builder}` is made (the window or `kiri setup` makes it while Kiri runs)"),
-        (Some("kiri"), Some(o)) => println!("docker build and docker compose build run on Kiri, whatever docker context is in use; the images are in Kiri, not {o}. `kiri build-with docker` switches back"),
-        (Some("kiri"), None) => println!("docker build and docker compose build run on Kiri (builder `{builder}`)"),
+        (Some("kiri"), _) if !p.ready() => println!(
+            "docker build builds on Kiri once its builder `{builder}` is made (the window or `kiri setup` makes it while Kiri runs)"
+        ),
+        (Some("kiri"), Some(o)) => println!(
+            "docker build and docker compose build run on Kiri, whatever docker context is in use; the images are in Kiri, not {o}. `kiri build-with docker` switches back"
+        ),
+        (Some("kiri"), None) => {
+            println!("docker build and docker compose build run on Kiri (builder `{builder}`)")
+        }
         (_, o) => println!(
             "docker build follows docker's context{}: on Kiri when docker uses Kiri. `kiri build` always builds on Kiri; `kiri build-with kiri` sends every build to Kiri",
-            o.map(|o| format!(" ({o}'s builds stay {o}'s)")).unwrap_or_default()
+            o.map(|o| format!(" ({o}'s builds stay {o}'s)"))
+                .unwrap_or_default()
         ),
     }
     Ok(())
@@ -449,7 +526,13 @@ mod tests {
 
     fn places(dir: &Path) -> Places {
         let docker = dir.join(".docker");
-        Places { buildx: docker.join("buildx"), docker, state: dir.join(".kiri/build.json"), builder: "kiri-build".into(), context: "kiri".into() }
+        Places {
+            buildx: docker.join("buildx"),
+            docker,
+            state: dir.join(".kiri/build.json"),
+            builder: "kiri-build".into(),
+            context: "kiri".into(),
+        }
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -480,8 +563,14 @@ mod tests {
         p.apply(None).unwrap();
         assert!(p.taken());
         let copy = read_json(&p.instance("kiri")).unwrap();
-        assert_eq!((copy["Name"].as_str(), copy["Nodes"][0]["Name"].as_str()), (Some("kiri"), Some("kiri-build0")));
-        assert_eq!(read_json(&p.current()).unwrap(), json!({"Key": "kiri", "Name": "kiri-build", "Global": true}));
+        assert_eq!(
+            (copy["Name"].as_str(), copy["Nodes"][0]["Name"].as_str()),
+            (Some("kiri"), Some("kiri-build0"))
+        );
+        assert_eq!(
+            read_json(&p.current()).unwrap(),
+            json!({"Key": "kiri", "Name": "kiri-build", "Global": true})
+        );
         assert!(!p.ask(None));
         // Docker Desktop installed afterwards: asked once.
         assert!(p.ask(Some("Docker Desktop")));
@@ -501,7 +590,12 @@ mod tests {
         builder(&main);
         main.choose(With::Kiri).unwrap();
         // A development build of Kiri, its own state and builder, takes them.
-        let dev = Places { state: d.join(".kiri-layers/build.json"), builder: "kiri-layers-build".into(), context: "kiri-layers".into(), ..places(&d) };
+        let dev = Places {
+            state: d.join(".kiri-layers/build.json"),
+            builder: "kiri-layers-build".into(),
+            context: "kiri-layers".into(),
+            ..places(&d)
+        };
         let i = json!({"Name": "kiri-layers-build", "Driver": "docker-container", "Nodes": [{"Name": "kiri-layers-build0", "Endpoint": "kiri-layers"}], "Dynamic": false});
         write_bytes(&dev.instance("kiri-layers-build"), i.to_string().as_bytes()).unwrap();
         dev.choose(With::Kiri).unwrap();
@@ -531,7 +625,10 @@ mod tests {
         assert_eq!(read_json(&p.config()).unwrap(), cfg);
         p.choose(With::Kiri).unwrap();
         assert!(p.taken());
-        assert_eq!(read_json(&p.config()).unwrap()["aliases"], json!({"foo": "bar", "builder": "buildx"}));
+        assert_eq!(
+            read_json(&p.config()).unwrap()["aliases"],
+            json!({"foo": "bar", "builder": "buildx"})
+        );
         // Choosing again keeps the first snapshot.
         p.choose(With::Kiri).unwrap();
         p.choose(With::Docker).unwrap();
@@ -547,9 +644,15 @@ mod tests {
         builder(&p);
         write_json(&p.config(), &json!({"aliases": {"builder": "mybuilder"}})).unwrap();
         p.choose(With::Kiri).unwrap();
-        assert_eq!(read_json(&p.config()).unwrap()["aliases"]["builder"], "buildx");
+        assert_eq!(
+            read_json(&p.config()).unwrap()["aliases"]["builder"],
+            "buildx"
+        );
         p.choose(With::Docker).unwrap();
-        assert_eq!(read_json(&p.config()).unwrap(), json!({"aliases": {"builder": "mybuilder"}}));
+        assert_eq!(
+            read_json(&p.config()).unwrap(),
+            json!({"aliases": {"builder": "mybuilder"}})
+        );
         // An empty `aliases` that was there stays.
         write_json(&p.config(), &json!({"aliases": {}})).unwrap();
         p.choose(With::Kiri).unwrap();

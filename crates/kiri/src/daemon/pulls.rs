@@ -67,7 +67,11 @@ pub fn join(key: &str) -> (Follower, bool) {
     {
         return (f, false);
     }
-    let job = Arc::new(Job { cancel: Cancel::new(), key: key.to_owned(), state: Mutex::default() });
+    let job = Arc::new(Job {
+        cancel: Cancel::new(),
+        key: key.to_owned(),
+        state: Mutex::default(),
+    });
     jobs.insert(key.to_owned(), job.clone());
     drop(jobs);
     let f = job.follow().expect("a new job takes followers");
@@ -89,7 +93,11 @@ impl Job {
         st.next += 1;
         let id = st.next;
         st.followers.push((id, tx));
-        Some(Follower { job: self.clone(), id, rx })
+        Some(Follower {
+            job: self.clone(),
+            id,
+            rx,
+        })
     }
 
     /// A progress line, to every follower.
@@ -100,7 +108,8 @@ impl Job {
             Some(slot) => slot.1 = v.clone(),
             None => st.seen.push((id, v.clone())),
         }
-        st.followers.retain(|(_, tx)| tx.send(Msg::Line(v.clone())).is_ok());
+        st.followers
+            .retain(|(_, tx)| tx.send(Msg::Line(v.clone())).is_ok());
     }
 
     /// The pull is over: followers get the end, and the next client asking
@@ -124,7 +133,10 @@ impl Job {
         let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
         st.followers.retain(|(f, _)| *f != id);
         if st.followers.is_empty() && !st.done {
-            crate::diag::info!("image pull cancelled: no client is waiting for it", image = self.key.lines().next().unwrap_or_default());
+            crate::diag::info!(
+                "image pull cancelled: no client is waiting for it",
+                image = self.key.lines().next().unwrap_or_default()
+            );
             self.cancel.cancel();
         }
     }
@@ -188,8 +200,10 @@ mod tests {
         let k = key("test/share:1", "", "");
         let (a, lead) = join(&k);
         assert!(lead);
-        a.job.send(json!({"status": "Pulling from test/share", "id": "1"}));
-        a.job.send(json!({"status": "Pulling fs layer", "id": "aaa", "size": 10}));
+        a.job
+            .send(json!({"status": "Pulling from test/share", "id": "1"}));
+        a.job
+            .send(json!({"status": "Pulling fs layer", "id": "aaa", "size": 10}));
         a.job.send(json!({"status": "Downloading", "id": "aaa", "progressDetail": {"current": 5, "total": 10}}));
         let (b, lead) = join(&k);
         assert!(!lead);
@@ -208,7 +222,10 @@ mod tests {
         job.finish();
         assert!(matches!(b.next(Duration::from_millis(10)), Some(Msg::End)));
         drop(b);
-        assert!(!job.cancel.is_cancelled(), "a finished pull isn't cancelled");
+        assert!(
+            !job.cancel.is_cancelled(),
+            "a finished pull isn't cancelled"
+        );
         // Over: the next client starts a new one.
         let (c, lead) = join(&k);
         assert!(lead && !Arc::ptr_eq(&c.job, &job));

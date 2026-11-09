@@ -17,7 +17,12 @@ pub fn guest_path(name: &str) -> String {
 
 /// Docker's rule: `[a-zA-Z0-9][a-zA-Z0-9_.-]*`.
 pub fn valid_name(name: &str) -> bool {
-    name.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+    name.bytes()
+        .next()
+        .is_some_and(|b| b.is_ascii_alphanumeric())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,7 +59,9 @@ impl Volumes {
     fn save(&self) {
         if let Ok(json) = serde_json::to_vec(&self.list) {
             let tmp = self.path.with_extension("json.tmp");
-            if let Err(e) = std::fs::write(&tmp, json).and_then(|()| std::fs::rename(&tmp, &self.path)) {
+            if let Err(e) =
+                std::fs::write(&tmp, json).and_then(|()| std::fs::rename(&tmp, &self.path))
+            {
                 crate::diag::error!("saving volumes failed", error = e);
             }
         }
@@ -69,22 +76,38 @@ impl Volumes {
     }
 
     /// Creates the volume if it does not exist yet; returns it either way.
-    pub fn ensure(&mut self, name: &str, labels: serde_json::Value, anonymous: bool) -> Result<Volume, String> {
+    pub fn ensure(
+        &mut self,
+        name: &str,
+        labels: serde_json::Value,
+        anonymous: bool,
+    ) -> Result<Volume, String> {
         self.ensure_with(name, labels, anonymous, BTreeMap::new())
     }
 
     /// [`Volumes::ensure`] with the local driver's options for a new volume.
     /// An existing volume keeps its own, as Docker's local driver does.
-    pub fn ensure_with(&mut self, name: &str, labels: serde_json::Value, anonymous: bool, options: BTreeMap<String, String>) -> Result<Volume, String> {
+    pub fn ensure_with(
+        &mut self,
+        name: &str,
+        labels: serde_json::Value,
+        anonymous: bool,
+        options: BTreeMap<String, String>,
+    ) -> Result<Volume, String> {
         if !valid_name(name) {
-            return Err(format!("invalid volume name {name:?}: only [a-zA-Z0-9][a-zA-Z0-9_.-] are allowed"));
+            return Err(format!(
+                "invalid volume name {name:?}: only [a-zA-Z0-9][a-zA-Z0-9_.-] are allowed"
+            ));
         }
         if let Some(v) = self.get(name) {
             return Ok(v.clone());
         }
         let v = Volume {
             name: name.to_owned(),
-            created_ns: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0),
+            created_ns: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0),
             labels,
             anonymous,
             options,
@@ -110,7 +133,9 @@ impl Volumes {
 /// filesystem, which the data disk is not).
 pub fn local_options(opts: &serde_json::Value) -> Result<BTreeMap<String, String>, String> {
     let mut out = BTreeMap::new();
-    let Some(map) = opts.as_object() else { return Ok(out) };
+    let Some(map) = opts.as_object() else {
+        return Ok(out);
+    };
     for (k, v) in map {
         let v = v.as_str().unwrap_or_default();
         match k.as_str() {
@@ -123,7 +148,11 @@ pub fn local_options(opts: &serde_json::Value) -> Result<BTreeMap<String, String
         }
         out.insert(k.clone(), v.to_owned());
     }
-    for (opt, needs) in [("device", &["type"][..]), ("type", &["device"]), ("o", &["device", "type"])] {
+    for (opt, needs) in [
+        ("device", &["type"][..]),
+        ("type", &["device"]),
+        ("o", &["device", "type"]),
+    ] {
         if out.contains_key(opt) {
             if let Some(missing) = needs.iter().find(|n| !out.contains_key(**n)) {
                 return Err(format!("missing required option: {missing:?}"));
@@ -131,8 +160,15 @@ pub fn local_options(opts: &serde_json::Value) -> Result<BTreeMap<String, String
         }
     }
     if out.get("type").map(String::as_str) == Some("cifs") {
-        let host = out["device"].strip_prefix("//").and_then(|d| d.split('/').next()).unwrap_or("");
-        if host.rsplit_once(':').is_some_and(|(_, p)| p.bytes().all(|b| b.is_ascii_digit())) && !host.ends_with(']') {
+        let host = out["device"]
+            .strip_prefix("//")
+            .and_then(|d| d.split('/').next())
+            .unwrap_or("");
+        if host
+            .rsplit_once(':')
+            .is_some_and(|(_, p)| p.bytes().all(|b| b.is_ascii_digit()))
+            && !host.ends_with(']')
+        {
             return Err("port not allowed in CIFS device URL, include 'port' in 'o='".into());
         }
     }
@@ -171,7 +207,16 @@ const MOUNT_FLAGS: [(&str, bool, u64); 25] = [
 
 /// Propagation words: Docker's mount sets them on the mount afterwards;
 /// a volume's own mount point is private here, so they change nothing.
-const PROPAGATION: [&str; 8] = ["private", "rprivate", "shared", "rshared", "slave", "rslave", "unbindable", "runbindable"];
+const PROPAGATION: [&str; 8] = [
+    "private",
+    "rprivate",
+    "shared",
+    "rshared",
+    "slave",
+    "rslave",
+    "unbindable",
+    "runbindable",
+];
 
 /// `o` as mount(2) takes it: flags and the data string.
 pub fn mount_options(o: &str) -> (u64, String) {
@@ -196,8 +241,14 @@ pub fn mount_options(o: &str) -> (u64, String) {
 /// `host_path` maps a bind device to the guest's path for it; `resolve`
 /// turns an NFS or CIFS server name into an address (None leaves it, and
 /// the guest reports it at start, as Docker does).
-pub fn guest_mount_fields(options: &BTreeMap<String, String>, host_path: impl Fn(&str) -> String, resolve: impl Fn(&str) -> Option<String>) -> String {
-    let Some(kind) = options.get("type").filter(|t| !t.is_empty()) else { return String::new() };
+pub fn guest_mount_fields(
+    options: &BTreeMap<String, String>,
+    host_path: impl Fn(&str) -> String,
+    resolve: impl Fn(&str) -> Option<String>,
+) -> String {
+    let Some(kind) = options.get("type").filter(|t| !t.is_empty()) else {
+        return String::new();
+    };
     let device = options.get("device").cloned().unwrap_or_default();
     let (flags, mut data) = mount_options(options.get("o").map_or("", String::as_str));
     let device = if flags & 4096 != 0 {
@@ -213,7 +264,9 @@ pub fn guest_mount_fields(options: &BTreeMap<String, String>, host_path: impl Fn
         data = data
             .split(',')
             .map(|w| match w.strip_prefix("addr=") {
-                Some(a) if a.parse::<std::net::IpAddr>().is_err() => resolve(a).map_or_else(|| w.to_owned(), |ip| format!("addr={ip}")),
+                Some(a) if a.parse::<std::net::IpAddr>().is_err() => {
+                    resolve(a).map_or_else(|| w.to_owned(), |ip| format!("addr={ip}"))
+                }
                 _ => w.to_owned(),
             })
             .collect::<Vec<_>>()
@@ -225,7 +278,9 @@ pub fn guest_mount_fields(options: &BTreeMap<String, String>, host_path: impl Fn
 /// `//server/share` with the server as an address: the kernel's cifs
 /// client takes an address, not a name, without a userspace resolver.
 fn cifs_device(device: &str, resolve: &impl Fn(&str) -> Option<String>) -> String {
-    let Some(rest) = device.strip_prefix("//") else { return device.to_owned() };
+    let Some(rest) = device.strip_prefix("//") else {
+        return device.to_owned();
+    };
     let (host, share) = rest.split_once('/').unwrap_or((rest, ""));
     if host.parse::<std::net::IpAddr>().is_ok() {
         return device.to_owned();
@@ -244,25 +299,50 @@ mod tests {
 
     #[test]
     fn local_options_like_docker() {
-        let o = local_options(&json!({"type": "none", "o": "bind", "device": "/Users/me/data"})).unwrap();
+        let o = local_options(&json!({"type": "none", "o": "bind", "device": "/Users/me/data"}))
+            .unwrap();
         assert_eq!(o.len(), 3);
         assert!(local_options(&json!({})).unwrap().is_empty());
         assert!(local_options(&serde_json::Value::Null).unwrap().is_empty());
-        assert_eq!(local_options(&json!({"type": "nfs"})).unwrap_err(), "missing required option: \"device\"");
-        assert_eq!(local_options(&json!({"device": ":/x"})).unwrap_err(), "missing required option: \"type\"");
-        assert_eq!(local_options(&json!({"o": "addr=1.2.3.4", "type": "nfs"})).unwrap_err(), "missing required option: \"device\"");
-        assert_eq!(local_options(&json!({"foo": "bar"})).unwrap_err(), "invalid option: \"foo\"");
-        assert_eq!(local_options(&json!({"size": "1g"})).unwrap_err(), "quota size requested but no quota support");
+        assert_eq!(
+            local_options(&json!({"type": "nfs"})).unwrap_err(),
+            "missing required option: \"device\""
+        );
+        assert_eq!(
+            local_options(&json!({"device": ":/x"})).unwrap_err(),
+            "missing required option: \"type\""
+        );
+        assert_eq!(
+            local_options(&json!({"o": "addr=1.2.3.4", "type": "nfs"})).unwrap_err(),
+            "missing required option: \"device\""
+        );
+        assert_eq!(
+            local_options(&json!({"foo": "bar"})).unwrap_err(),
+            "invalid option: \"foo\""
+        );
+        assert_eq!(
+            local_options(&json!({"size": "1g"})).unwrap_err(),
+            "quota size requested but no quota support"
+        );
         assert!(local_options(&json!({"type": "cifs", "device": "//nas:445/share"})).is_err());
-        assert!(local_options(&json!({"type": "cifs", "device": "//nas/share", "o": "port=445"})).is_ok());
+        assert!(
+            local_options(&json!({"type": "cifs", "device": "//nas/share", "o": "port=445"}))
+                .is_ok()
+        );
     }
 
     #[test]
     fn o_splits_into_flags_and_data() {
         assert_eq!(mount_options("bind"), (4096, String::new()));
         assert_eq!(mount_options("rbind,ro"), (4096 | 16384 | 1, String::new()));
-        assert_eq!(mount_options("size=100m,uid=1000"), (0, "size=100m,uid=1000".into()));
-        assert_eq!(mount_options("addr=10.0.0.5,rw,nfsvers=4,noexec"), (8, "addr=10.0.0.5,nfsvers=4".into()));
+        assert_eq!(
+            mount_options("size=100m,uid=1000"),
+            (0, "size=100m,uid=1000".into())
+        );
+        assert_eq!(
+            mount_options("addr=10.0.0.5,rw,nfsvers=4,noexec"),
+            (8, "addr=10.0.0.5,nfsvers=4".into())
+        );
         assert_eq!(mount_options("ro,rw,rprivate"), (0, String::new()));
     }
 
@@ -272,19 +352,49 @@ mod tests {
         let mac = |p: &str| format!("/mnt/mac{p}");
         let dns = |h: &str| (h == "nas.local").then(|| "10.0.0.9".to_owned());
         assert_eq!(guest_mount_fields(&BTreeMap::new(), mac, dns), "");
-        assert_eq!(guest_mount_fields(&opts(json!({"type": "none", "o": "bind", "device": "/Users/me/d"})), mac, dns), "\tnone\t/mnt/mac/Users/me/d\t1000\t");
         assert_eq!(
-            guest_mount_fields(&opts(json!({"type": "tmpfs", "device": "tmpfs", "o": "size=100m,uid=1000"})), mac, dns),
+            guest_mount_fields(
+                &opts(json!({"type": "none", "o": "bind", "device": "/Users/me/d"})),
+                mac,
+                dns
+            ),
+            "\tnone\t/mnt/mac/Users/me/d\t1000\t"
+        );
+        assert_eq!(
+            guest_mount_fields(
+                &opts(json!({"type": "tmpfs", "device": "tmpfs", "o": "size=100m,uid=1000"})),
+                mac,
+                dns
+            ),
             "\ttmpfs\ttmpfs\t0\tsize=100m,uid=1000"
         );
         assert_eq!(
-            guest_mount_fields(&opts(json!({"type": "nfs", "device": ":/export", "o": "addr=nas.local,rw,nfsvers=4"})), mac, dns),
+            guest_mount_fields(
+                &opts(
+                    json!({"type": "nfs", "device": ":/export", "o": "addr=nas.local,rw,nfsvers=4"})
+                ),
+                mac,
+                dns
+            ),
             "\tnfs\t:/export\t0\taddr=10.0.0.9,nfsvers=4"
         );
         // A name that does not resolve is left for the guest to report.
-        assert_eq!(guest_mount_fields(&opts(json!({"type": "nfs", "device": ":/e", "o": "addr=gone"})), mac, dns), "\tnfs\t:/e\t0\taddr=gone");
         assert_eq!(
-            guest_mount_fields(&opts(json!({"type": "cifs", "device": "//nas.local/share", "o": "username=u,password=p"})), mac, dns),
+            guest_mount_fields(
+                &opts(json!({"type": "nfs", "device": ":/e", "o": "addr=gone"})),
+                mac,
+                dns
+            ),
+            "\tnfs\t:/e\t0\taddr=gone"
+        );
+        assert_eq!(
+            guest_mount_fields(
+                &opts(
+                    json!({"type": "cifs", "device": "//nas.local/share", "o": "username=u,password=p"})
+                ),
+                mac,
+                dns
+            ),
             "\tcifs\t//10.0.0.9/share\t0\tusername=u,password=p"
         );
     }

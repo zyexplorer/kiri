@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// How long an answer is used without asking Docker Hub again.
 const FRESH: Duration = Duration::from_secs(24 * 60 * 60);
@@ -38,11 +38,16 @@ fn path() -> Option<PathBuf> {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 fn load() -> Value {
-    path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| json!({}))
+    path()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_else(|| json!({}))
 }
 
 fn cached(kind: Kind, key: &str) -> Option<(u64, Value)> {
@@ -58,10 +63,15 @@ fn store(kind: Kind, key: &str, items: &Value) {
     if !all[kind.key()].is_object() {
         all[kind.key()] = Value::Object(Map::new());
     }
-    let Some(entries) = all[kind.key()].as_object_mut() else { return };
+    let Some(entries) = all[kind.key()].as_object_mut() else {
+        return;
+    };
     entries.insert(key.to_owned(), json!({"at": now(), "items": items}));
     if entries.len() > KEEP {
-        let mut ages: Vec<(u64, String)> = entries.iter().map(|(k, v)| (v["at"].as_u64().unwrap_or(0), k.clone())).collect();
+        let mut ages: Vec<(u64, String)> = entries
+            .iter()
+            .map(|(k, v)| (v["at"].as_u64().unwrap_or(0), k.clone()))
+            .collect();
         ages.sort();
         for (_, k) in ages.into_iter().take(entries.len() - KEEP) {
             entries.remove(&k);
@@ -84,7 +94,12 @@ fn fetch(kind: Kind, key: &str) -> Result<Value, String> {
             let mut rows = client.search(key, 50).map_err(|e| e.to_string())?;
             // Hub's own order puts empty namesakes first: official images
             // lead, then the most starred.
-            rows.sort_by_key(|r| (!r["is_official"].as_bool().unwrap_or(false), std::cmp::Reverse(r["star_count"].as_u64().unwrap_or(0))));
+            rows.sort_by_key(|r| {
+                (
+                    !r["is_official"].as_bool().unwrap_or(false),
+                    std::cmp::Reverse(r["star_count"].as_u64().unwrap_or(0)),
+                )
+            });
             Ok(rows
                 .iter()
                 .map(|r| {
@@ -99,7 +114,10 @@ fn fetch(kind: Kind, key: &str) -> Result<Value, String> {
                 })
                 .collect())
         }
-        Kind::Tags => client.hub_tags(key, 100).map(|t| json!(order_tags(t))).map_err(|e| e.to_string()),
+        Kind::Tags => client
+            .hub_tags(key, 100)
+            .map(|t| json!(order_tags(t)))
+            .map_err(|e| e.to_string()),
     }
 }
 
@@ -107,8 +125,18 @@ fn fetch(kind: Kind, key: &str) -> Result<Value, String> {
 /// `unstable`, `nightly`) last: Hub lists them by push date, so those lead.
 fn order_tags(mut tags: Vec<String>) -> Vec<String> {
     let rank = |t: &str| {
-        let pre = ["rc", "beta", "alpha", "unstable", "nightly", "dev", "edge", "preview"].iter().any(|p| t.contains(p));
-        if t == "latest" { 0 } else if pre { 2 } else { 1 }
+        let pre = [
+            "rc", "beta", "alpha", "unstable", "nightly", "dev", "edge", "preview",
+        ]
+        .iter()
+        .any(|p| t.contains(p));
+        if t == "latest" {
+            0
+        } else if pre {
+            2
+        } else {
+            1
+        }
     };
     // Stable, so each group keeps Hub's newest-first order.
     tags.sort_by_key(|t| rank(t));
@@ -119,8 +147,13 @@ fn order_tags(mut tags: Vec<String>) -> Vec<String> {
 mod tests {
     #[test]
     fn latest_first_prereleases_last() {
-        let tags = ["19rc1", "17-alpine", "unstable", "latest", "16"].map(String::from).to_vec();
-        assert_eq!(super::order_tags(tags), ["latest", "17-alpine", "16", "19rc1", "unstable"]);
+        let tags = ["19rc1", "17-alpine", "unstable", "latest", "16"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(
+            super::order_tags(tags),
+            ["latest", "17-alpine", "16", "19rc1", "unstable"]
+        );
     }
 }
 
@@ -128,12 +161,18 @@ mod tests {
 /// when the cached one is missing or stale. Runs on its own thread.
 pub fn ask(kind: Kind, key: String, emit: fn(String)) {
     std::thread::spawn(move || {
-        let reply = |items: &Value, error: Option<&str>| json!({"type": "hub", "kind": kind.key(), "key": key, "items": items, "error": error}).to_string();
+        let reply = |items: &Value, error: Option<&str>| {
+            json!({"type": "hub", "kind": kind.key(), "key": key, "items": items, "error": error})
+                .to_string()
+        };
         let old = cached(kind, &key);
         if let Some((_, items)) = &old {
             emit(reply(items, None));
         }
-        if old.as_ref().is_some_and(|(at, _)| now().saturating_sub(*at) < FRESH.as_secs()) {
+        if old
+            .as_ref()
+            .is_some_and(|(at, _)| now().saturating_sub(*at) < FRESH.as_secs())
+        {
             return;
         }
         match fetch(kind, &key) {

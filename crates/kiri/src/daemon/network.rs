@@ -93,7 +93,11 @@ pub fn parse_ip6(s: &str) -> Option<[u8; 16]> {
 }
 
 fn mask6(prefix: u8) -> u128 {
-    if prefix == 0 { 0 } else { u128::MAX << (128 - prefix as u32) }
+    if prefix == 0 {
+        0
+    } else {
+        u128::MAX << (128 - prefix as u32)
+    }
 }
 
 pub fn in_subnet6(ip: [u8; 16], subnet: [u8; 16], prefix: u8) -> bool {
@@ -194,11 +198,18 @@ impl Network {
         let (first, last) = match self.ip_range {
             Some((r, p)) => {
                 let start = u32::from_be_bytes(r) - base;
-                (start.max(1), (start + (1u32 << (32 - p as u32)) - 1).min(size - 2))
+                (
+                    start.max(1),
+                    (start + (1u32 << (32 - p as u32)) - 1).min(size - 2),
+                )
             }
             None => (1, size - 2),
         };
-        let host = (first..=last).find(|h| !self.used.contains(h) && !self.reserved((base + h).to_be_bytes()) && !avoid.contains(&(base + h).to_be_bytes()))?;
+        let host = (first..=last).find(|h| {
+            !self.used.contains(h)
+                && !self.reserved((base + h).to_be_bytes())
+                && !avoid.contains(&(base + h).to_be_bytes())
+        })?;
         self.used.insert(host);
         Some((base + host).to_be_bytes())
     }
@@ -208,10 +219,15 @@ impl Network {
     /// only known when the container starts.
     pub fn check_static(&self, ip: [u8; 4]) -> Result<(), String> {
         if self.bridge.is_empty() {
-            return Err(format!("user specified IP address is supported only on bridge networks, not {}", self.name));
+            return Err(format!(
+                "user specified IP address is supported only on bridge networks, not {}",
+                self.name
+            ));
         }
         if self.builtin() {
-            return Err("user specified IP address is supported on user defined networks only".into());
+            return Err(
+                "user specified IP address is supported on user defined networks only".into(),
+            );
         }
         if !self.user_subnet {
             return Err("user specified IP address is supported only when connecting to networks with user configured subnets".into());
@@ -219,7 +235,10 @@ impl Network {
         let size = 1u32 << (32 - self.prefix as u32);
         let host = u32::from_be_bytes(ip).wrapping_sub(u32::from_be_bytes(self.subnet));
         if !self.contains(ip) || host == 0 || host == size - 1 {
-            return Err(format!("no configured subnet or ip-range contain the IP address {}", ip_str(ip)));
+            return Err(format!(
+                "no configured subnet or ip-range contain the IP address {}",
+                ip_str(ip)
+            ));
         }
         Ok(())
     }
@@ -228,18 +247,29 @@ impl Network {
     /// `ipv6_address`), in Docker's words when not.
     pub fn check_static6(&self, ip: [u8; 16]) -> Result<(), String> {
         if self.bridge.is_empty() {
-            return Err(format!("user specified IP address is supported only on bridge networks, not {}", self.name));
+            return Err(format!(
+                "user specified IP address is supported only on bridge networks, not {}",
+                self.name
+            ));
         }
         if self.builtin() {
-            return Err("user specified IP address is supported on user defined networks only".into());
+            return Err(
+                "user specified IP address is supported on user defined networks only".into(),
+            );
         }
         let Some(v6) = &self.v6 else {
-            return Err(format!("invalid endpoint settings: an IPv6 address was given, but network {} does not have IPv6 enabled", self.name));
+            return Err(format!(
+                "invalid endpoint settings: an IPv6 address was given, but network {} does not have IPv6 enabled",
+                self.name
+            ));
         };
         // Docker 29 takes one on an automatically allocated IPv6 subnet too
         // (moby#51569), unlike IPv4.
         if !in_subnet6(ip, v6.subnet, v6.prefix) || v6.host(ip) == 0 {
-            return Err(format!("no configured subnet or ip-range contain the IP address {}", ip6_str(ip)));
+            return Err(format!(
+                "no configured subnet or ip-range contain the IP address {}",
+                ip6_str(ip)
+            ));
         }
         Ok(())
     }
@@ -296,13 +326,15 @@ fn free_subnet6(ula: [u8; 6], name: &str, taken: &[([u8; 16], u8)]) -> Option<([
     let h = sha2::Sha256::digest(name.as_bytes());
     let start = u16::from_be_bytes([h[0], h[1]]);
     let routes = host_routes6();
-    (0..=u16::MAX).map(|i| start.wrapping_add(i)).find_map(|id| {
-        let mut s = [0u8; 16];
-        s[..6].copy_from_slice(&ula);
-        s[6..8].copy_from_slice(&id.to_be_bytes());
-        let cand = (s, 64u8);
-        (!taken.iter().chain(&routes).any(|t| overlaps6(*t, cand))).then_some(cand)
-    })
+    (0..=u16::MAX)
+        .map(|i| start.wrapping_add(i))
+        .find_map(|id| {
+            let mut s = [0u8; 16];
+            s[..6].copy_from_slice(&ula);
+            s[6..8].copy_from_slice(&id.to_be_bytes());
+            let cand = (s, 64u8);
+            (!taken.iter().chain(&routes).any(|t| overlaps6(*t, cand))).then_some(cand)
+        })
 }
 
 pub fn ip_str(a: [u8; 4]) -> String {
@@ -310,13 +342,19 @@ pub fn ip_str(a: [u8; 4]) -> String {
 }
 
 fn now_ns() -> u64 {
-    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
 }
 
 fn builtin(name: &str, driver: &str, bridge: &str, subnet: [u8; 4], gateway: [u8; 4]) -> Network {
     Network {
         // Stable ids, so clients that remember them keep working.
-        id: format!("{:0<64}", name.bytes().map(|b| format!("{b:02x}")).collect::<String>()),
+        id: format!(
+            "{:0<64}",
+            name.bytes().map(|b| format!("{b:02x}")).collect::<String>()
+        ),
         name: name.into(),
         driver: driver.into(),
         bridge: bridge.into(),
@@ -377,7 +415,11 @@ pub struct Ipam {
 }
 
 pub fn in_subnet(ip: [u8; 4], subnet: [u8; 4], prefix: u8) -> bool {
-    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix as u32) };
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix as u32)
+    };
     u32::from_be_bytes(ip) & mask == u32::from_be_bytes(subnet)
 }
 
@@ -407,10 +449,17 @@ fn parse_cidr(s: &str, what: &str) -> Result<([u8; 4], u8), String> {
     let (ip, bits) = s.split_once('/').ok_or_else(bad)?;
     let ip = parse_ip(ip).ok_or_else(bad)?;
     let bits: u8 = bits.parse().ok().filter(|b| *b <= 32).ok_or_else(bad)?;
-    let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits as u32) };
+    let mask = if bits == 0 {
+        0
+    } else {
+        u32::MAX << (32 - bits as u32)
+    };
     let net = (u32::from_be_bytes(ip) & mask).to_be_bytes();
     if net != ip {
-        return Err(format!("invalid {what} {s}: it should be {}/{bits}", ip_str(net)));
+        return Err(format!(
+            "invalid {what} {s}: it should be {}/{bits}",
+            ip_str(net)
+        ));
     }
     Ok((ip, bits))
 }
@@ -423,7 +472,10 @@ fn parse_cidr6(s: &str, what: &str) -> Result<([u8; 16], u8), String> {
     let bits: u8 = bits.parse().ok().filter(|b| *b <= 128).ok_or_else(bad)?;
     let net = (u128::from_be_bytes(ip) & mask6(bits)).to_be_bytes();
     if net != ip {
-        return Err(format!("invalid {what} {s}: it should be {}/{bits}", ip6_str(net)));
+        return Err(format!(
+            "invalid {what} {s}: it should be {}/{bits}",
+            ip6_str(net)
+        ));
     }
     Ok((ip, bits))
 }
@@ -434,7 +486,9 @@ fn parse_ipam6(c: &serde_json::Value, subnet: &str) -> Result<Ipam6, String> {
     let (net, prefix) = parse_cidr6(subnet, "subnet")?;
     // A network needs room for the gateway and at least one container.
     if !(1..=126).contains(&prefix) {
-        return Err(format!("invalid subnet {subnet}: Kiri supports IPv6 prefixes from /1 to /126"));
+        return Err(format!(
+            "invalid subnet {subnet}: Kiri supports IPv6 prefixes from /1 to /126"
+        ));
     }
     let inside = |ip: [u8; 16]| in_subnet6(ip, net, prefix);
     let ip_range = match field("IPRange") {
@@ -442,7 +496,9 @@ fn parse_ipam6(c: &serde_json::Value, subnet: &str) -> Result<Ipam6, String> {
         r => {
             let (rn, rp) = parse_cidr6(&r, "ip-range")?;
             if rp < prefix || !inside(rn) {
-                return Err(format!("invalid ip-range {r}: parent subnet {subnet} does not contain ip-range"));
+                return Err(format!(
+                    "invalid ip-range {r}: parent subnet {subnet} does not contain ip-range"
+                ));
             }
             Some((rn, rp))
         }
@@ -450,7 +506,9 @@ fn parse_ipam6(c: &serde_json::Value, subnet: &str) -> Result<Ipam6, String> {
     let address = |s: &str, what: &str| -> Result<[u8; 16], String> {
         let ip = parse_ip6(s).ok_or_else(|| format!("invalid {what} {s}: invalid address"))?;
         if !inside(ip) {
-            return Err(format!("invalid {what} {s}: parent subnet {subnet} does not contain ip address {s}"));
+            return Err(format!(
+                "invalid {what} {s}: parent subnet {subnet} does not contain ip address {s}"
+            ));
         }
         Ok(ip)
     };
@@ -461,10 +519,22 @@ fn parse_ipam6(c: &serde_json::Value, subnet: &str) -> Result<Ipam6, String> {
     let mut aux = BTreeMap::new();
     if let Some(map) = c["AuxiliaryAddresses"].as_object() {
         for (name, ip) in map {
-            aux.insert(name.clone(), address(ip.as_str().unwrap_or(""), &format!("auxiliary address {name}"))?);
+            aux.insert(
+                name.clone(),
+                address(
+                    ip.as_str().unwrap_or(""),
+                    &format!("auxiliary address {name}"),
+                )?,
+            );
         }
     }
-    Ok(Ipam6 { subnet: net, prefix, gateway, ip_range, aux })
+    Ok(Ipam6 {
+        subnet: net,
+        prefix,
+        gateway,
+        ip_range,
+        aux,
+    })
 }
 
 /// The `IPAM` object of a network create request: the default driver, at
@@ -477,7 +547,11 @@ pub fn parse_ipam(v: &serde_json::Value) -> Result<Option<Ipam>, String> {
 pub fn parse_ipam_both(v: &serde_json::Value) -> Result<(Option<Ipam>, Option<Ipam6>), String> {
     match v["Driver"].as_str().unwrap_or("") {
         "" | "default" => {}
-        d => return Err(format!("Kiri supports only the default IPAM driver, not {d}")),
+        d => {
+            return Err(format!(
+                "Kiri supports only the default IPAM driver, not {d}"
+            ));
+        }
     }
     let configs = v["Config"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     let mut out: Option<Ipam> = None;
@@ -503,7 +577,9 @@ pub fn parse_ipam_both(v: &serde_json::Value) -> Result<(Option<Ipam>, Option<Ip
         }
         let (net, prefix) = parse_cidr(&subnet, "subnet")?;
         if prefix > 30 || prefix < 8 {
-            return Err(format!("invalid subnet {subnet}: Kiri supports prefixes from /8 to /30"));
+            return Err(format!(
+                "invalid subnet {subnet}: Kiri supports prefixes from /8 to /30"
+            ));
         }
         let inside = |ip: [u8; 4]| in_subnet(ip, net, prefix);
         let ip_range = match field("IPRange") {
@@ -511,7 +587,9 @@ pub fn parse_ipam_both(v: &serde_json::Value) -> Result<(Option<Ipam>, Option<Ip
             r => {
                 let (rn, rp) = parse_cidr(&r, "ip-range")?;
                 if rp < prefix || !inside(rn) {
-                    return Err(format!("invalid ip-range {r}: parent subnet {subnet} does not contain ip-range"));
+                    return Err(format!(
+                        "invalid ip-range {r}: parent subnet {subnet} does not contain ip-range"
+                    ));
                 }
                 Some((rn, rp))
             }
@@ -519,7 +597,9 @@ pub fn parse_ipam_both(v: &serde_json::Value) -> Result<(Option<Ipam>, Option<Ip
         let address = |s: &str, what: &str| -> Result<[u8; 4], String> {
             let ip = parse_ip(s).ok_or_else(|| format!("invalid {what} {s}: invalid address"))?;
             if !inside(ip) {
-                return Err(format!("invalid {what} {s}: parent subnet {subnet} does not contain ip address {s}"));
+                return Err(format!(
+                    "invalid {what} {s}: parent subnet {subnet} does not contain ip address {s}"
+                ));
             }
             Ok(ip)
         };
@@ -530,10 +610,22 @@ pub fn parse_ipam_both(v: &serde_json::Value) -> Result<(Option<Ipam>, Option<Ip
         let mut aux = BTreeMap::new();
         if let Some(map) = c["AuxiliaryAddresses"].as_object() {
             for (name, ip) in map {
-                aux.insert(name.clone(), address(ip.as_str().unwrap_or(""), &format!("auxiliary address {name}"))?);
+                aux.insert(
+                    name.clone(),
+                    address(
+                        ip.as_str().unwrap_or(""),
+                        &format!("auxiliary address {name}"),
+                    )?,
+                );
             }
         }
-        out = Some(Ipam { subnet: net, prefix, gateway, ip_range, aux });
+        out = Some(Ipam {
+            subnet: net,
+            prefix,
+            gateway,
+            ip_range,
+            aux,
+        });
     }
     Ok((out, out6))
 }
@@ -542,7 +634,11 @@ impl Networks {
     pub fn load(root: &std::path::Path) -> io::Result<Networks> {
         let path = root.join("networks.json");
         let saved: Vec<Network> = match std::fs::read(&path) {
-            Ok(b) => serde_json::from_slice::<Vec<Network>>(&b).unwrap_or_default().into_iter().filter(|n| !n.builtin()).collect(),
+            Ok(b) => serde_json::from_slice::<Vec<Network>>(&b)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|n| !n.builtin())
+                .collect(),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Vec::new(),
             Err(e) => return Err(e),
         };
@@ -551,19 +647,41 @@ impl Networks {
         // saved network has it.
         let taken: Vec<([u8; 4], u8)> = saved.iter().map(|n| (n.subnet, n.prefix)).collect();
         let (subnet, prefix) = free_subnet(&taken, true).unwrap_or(([172, 17, 0, 0], 16));
-        let mut bridge = builtin("bridge", "bridge", "kiri0", subnet, [subnet[0], subnet[1], subnet[2], 1]);
+        let mut bridge = builtin(
+            "bridge",
+            "bridge",
+            "kiri0",
+            subnet,
+            [subnet[0], subnet[1], subnet[2], 1],
+        );
         bridge.prefix = prefix;
         // `KIRI_BRIDGE_IPV6=1`, as Docker's daemon.json `"ipv6": true`: the
         // default bridge gets an IPv6 /64 too. Off by default, as Docker's.
         let ula = ula_prefix(root);
         if std::env::var("KIRI_BRIDGE_IPV6").is_ok_and(|v| v == "1" || v == "true") {
-            let taken6: Vec<([u8; 16], u8)> = saved.iter().filter_map(|n| n.v6.as_ref()).map(|v| (v.subnet, v.prefix)).collect();
+            let taken6: Vec<([u8; 16], u8)> = saved
+                .iter()
+                .filter_map(|n| n.v6.as_ref())
+                .map(|v| (v.subnet, v.prefix))
+                .collect();
             if let Some((s6, p6)) = free_subnet6(ula, "bridge", &taken6) {
                 let gateway = (u128::from_be_bytes(s6) + 1).to_be_bytes();
-                bridge.v6 = Some(V6 { subnet: s6, prefix: p6, gateway, user_subnet: false, ip_range: None, aux: BTreeMap::new(), used: BTreeSet::new() });
+                bridge.v6 = Some(V6 {
+                    subnet: s6,
+                    prefix: p6,
+                    gateway,
+                    user_subnet: false,
+                    ip_range: None,
+                    aux: BTreeMap::new(),
+                    used: BTreeSet::new(),
+                });
             }
         }
-        let mut list = vec![bridge, builtin("host", "host", "", [0; 4], [0; 4]), builtin("none", "null", "", [0; 4], [0; 4])];
+        let mut list = vec![
+            bridge,
+            builtin("host", "host", "", [0; 4], [0; 4]),
+            builtin("none", "null", "", [0; 4], [0; 4]),
+        ];
         list.extend(saved);
         Ok(Networks { list, path, ula })
     }
@@ -572,7 +690,9 @@ impl Networks {
         let user: Vec<&Network> = self.list.iter().filter(|n| !n.builtin()).collect();
         if let Ok(json) = serde_json::to_vec(&user) {
             let tmp = self.path.with_extension("json.tmp");
-            if let Err(e) = std::fs::write(&tmp, json).and_then(|()| std::fs::rename(&tmp, &self.path)) {
+            if let Err(e) =
+                std::fs::write(&tmp, json).and_then(|()| std::fs::rename(&tmp, &self.path))
+            {
                 crate::diag::error!("saving networks failed", error = e);
             }
         }
@@ -584,11 +704,19 @@ impl Networks {
 
     /// By name, full id or id prefix. `default` is Docker's alias for `bridge`.
     pub fn find(&self, key: &str) -> Option<&Network> {
-        let key = if key == "default" || key.is_empty() { "bridge" } else { key };
+        let key = if key == "default" || key.is_empty() {
+            "bridge"
+        } else {
+            key
+        };
         self.list
             .iter()
             .find(|n| n.name == key || n.id == key)
-            .or_else(|| self.list.iter().find(|n| key.len() >= 6 && n.id.starts_with(key)))
+            .or_else(|| {
+                self.list
+                    .iter()
+                    .find(|n| key.len() >= 6 && n.id.starts_with(key))
+            })
     }
 
     fn find_mut(&mut self, name: &str) -> Option<&mut Network> {
@@ -596,7 +724,11 @@ impl Networks {
     }
 
     pub fn create(&mut self, name: &str, s: Settings) -> Result<Network, String> {
-        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b)) {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+        {
             return Err(format!("invalid network name {name:?}"));
         }
         if self.find(name).is_some_and(|n| n.name == name) {
@@ -608,11 +740,22 @@ impl Networks {
         if s.no_ipv4 && s.ipam.is_some() {
             return Err("invalid network config: an IPv4 subnet was given, but IPv4 is disabled (--ipv4=false)".into());
         }
-        let taken: Vec<([u8; 4], u8)> = self.list.iter().filter(|n| !n.bridge.is_empty()).map(|n| (n.subnet, n.prefix)).collect();
+        let taken: Vec<([u8; 4], u8)> = self
+            .list
+            .iter()
+            .filter(|n| !n.bridge.is_empty())
+            .map(|n| (n.subnet, n.prefix))
+            .collect();
         let (subnet, gateway) = match &s.ipam {
             Some(ipam) => {
-                if taken.iter().any(|t| overlaps(*t, (ipam.subnet, ipam.prefix))) {
-                    return Err("invalid pool request: Pool overlaps with other one on this address space".into());
+                if taken
+                    .iter()
+                    .any(|t| overlaps(*t, (ipam.subnet, ipam.prefix)))
+                {
+                    return Err(
+                        "invalid pool request: Pool overlaps with other one on this address space"
+                            .into(),
+                    );
                 }
                 // Docker's default gateway: the subnet's first address.
                 let first = (u32::from_be_bytes(ipam.subnet) + 1).to_be_bytes();
@@ -626,7 +769,12 @@ impl Networks {
             }
         };
         let v6 = if s.ipv6 {
-            let taken6: Vec<([u8; 16], u8)> = self.list.iter().filter_map(|n| n.v6.as_ref()).map(|v| (v.subnet, v.prefix)).collect();
+            let taken6: Vec<([u8; 16], u8)> = self
+                .list
+                .iter()
+                .filter_map(|n| n.v6.as_ref())
+                .map(|v| (v.subnet, v.prefix))
+                .collect();
             let (subnet, prefix, user) = match &s.ipam6 {
                 Some(i) => {
                     if taken6.iter().any(|t| overlaps6(*t, (i.subnet, i.prefix))) {
@@ -635,7 +783,8 @@ impl Networks {
                     (i.subnet, i.prefix, true)
                 }
                 None => {
-                    let (s, p) = free_subnet6(self.ula, name, &taken6).ok_or("no free IPv6 subnet left")?;
+                    let (s, p) =
+                        free_subnet6(self.ula, name, &taken6).ok_or("no free IPv6 subnet left")?;
                     (s, p, false)
                 }
             };
@@ -655,7 +804,9 @@ impl Networks {
             }
             None
         };
-        let index = (1..).find(|i| !self.list.iter().any(|n| n.bridge == format!("kiri{i}"))).expect("unbounded");
+        let index = (1..)
+            .find(|i| !self.list.iter().any(|n| n.bridge == format!("kiri{i}")))
+            .expect("unbounded");
         let n = Network {
             id: super::engine::random_hex(32),
             name: name.into(),
@@ -670,7 +821,11 @@ impl Networks {
             user_subnet: s.ipam.is_some(),
             ip_range: s.ipam.as_ref().and_then(|i| i.ip_range),
             aux: s.ipam.map(|i| i.aux).unwrap_or_default(),
-            options: if s.options.is_object() { s.options } else { serde_json::json!({}) },
+            options: if s.options.is_object() {
+                s.options
+            } else {
+                serde_json::json!({})
+            },
             ipam_options: s.ipam_options,
             attachable: s.attachable,
             no_ipv4: s.no_ipv4,
@@ -683,13 +838,20 @@ impl Networks {
     }
 
     pub fn remove(&mut self, key: &str) -> Result<(), String> {
-        let name = self.find(key).map(|n| n.name.clone()).ok_or_else(|| format!("network {key} not found"))?;
+        let name = self
+            .find(key)
+            .map(|n| n.name.clone())
+            .ok_or_else(|| format!("network {key} not found"))?;
         let n = self.find_mut(&name).expect("found");
         if n.builtin() {
-            return Err(format!("{name} is a pre-defined network and cannot be removed"));
+            return Err(format!(
+                "{name} is a pre-defined network and cannot be removed"
+            ));
         }
         if !n.used.is_empty() || n.v6.as_ref().is_some_and(|v| !v.used.is_empty()) {
-            return Err(format!("error while removing network: network {name} has active endpoints"));
+            return Err(format!(
+                "error while removing network: network {name} has active endpoints"
+            ));
         }
         self.list.retain(|n| n.name != name);
         self.save();
@@ -704,7 +866,9 @@ impl Networks {
 
     /// Takes a fixed address on a network, or says why it cannot.
     pub fn reserve(&mut self, name: &str, ip: [u8; 4]) -> Result<(), String> {
-        self.find_mut(name).ok_or_else(|| format!("network {name} not found"))?.reserve(ip)
+        self.find_mut(name)
+            .ok_or_else(|| format!("network {name} not found"))?
+            .reserve(ip)
     }
 
     pub fn release(&mut self, name: &str, ip: [u8; 4]) {
@@ -715,8 +879,15 @@ impl Networks {
 
     /// An IPv6 address on an `--ipv6` network: the fixed one asked for, or
     /// the next free one past `avoid`. None for a network without IPv6.
-    pub fn allocate6(&mut self, name: &str, want: Option<[u8; 16]>, avoid: &[[u8; 16]]) -> Result<Option<[u8; 16]>, String> {
-        let n = self.find_mut(name).ok_or_else(|| format!("network {name} not found"))?;
+    pub fn allocate6(
+        &mut self,
+        name: &str,
+        want: Option<[u8; 16]>,
+        avoid: &[[u8; 16]],
+    ) -> Result<Option<[u8; 16]>, String> {
+        let n = self
+            .find_mut(name)
+            .ok_or_else(|| format!("network {name} not found"))?;
         if n.v6.is_none() {
             return match want {
                 Some(ip) => n.check_static6(ip).map(|()| None),
@@ -725,7 +896,13 @@ impl Networks {
         }
         match want {
             Some(ip) => n.reserve6(ip).map(|()| Some(ip)),
-            None => n.v6.as_mut().expect("checked").allocate_avoiding(avoid).map(Some).ok_or_else(|| format!("no free IPv6 address left on network {name}")),
+            None => {
+                n.v6.as_mut()
+                    .expect("checked")
+                    .allocate_avoiding(avoid)
+                    .map(Some)
+                    .ok_or_else(|| format!("no free IPv6 address left on network {name}"))
+            }
         }
     }
 
@@ -736,7 +913,9 @@ impl Networks {
     }
 
     pub fn in_use(&self, name: &str) -> bool {
-        self.list.iter().any(|n| n.name == name && !n.used.is_empty())
+        self.list
+            .iter()
+            .any(|n| n.name == name && !n.used.is_empty())
     }
 }
 
@@ -751,7 +930,10 @@ fn free_subnet(taken: &[([u8; 4], u8)], default_bridge: bool) -> Option<([u8; 4]
         .chain((0..=255u8).map(|c| ([10, 89, c, 0], 24u8)))
         .find(|(s, p)| {
             let (net, mask) = (u32::from_be_bytes(*s), u32::MAX << (32 - p));
-            !taken.iter().any(|t| overlaps(*t, (*s, *p))) && !routes.iter().any(|(rn, rm)| (net & rm) == *rn || (rn & mask) == net)
+            !taken.iter().any(|t| overlaps(*t, (*s, *p)))
+                && !routes
+                    .iter()
+                    .any(|(rn, rm)| (net & rm) == *rn || (rn & mask) == net)
         })
 }
 
@@ -829,17 +1011,38 @@ mod tests {
     fn ipam_config_is_read_and_checked() {
         let v = serde_json::json!({"Driver": "default", "Config": [{"Subnet": "10.5.0.0/24", "Gateway": "10.5.0.254", "IPRange": "10.5.0.128/25", "AuxiliaryAddresses": {"router": "10.5.0.200"}}]});
         let i = parse_ipam(&v).unwrap().unwrap();
-        assert_eq!((i.subnet, i.prefix, i.gateway, i.ip_range), ([10, 5, 0, 0], 24, Some([10, 5, 0, 254]), Some(([10, 5, 0, 128], 25))));
+        assert_eq!(
+            (i.subnet, i.prefix, i.gateway, i.ip_range),
+            (
+                [10, 5, 0, 0],
+                24,
+                Some([10, 5, 0, 254]),
+                Some(([10, 5, 0, 128], 25))
+            )
+        );
         assert_eq!(i.aux.get("router"), Some(&[10, 5, 0, 200]));
         // Compose without an ipam block, and the CLI without --subnet.
-        assert_eq!(parse_ipam(&serde_json::json!({"Driver": "default", "Config": []})).unwrap(), None);
+        assert_eq!(
+            parse_ipam(&serde_json::json!({"Driver": "default", "Config": []})).unwrap(),
+            None
+        );
         assert_eq!(parse_ipam(&serde_json::Value::Null).unwrap(), None);
 
-        let bad = |cfg: serde_json::Value| parse_ipam(&serde_json::json!({"Config": [cfg]})).unwrap_err();
-        assert_eq!(bad(serde_json::json!({"Subnet": "10.5.0.1/24"})), "invalid subnet 10.5.0.1/24: it should be 10.5.0.0/24");
+        let bad =
+            |cfg: serde_json::Value| parse_ipam(&serde_json::json!({"Config": [cfg]})).unwrap_err();
+        assert_eq!(
+            bad(serde_json::json!({"Subnet": "10.5.0.1/24"})),
+            "invalid subnet 10.5.0.1/24: it should be 10.5.0.0/24"
+        );
         assert!(bad(serde_json::json!({"Subnet": "nope"})).contains("invalid CIDR block notation"));
-        assert!(bad(serde_json::json!({"Subnet": "10.5.0.0/24", "Gateway": "10.6.0.1"})).contains("does not contain"));
-        assert!(bad(serde_json::json!({"Subnet": "10.5.0.0/24", "IPRange": "10.5.0.0/16"})).contains("ip-range"));
+        assert!(
+            bad(serde_json::json!({"Subnet": "10.5.0.0/24", "Gateway": "10.6.0.1"}))
+                .contains("does not contain")
+        );
+        assert!(
+            bad(serde_json::json!({"Subnet": "10.5.0.0/24", "IPRange": "10.5.0.0/16"}))
+                .contains("ip-range")
+        );
         assert!(bad(serde_json::json!({"Subnet": "10.5.0.0/24", "AuxiliaryAddresses": {"a": "10.9.0.1"}})).contains("auxiliary address a"));
         assert!(parse_ipam(&serde_json::json!({"Driver": "other"})).is_err());
     }
@@ -855,24 +1058,53 @@ mod tests {
         let v6 = v6.unwrap();
         assert_eq!((ip6_str(v6.subnet), v6.prefix), ("fd00:5::".to_owned(), 64));
         assert_eq!(v6.gateway.map(ip6_str).as_deref(), Some("fd00:5::fe"));
-        assert_eq!(v6.ip_range.map(|(a, p)| (ip6_str(a), p)), Some(("fd00:5::100".to_owned(), 120)));
-        assert_eq!(v6.aux.get("r").copied().map(ip6_str).as_deref(), Some("fd00:5::200"));
+        assert_eq!(
+            v6.ip_range.map(|(a, p)| (ip6_str(a), p)),
+            Some(("fd00:5::100".to_owned(), 120))
+        );
+        assert_eq!(
+            v6.aux.get("r").copied().map(ip6_str).as_deref(),
+            Some("fd00:5::200")
+        );
         // An IPv6 entry alone is fine (the IPv4 subnet comes from the pool).
-        let (v4, v6) = parse_ipam_both(&serde_json::json!({"Config": [{"Subnet": "fc00:f853:ccd:e793::/64"}]})).unwrap();
+        let (v4, v6) = parse_ipam_both(
+            &serde_json::json!({"Config": [{"Subnet": "fc00:f853:ccd:e793::/64"}]}),
+        )
+        .unwrap();
         assert!(v4.is_none() && v6.is_some());
 
-        let bad = |cfg: serde_json::Value| parse_ipam_both(&serde_json::json!({"Config": [cfg]})).unwrap_err();
-        assert_eq!(bad(serde_json::json!({"Subnet": "fd00:5::1/64"})), "invalid subnet fd00:5::1/64: it should be fd00:5::/64");
-        assert!(bad(serde_json::json!({"Subnet": "fd00:5::/64", "Gateway": "fd00:6::1"})).contains("does not contain"));
-        assert!(bad(serde_json::json!({"Subnet": "fd00:5::/64", "Gateway": "10.0.0.1"})).contains("invalid address"));
+        let bad = |cfg: serde_json::Value| {
+            parse_ipam_both(&serde_json::json!({"Config": [cfg]})).unwrap_err()
+        };
+        assert_eq!(
+            bad(serde_json::json!({"Subnet": "fd00:5::1/64"})),
+            "invalid subnet fd00:5::1/64: it should be fd00:5::/64"
+        );
+        assert!(
+            bad(serde_json::json!({"Subnet": "fd00:5::/64", "Gateway": "fd00:6::1"}))
+                .contains("does not contain")
+        );
+        assert!(
+            bad(serde_json::json!({"Subnet": "fd00:5::/64", "Gateway": "10.0.0.1"}))
+                .contains("invalid address")
+        );
         assert!(bad(serde_json::json!({"Subnet": "fd00:5::/127"})).contains("prefixes"));
-        assert!(bad(serde_json::json!({"Subnet": "fd00:5::/64", "IPRange": "fd00:5::/48"})).contains("ip-range"));
-        let two = serde_json::json!({"Config": [{"Subnet": "fd00:5::/64"}, {"Subnet": "fd00:6::/64"}]});
-        assert!(parse_ipam_both(&two).unwrap_err().contains("one IPv6 subnet"));
+        assert!(
+            bad(serde_json::json!({"Subnet": "fd00:5::/64", "IPRange": "fd00:5::/48"}))
+                .contains("ip-range")
+        );
+        let two =
+            serde_json::json!({"Config": [{"Subnet": "fd00:5::/64"}, {"Subnet": "fd00:6::/64"}]});
+        assert!(
+            parse_ipam_both(&two)
+                .unwrap_err()
+                .contains("one IPv6 subnet")
+        );
     }
 
     fn nets() -> (Networks, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("kiri-net-test-{}-{}", std::process::id(), now_ns()));
+        let dir =
+            std::env::temp_dir().join(format!("kiri-net-test-{}-{}", std::process::id(), now_ns()));
         std::fs::create_dir_all(&dir).unwrap();
         (Networks::load(&dir).unwrap(), dir)
     }
@@ -882,16 +1114,51 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kiri-net6only-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut n = Networks::load(&dir).unwrap();
-        let only = n.create("only6", Settings { no_ipv4: true, ..v6(None) }).unwrap();
+        let only = n
+            .create(
+                "only6",
+                Settings {
+                    no_ipv4: true,
+                    ..v6(None)
+                },
+            )
+            .unwrap();
         assert!(only.no_ipv4 && only.v6.is_some());
-        assert!(n.create("neither", Settings { no_ipv4: true, ..Default::default() }).unwrap_err().contains("IPv4 or IPv6 must be enabled"));
-        let ipam = parse_ipam(&serde_json::json!({"Config": [{"Subnet": "10.77.0.0/24"}]})).unwrap();
-        assert!(n.create("both", Settings { no_ipv4: true, ipam, ..v6(None) }).unwrap_err().contains("IPv4 is disabled"));
+        assert!(
+            n.create(
+                "neither",
+                Settings {
+                    no_ipv4: true,
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .contains("IPv4 or IPv6 must be enabled")
+        );
+        let ipam =
+            parse_ipam(&serde_json::json!({"Config": [{"Subnet": "10.77.0.0/24"}]})).unwrap();
+        assert!(
+            n.create(
+                "both",
+                Settings {
+                    no_ipv4: true,
+                    ipam,
+                    ..v6(None)
+                }
+            )
+            .unwrap_err()
+            .contains("IPv4 is disabled")
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
     fn v6(ipam6: Option<Ipam6>) -> Settings {
-        Settings { labels: serde_json::json!({}), ipv6: true, ipam6, ..Default::default() }
+        Settings {
+            labels: serde_json::json!({}),
+            ipv6: true,
+            ipam6,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -905,24 +1172,40 @@ mod tests {
         assert_eq!((va.subnet[0], va.prefix), (0xfd, 64));
         assert_eq!(va.subnet[..6], vb.subnet[..6], "one /48 per engine");
         assert!(!overlaps6((va.subnet, 64), (vb.subnet, 64)));
-        assert_eq!(va.gateway, (u128::from_be_bytes(va.subnet) + 1).to_be_bytes());
+        assert_eq!(
+            va.gateway,
+            (u128::from_be_bytes(va.subnet) + 1).to_be_bytes()
+        );
         assert!(!va.user_subnet);
         // The same name gets the same subnet again.
         n.remove("a").unwrap();
-        assert_eq!(n.create("a", v6(None)).unwrap().v6.unwrap().subnet, va.subnet);
+        assert_eq!(
+            n.create("a", v6(None)).unwrap().v6.unwrap().subnet,
+            va.subnet
+        );
         // Addresses: ::2 up, past the gateway; released ones come back.
         let first = n.allocate6("a", None, &[]).unwrap().unwrap();
-        assert_eq!(ip6_str(first), ip6_str((u128::from_be_bytes(va.subnet) + 2).to_be_bytes()));
+        assert_eq!(
+            ip6_str(first),
+            ip6_str((u128::from_be_bytes(va.subnet) + 2).to_be_bytes())
+        );
         assert!(n.remove("a").unwrap_err().contains("active endpoints"));
         n.release6("a", first);
         n.remove("a").unwrap();
         // IPv4-only networks hand out none, and refuse a fixed one.
         n.create("plain", Settings::default()).unwrap();
         assert_eq!(n.allocate6("plain", None, &[]), Ok(None));
-        assert!(n.allocate6("plain", parse_ip6("fd00::5"), &[]).unwrap_err().contains("does not have IPv6 enabled"));
+        assert!(
+            n.allocate6("plain", parse_ip6("fd00::5"), &[])
+                .unwrap_err()
+                .contains("does not have IPv6 enabled")
+        );
         // Persisted.
         let again = Networks::load(&dir).unwrap();
-        assert_eq!(again.find("b").unwrap().v6.as_ref().unwrap().subnet, vb.subnet);
+        assert_eq!(
+            again.find("b").unwrap().v6.as_ref().unwrap().subnet,
+            vb.subnet
+        );
         assert!(again.find("plain").unwrap().v6.is_none());
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -930,36 +1213,81 @@ mod tests {
     #[test]
     fn ipv6_subnets_and_fixed_addresses_follow_dockers_rules() {
         let (mut n, dir) = nets();
-        let ipam = |s: &str| parse_ipam_both(&serde_json::json!({"Config": [{"Subnet": s}]})).unwrap().1;
-        let k = n.create("kind", v6(ipam("fc00:f853:ccd:e793::/64"))).unwrap();
+        let ipam = |s: &str| {
+            parse_ipam_both(&serde_json::json!({"Config": [{"Subnet": s}]}))
+                .unwrap()
+                .1
+        };
+        let k = n
+            .create("kind", v6(ipam("fc00:f853:ccd:e793::/64")))
+            .unwrap();
         let kv = k.v6.unwrap();
         assert_eq!(kv.subnet_str(), "fc00:f853:ccd:e793::/64");
         assert_eq!(ip6_str(kv.gateway), "fc00:f853:ccd:e793::1");
-        assert!(n.create("again", v6(ipam("fc00:f853:ccd:e793::/80"))).unwrap_err().contains("Pool overlaps"));
+        assert!(
+            n.create("again", v6(ipam("fc00:f853:ccd:e793::/80")))
+                .unwrap_err()
+                .contains("Pool overlaps")
+        );
         // A subnet without --ipv6 is refused, not dropped.
-        let no = Settings { ipam6: ipam("fd00:9::/64"), ..Default::default() };
+        let no = Settings {
+            ipam6: ipam("fd00:9::/64"),
+            ..Default::default()
+        };
         assert!(n.create("no", no).unwrap_err().contains("IPv6 enabled"));
         // Fixed addresses: in the subnet, free, not the gateway.
         let want = parse_ip6("fc00:f853:ccd:e793::10");
         assert_eq!(n.allocate6("kind", want, &[]), Ok(want));
-        assert!(n.allocate6("kind", want, &[]).unwrap_err().starts_with("Address already in use"));
-        assert!(n.allocate6("kind", parse_ip6("fc00:f853:ccd:e793::1"), &[]).unwrap_err().starts_with("Address already in use"));
-        assert!(n.allocate6("kind", parse_ip6("fd00:1::5"), &[]).unwrap_err().contains("no configured subnet"));
+        assert!(
+            n.allocate6("kind", want, &[])
+                .unwrap_err()
+                .starts_with("Address already in use")
+        );
+        assert!(
+            n.allocate6("kind", parse_ip6("fc00:f853:ccd:e793::1"), &[])
+                .unwrap_err()
+                .starts_with("Address already in use")
+        );
+        assert!(
+            n.allocate6("kind", parse_ip6("fd00:1::5"), &[])
+                .unwrap_err()
+                .contains("no configured subnet")
+        );
         // Automatic ones pass over addresses other containers asked for.
         let skip = parse_ip6("fc00:f853:ccd:e793::2").unwrap();
-        assert_eq!(n.allocate6("kind", None, &[skip]).unwrap().map(ip6_str).as_deref(), Some("fc00:f853:ccd:e793::3"));
+        assert_eq!(
+            n.allocate6("kind", None, &[skip])
+                .unwrap()
+                .map(ip6_str)
+                .as_deref(),
+            Some("fc00:f853:ccd:e793::3")
+        );
         // A pool subnet takes fixed addresses too, as Docker 29 does (moby#51569).
         n.create("pool", v6(None)).unwrap();
         let pv = n.find("pool").unwrap().v6.clone().unwrap();
         let inside = (u128::from_be_bytes(pv.subnet) + 9).to_be_bytes();
         assert_eq!(n.allocate6("pool", Some(inside), &[]), Ok(Some(inside)));
-        assert!(n.allocate6("pool", parse_ip6("fd00:dead::9"), &[]).unwrap_err().contains("no configured subnet"));
+        assert!(
+            n.allocate6("pool", parse_ip6("fd00:dead::9"), &[])
+                .unwrap_err()
+                .contains("no configured subnet")
+        );
         // A range: only from there.
         let r = parse_ipam_both(&serde_json::json!({"Config": [{"Subnet": "fd00:7::/64", "IPRange": "fd00:7::40/126"}]})).unwrap().1;
         n.create("ranged", v6(r)).unwrap();
-        let got: Vec<String> = (0..4).filter_map(|_| n.allocate6("ranged", None, &[]).unwrap()).map(ip6_str).collect();
-        assert_eq!(got, ["fd00:7::40", "fd00:7::41", "fd00:7::42", "fd00:7::43"]);
-        assert!(n.allocate6("ranged", None, &[]).unwrap_err().contains("no free IPv6 address"));
+        let got: Vec<String> = (0..4)
+            .filter_map(|_| n.allocate6("ranged", None, &[]).unwrap())
+            .map(ip6_str)
+            .collect();
+        assert_eq!(
+            got,
+            ["fd00:7::40", "fd00:7::41", "fd00:7::42", "fd00:7::43"]
+        );
+        assert!(
+            n.allocate6("ranged", None, &[])
+                .unwrap_err()
+                .contains("no free IPv6 address")
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -977,7 +1305,13 @@ mod tests {
     fn addresses_come_from_the_range_and_skip_reserved_ones() {
         let mut aux = BTreeMap::new();
         aux.insert("r".to_owned(), [10, 5, 0, 129]);
-        let mut n = net(Some(Ipam { subnet: [10, 5, 0, 0], prefix: 24, gateway: Some([10, 5, 0, 128]), ip_range: Some(([10, 5, 0, 128], 30)), aux }));
+        let mut n = net(Some(Ipam {
+            subnet: [10, 5, 0, 0],
+            prefix: 24,
+            gateway: Some([10, 5, 0, 128]),
+            ip_range: Some(([10, 5, 0, 128], 30)),
+            aux,
+        }));
         // .128 is the gateway, .129 auxiliary: .130 and .131 are left.
         assert_eq!(n.allocate_avoiding(&[]), Some([10, 5, 0, 130]));
         assert_eq!(n.allocate_avoiding(&[]), Some([10, 5, 0, 131]));
@@ -988,24 +1322,57 @@ mod tests {
         let mut d = net(None);
         assert_eq!(d.allocate_avoiding(&[]), Some([10, 5, 0, 2]));
         d.release([10, 5, 0, 2]);
-        let mut g = net(Some(Ipam { subnet: [10, 5, 0, 0], prefix: 24, gateway: Some([10, 5, 0, 254]), ip_range: None, aux: BTreeMap::new() }));
+        let mut g = net(Some(Ipam {
+            subnet: [10, 5, 0, 0],
+            prefix: 24,
+            gateway: Some([10, 5, 0, 254]),
+            ip_range: None,
+            aux: BTreeMap::new(),
+        }));
         assert_eq!(g.allocate_avoiding(&[]), Some([10, 5, 0, 1]));
     }
 
     #[test]
     fn static_addresses_follow_dockers_rules() {
-        let mut n = net(Some(Ipam { subnet: [10, 5, 0, 0], prefix: 24, gateway: None, ip_range: Some(([10, 5, 0, 128], 25)), aux: BTreeMap::new() }));
+        let mut n = net(Some(Ipam {
+            subnet: [10, 5, 0, 0],
+            prefix: 24,
+            gateway: None,
+            ip_range: Some(([10, 5, 0, 128], 25)),
+            aux: BTreeMap::new(),
+        }));
         // Outside the range but inside the subnet is fine, as with Docker.
         assert_eq!(n.reserve([10, 5, 0, 10]), Ok(()));
-        assert!(n.reserve([10, 5, 0, 10]).unwrap_err().starts_with("Address already in use"));
-        assert!(n.reserve([10, 5, 0, 1]).unwrap_err().starts_with("Address already in use"));
-        assert!(n.check_static([10, 6, 0, 10]).unwrap_err().contains("no configured subnet"));
+        assert!(
+            n.reserve([10, 5, 0, 10])
+                .unwrap_err()
+                .starts_with("Address already in use")
+        );
+        assert!(
+            n.reserve([10, 5, 0, 1])
+                .unwrap_err()
+                .starts_with("Address already in use")
+        );
+        assert!(
+            n.check_static([10, 6, 0, 10])
+                .unwrap_err()
+                .contains("no configured subnet")
+        );
         assert!(n.check_static([10, 5, 0, 255]).is_err());
         n.release([10, 5, 0, 10]);
         assert_eq!(n.reserve([10, 5, 0, 10]), Ok(()));
-        assert!(net(None).check_static([10, 5, 0, 10]).unwrap_err().contains("user configured subnets"));
+        assert!(
+            net(None)
+                .check_static([10, 5, 0, 10])
+                .unwrap_err()
+                .contains("user configured subnets")
+        );
         let mut b = net(None);
         b.name = "bridge".into();
-        assert!(b.check_static([10, 5, 0, 10]).unwrap_err().contains("user defined networks only"));
+        assert!(
+            b.check_static([10, 5, 0, 10])
+                .unwrap_err()
+                .contains("user defined networks only")
+        );
     }
 }

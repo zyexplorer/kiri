@@ -28,14 +28,16 @@ pub fn watch(on_gone: impl FnOnce(&Path) + Send + 'static) {
 }
 
 fn watch_path(path: PathBuf, every: Duration, on_gone: impl FnOnce(&Path) + Send + 'static) {
-    let _ = std::thread::Builder::new().name("kiri-app-watch".into()).spawn(move || {
-        let mut missing = 0;
-        while missing < 2 {
-            std::thread::sleep(every);
-            missing = if path.exists() { 0 } else { missing + 1 };
-        }
-        on_gone(&path);
-    });
+    let _ = std::thread::Builder::new()
+        .name("kiri-app-watch".into())
+        .spawn(move || {
+            let mut missing = 0;
+            while missing < 2 {
+                std::thread::sleep(every);
+                missing = if path.exists() { 0 } else { missing + 1 };
+            }
+            on_gone(&path);
+        });
 }
 
 #[cfg(test)]
@@ -51,7 +53,9 @@ mod tests {
         let exe = dir.join("app").join("kiri");
         std::fs::write(&exe, b"program").unwrap();
         let (tx, rx) = mpsc::channel();
-        super::watch_path(exe.clone(), Duration::from_millis(20), move |p| tx.send(p.to_owned()).unwrap());
+        super::watch_path(exe.clone(), Duration::from_millis(20), move |p| {
+            tx.send(p.to_owned()).unwrap()
+        });
         // There all along: nothing.
         assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
         // Its folder renamed, as Windows allows for a running program.
@@ -68,7 +72,9 @@ mod tests {
         let exe = dir.join("kiri");
         std::fs::write(&exe, b"old").unwrap();
         let (tx, rx) = mpsc::channel();
-        super::watch_path(exe.clone(), Duration::from_millis(400), move |p| tx.send(p.to_owned()).unwrap());
+        super::watch_path(exe.clone(), Duration::from_millis(400), move |p| {
+            tx.send(p.to_owned()).unwrap()
+        });
         // Gone for the first look (at 400 ms), back before the second (800 ms).
         std::fs::remove_file(&exe).unwrap();
         std::thread::sleep(Duration::from_millis(600));

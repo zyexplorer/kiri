@@ -57,16 +57,32 @@ pub fn handle(action: &str, value: &Value) {
         "deletecluster" => op("deletecluster", vec!["delete".into()]),
         // Settings → Kubernetes → Network: saved, and the node recreated with them.
         "set" => {
-            let sans: Vec<&str> = value["tls_san"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let sans: Vec<&str> = value["tls_san"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
             let lan = if value["lan"] == true { "on" } else { "off" };
-            let mut args: Vec<String> = vec!["set".into(), "--lan".into(), lan.into(), "--tls-san".into(), sans.join(",")];
+            let mut args: Vec<String> = vec![
+                "set".into(),
+                "--lan".into(),
+                lan.into(),
+                "--tls-san".into(),
+                sans.join(","),
+            ];
             if let Some(port) = value["port"].as_u64() {
                 args.extend(["--port".into(), port.to_string()]);
             }
             op("set", args);
         }
         "delete" => delete(arg("ns"), arg("pod")),
-        "logs" => logs(arg("ns"), arg("pod"), arg("container"), value["previous"] == true),
+        "logs" => logs(
+            arg("ns"),
+            arg("pod"),
+            arg("container"),
+            value["previous"] == true,
+        ),
         "logsstop" => stop_logs(),
         "copy" => copy(value["text"].as_str().unwrap_or("")),
         _ => {}
@@ -77,10 +93,13 @@ pub fn handle(action: &str, value: &Value) {
 /// pbcopy: the page's own clipboard needs a gesture WebKit doesn't always see.
 fn copy(text: &str) {
     use std::io::Write;
-    let done = std::process::Command::new("/usr/bin/pbcopy").stdin(std::process::Stdio::piped()).spawn().and_then(|mut c| {
-        c.stdin.take().expect("piped").write_all(text.as_bytes())?;
-        c.wait()
-    });
+    let done = std::process::Command::new("/usr/bin/pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut c| {
+            c.stdin.take().expect("piped").write_all(text.as_bytes())?;
+            c.wait()
+        });
     match done {
         Ok(s) if s.success() => emit(notice("ok", &format!("Copied {text}"))),
         _ => emit(notice("error", "Couldn't copy to the clipboard")),
@@ -97,7 +116,13 @@ fn connect() -> io::Result<UnixStream> {
 
 /// Writes one request marked as the window's own (`X-Kiri-Background`), so
 /// refreshing the lists never counts as use of the VM.
-fn write_request(s: &mut UnixStream, method: &str, path: &str, body: Option<&Value>, extra: &str) -> io::Result<()> {
+fn write_request(
+    s: &mut UnixStream,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    extra: &str,
+) -> io::Result<()> {
     let payload = body.map(Value::to_string).unwrap_or_default();
     write!(
         s,
@@ -110,7 +135,11 @@ fn write_request(s: &mut UnixStream, method: &str, path: &str, body: Option<&Val
 fn read_head(r: &mut impl BufRead) -> io::Result<(u16, Option<usize>, bool)> {
     let mut line = String::new();
     r.read_line(&mut line)?;
-    let status = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad status line"))?;
+    let status = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad status line"))?;
     let (mut len, mut chunked) = (None, false);
     loop {
         line.clear();
@@ -165,7 +194,13 @@ fn node_state() -> io::Result<(String, Option<u16>)> {
     if status == 404 {
         return Ok(("absent".into(), None));
     }
-    Ok((info["State"]["Status"].as_str().unwrap_or("unknown").to_owned(), crate::k8s::bound_port(&info)))
+    Ok((
+        info["State"]["Status"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_owned(),
+        crate::k8s::bound_port(&info),
+    ))
 }
 
 /// Starts `cmd` in the node container and returns the connection its
@@ -174,11 +209,22 @@ fn exec_start(cmd: &[&str]) -> io::Result<(BufReader<UnixStream>, String)> {
     let body = json!({"Cmd": cmd, "AttachStdout": true, "AttachStderr": true, "Tty": true});
     let (status, created) = request("POST", &format!("/containers/{NAME}/exec"), Some(&body))?;
     if !(200..300).contains(&status) {
-        return Err(io::Error::other(created["message"].as_str().unwrap_or("exec failed").to_owned()));
+        return Err(io::Error::other(
+            created["message"]
+                .as_str()
+                .unwrap_or("exec failed")
+                .to_owned(),
+        ));
     }
     let id = created["Id"].as_str().unwrap_or_default().to_owned();
     let mut s = connect()?;
-    write_request(&mut s, "POST", &format!("/exec/{id}/start"), Some(&json!({"Detach": false, "Tty": true})), "Connection: Upgrade\r\nUpgrade: tcp\r\n")?;
+    write_request(
+        &mut s,
+        "POST",
+        &format!("/exec/{id}/start"),
+        Some(&json!({"Detach": false, "Tty": true})),
+        "Connection: Upgrade\r\nUpgrade: tcp\r\n",
+    )?;
     let mut r = BufReader::new(s);
     let (status, _, _) = read_head(&mut r)?;
     if status != 101 && status != 200 {
@@ -192,12 +238,18 @@ fn exec_start(cmd: &[&str]) -> io::Result<(BufReader<UnixStream>, String)> {
 /// node kills it after 30 s and the window stops reading soon after: none
 /// pile up, and the page hears it isn't answering.
 fn kubectl(args: &[&str]) -> io::Result<(i64, String)> {
-    let cmd: Vec<&str> = ["timeout", "-s", "KILL", "30", "kubectl"].into_iter().chain(args.iter().copied()).collect();
+    let cmd: Vec<&str> = ["timeout", "-s", "KILL", "30", "kubectl"]
+        .into_iter()
+        .chain(args.iter().copied())
+        .collect();
     let (mut r, id) = exec_start(&cmd)?;
-    r.get_ref().set_read_timeout(Some(std::time::Duration::from_secs(35)))?;
+    r.get_ref()
+        .set_read_timeout(Some(std::time::Duration::from_secs(35)))?;
     let mut out = Vec::new();
     r.read_to_end(&mut out)?;
-    let code = request("GET", &format!("/exec/{id}/json"), None)?.1["ExitCode"].as_i64().unwrap_or(-1);
+    let code = request("GET", &format!("/exec/{id}/json"), None)?.1["ExitCode"]
+        .as_i64()
+        .unwrap_or(-1);
     Ok((code, String::from_utf8_lossy(&out).replace("\r\n", "\n")))
 }
 
@@ -233,7 +285,9 @@ fn read_state() -> Value {
     let starting = current_op() == Some("start");
     let (state, port) = match node_state() {
         Ok(s) => s,
-        Err(e) => return json!({"type": "k8s", "state": "unreachable", "starting": starting, "error": e.to_string()}),
+        Err(e) => {
+            return json!({"type": "k8s", "state": "unreachable", "starting": starting, "error": e.to_string()});
+        }
     };
     // The port in the node's real binding, so the page shows the one in use.
     let mut v = read_running(&state, starting);
@@ -245,19 +299,41 @@ fn read_running(state: &str, starting: bool) -> Value {
     if state != "running" {
         return json!({"type": "k8s", "state": state, "starting": starting});
     }
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
     if now < QUIET_UNTIL.load(Ordering::SeqCst) {
         return json!({"type": "k8s", "state": "running", "ready": false, "starting": starting, "error": "the API server didn't answer; asking again shortly"});
     }
     // Warnings go to stderr, which the terminal mixes in: the JSON starts at
     // the first line that opens an object.
-    let parsed = kubectl(&["get", "pods,services", "--all-namespaces", "-o", "json", "--request-timeout=20s"]).and_then(|(code, out)| {
-        let at = out.find("\n{").map(|i| i + 1).or_else(|| out.starts_with('{').then_some(0));
+    let parsed = kubectl(&[
+        "get",
+        "pods,services",
+        "--all-namespaces",
+        "-o",
+        "json",
+        "--request-timeout=20s",
+    ])
+    .and_then(|(code, out)| {
+        let at = out
+            .find("\n{")
+            .map(|i| i + 1)
+            .or_else(|| out.starts_with('{').then_some(0));
         match at.and_then(|i| serde_json::from_str::<Value>(&out[i..]).ok()) {
             Some(v) if code == 0 => Ok(v),
             // Killed by `timeout`: the API server never answered.
-            _ if code == 137 => Err(io::Error::new(io::ErrorKind::TimedOut, "kubectl got no answer in 30 s")),
-            _ => Err(io::Error::other(out.trim().lines().last().unwrap_or("kubectl failed").to_owned())),
+            _ if code == 137 => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "kubectl got no answer in 30 s",
+            )),
+            _ => Err(io::Error::other(
+                out.trim()
+                    .lines()
+                    .last()
+                    .unwrap_or("kubectl failed")
+                    .to_owned(),
+            )),
         }
     });
     match parsed {
@@ -265,15 +341,24 @@ fn read_running(state: &str, starting: bool) -> Value {
         // Up, but the API server isn't answering yet (it takes a few seconds after a start).
         Err(e) => {
             // A timeout (the node itself not answering) waits 30 s; a quick refusal, while the API starts, doesn't.
-            if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) {
+            if matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) {
                 QUIET_UNTIL.store(now + 30, Ordering::SeqCst);
             }
-            let error = if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) { "the node didn't answer in 30 s".to_owned() } else { e.to_string() };
+            let error = if matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) {
+                "the node didn't answer in 30 s".to_owned()
+            } else {
+                e.to_string()
+            };
             json!({"type": "k8s", "state": "running", "ready": false, "starting": starting, "error": error})
         }
     }
 }
-
 
 // --- actions --------------------------------------------------------------------------
 
@@ -285,7 +370,10 @@ fn delete(ns: String, pod: String) {
     spawn("kiri-k8s-delete", move || {
         match kubectl(&["delete", "pod", "-n", &ns, &pod, "--wait=false"]) {
             Ok((0, _)) => emit(notice("ok", &format!("Deleting pod {pod}"))),
-            Ok((_, out)) => emit(notice("error", out.trim().lines().last().unwrap_or("kubectl delete failed"))),
+            Ok((_, out)) => emit(notice(
+                "error",
+                out.trim().lines().last().unwrap_or("kubectl delete failed"),
+            )),
             Err(e) => emit(notice("error", &e.to_string())),
         }
         list();
@@ -298,7 +386,10 @@ fn op(name: &'static str, args: Vec<String>) {
     {
         let mut running = OP.lock().unwrap_or_else(|e| e.into_inner());
         if running.is_some() {
-            return emit(notice("error", "Kubernetes is busy with another change; try again in a moment"));
+            return emit(notice(
+                "error",
+                "Kubernetes is busy with another change; try again in a moment",
+            ));
         }
         *running = Some(name);
     }
@@ -336,8 +427,15 @@ fn op(name: &'static str, args: Vec<String>) {
             if status.success() {
                 return Ok(());
             }
-            let why = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("kiri k8s failed").trim();
-            Err(io::Error::other(why.strip_prefix("kiri: ").unwrap_or(why).to_owned()))
+            let why = err
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("kiri k8s failed")
+                .trim();
+            Err(io::Error::other(
+                why.strip_prefix("kiri: ").unwrap_or(why).to_owned(),
+            ))
         })();
         *OP.lock().unwrap_or_else(|e| e.into_inner()) = None;
         // A new or restarted node answers at once: no waiting out an earlier timeout.
@@ -345,7 +443,10 @@ fn op(name: &'static str, args: Vec<String>) {
         match result {
             Ok(()) => {
                 // The port the node really got, for the notice.
-                let port = node_state().ok().filter(|(state, _)| state == "running").and_then(|(_, p)| p);
+                let port = node_state()
+                    .ok()
+                    .filter(|(state, _)| state == "running")
+                    .and_then(|(_, p)| p);
                 emit(json!({"type": "k8sop", "op": name, "state": "done", "context": crate::flavor::CONTEXT.get(), "port": port, "want_port": crate::k8s::config().api_port()}).to_string())
             }
             Err(e) => {
@@ -366,11 +467,26 @@ fn logs(ns: String, pod: String, container: String, previous: bool) {
         return;
     }
     let generation = LOGS_GEN.load(Ordering::SeqCst);
-    let key = format!("{ns}/{pod}/{container}{}", if previous { "/previous" } else { "" });
+    let key = format!(
+        "{ns}/{pod}/{container}{}",
+        if previous { "/previous" } else { "" }
+    );
     spawn("kiri-k8s-logs", move || {
         let which = if previous { "--previous" } else { "-f" };
         // The shell says its pid first, then becomes kubectl.
-        let (mut r, _) = match exec_start(&["sh", "-c", "echo $$; exec kubectl logs \"$@\"", "logs", which, "--tail=2000", "-n", &ns, &pod, "-c", &container]) {
+        let (mut r, _) = match exec_start(&[
+            "sh",
+            "-c",
+            "echo $$; exec kubectl logs \"$@\"",
+            "logs",
+            which,
+            "--tail=2000",
+            "-n",
+            &ns,
+            &pod,
+            "-c",
+            &container,
+        ]) {
             Ok(s) => s,
             Err(e) => return emit(notice("error", &format!("Logs: {e}"))),
         };
@@ -421,7 +537,9 @@ fn logs(ns: String, pod: String, container: String, previous: bool) {
             match r.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if LOGS_GEN.load(Ordering::SeqCst) != generation || tx.send(buf[..n].to_vec()).is_err() {
+                    if LOGS_GEN.load(Ordering::SeqCst) != generation
+                        || tx.send(buf[..n].to_vec()).is_err()
+                    {
                         break;
                     }
                 }
@@ -462,12 +580,34 @@ mod tests {
             return;
         }
         let v = super::read_lists();
-        assert_eq!((v["state"].as_str(), v["ready"].as_bool()), (Some("running"), Some(true)), "{v}");
+        assert_eq!(
+            (v["state"].as_str(), v["ready"].as_bool()),
+            (Some("running"), Some(true)),
+            "{v}"
+        );
         let pods = v["pods"].as_array().unwrap();
-        assert!(pods.iter().any(|p| p["ns"] == "kube-system" && p["name"].as_str().unwrap().starts_with("coredns")), "{pods:?}");
-        assert!(v["services"].as_array().unwrap().iter().any(|s| s["name"] == "kubernetes" && s["ns"] == "default"));
+        assert!(
+            pods.iter()
+                .any(|p| p["ns"] == "kube-system"
+                    && p["name"].as_str().unwrap().starts_with("coredns")),
+            "{pods:?}"
+        );
+        assert!(
+            v["services"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["name"] == "kubernetes" && s["ns"] == "default")
+        );
         for p in pods {
-            eprintln!("{:<12} {:<44} {:<18} {:<5} {}", p["ns"].as_str().unwrap(), p["name"].as_str().unwrap(), p["status"].as_str().unwrap(), p["ready"].as_str().unwrap(), p["restarts"]);
+            eprintln!(
+                "{:<12} {:<44} {:<18} {:<5} {}",
+                p["ns"].as_str().unwrap(),
+                p["name"].as_str().unwrap(),
+                p["status"].as_str().unwrap(),
+                p["ready"].as_str().unwrap(),
+                p["restarts"]
+            );
         }
         let (code, out) = super::kubectl(&["version", "--client"]).unwrap();
         assert!(code == 0 && out.contains("Client Version"), "{out}");

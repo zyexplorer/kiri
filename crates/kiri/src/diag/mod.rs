@@ -111,7 +111,12 @@ pub fn part() -> Part {
 
 fn max_level() -> Level {
     static LEVEL: OnceLock<Level> = OnceLock::new();
-    *LEVEL.get_or_init(|| std::env::var("KIRI_LOG").ok().and_then(|v| Level::parse(&v)).unwrap_or(Level::Info))
+    *LEVEL.get_or_init(|| {
+        std::env::var("KIRI_LOG")
+            .ok()
+            .and_then(|v| Level::parse(&v))
+            .unwrap_or(Level::Info)
+    })
 }
 
 pub fn enabled(level: Level) -> bool {
@@ -155,7 +160,11 @@ thread_local! {
 /// digits, so one action's lines (window and engine) can be picked out.
 pub fn new_op(kind: &str) -> String {
     use std::hash::BuildHasher;
-    let kind: String = kind.chars().filter(|c| c.is_ascii_alphanumeric()).take(16).collect();
+    let kind: String = kind
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(16)
+        .collect();
     let n = std::collections::hash_map::RandomState::new().hash_one(SystemTime::now()) as u16;
     format!("{}-{n:04x}", if kind.is_empty() { "op" } else { &kind })
 }
@@ -188,7 +197,8 @@ pub fn enter_op(op: String) -> OpScope {
 
 /// The header that carries this thread's op to the engine, or nothing.
 pub fn op_header() -> String {
-    op().map(|o| format!("X-Kiri-Op: {o}\r\n")).unwrap_or_default()
+    op().map(|o| format!("X-Kiri-Op: {o}\r\n"))
+        .unwrap_or_default()
 }
 
 /// `~/.kiri` (`~/.kiri-dev` for Kiri Dev).
@@ -239,13 +249,21 @@ pub fn write(level: Level, msg: &str, fields: &[(&str, String)]) {
     let with_op;
     let fields = match op() {
         Some(op) if !fields.iter().any(|(k, _)| *k == "op") => {
-            with_op = fields.iter().cloned().chain([("op", op)]).collect::<Vec<_>>();
+            with_op = fields
+                .iter()
+                .cloned()
+                .chain([("op", op)])
+                .collect::<Vec<_>>();
             &with_op[..]
         }
         _ => fields,
     };
     let _ = append(part, &json_line(&time, level, part, msg, fields));
-    let mut text = format!("{time} {:<5} {}", level.name().to_ascii_uppercase(), redact::patterns(msg));
+    let mut text = format!(
+        "{time} {:<5} {}",
+        level.name().to_ascii_uppercase(),
+        redact::patterns(msg)
+    );
     for (k, v) in fields {
         let _ = write!(text, " {k}={}", redact::patterns(v));
     }
@@ -253,13 +271,30 @@ pub fn write(level: Level, msg: &str, fields: &[(&str, String)]) {
 }
 
 /// One log line, `time`, `level`, `part`, `msg` then `fields`, in that order.
-pub fn json_line(time: &str, level: Level, part: Part, msg: &str, fields: &[(&str, String)]) -> String {
+pub fn json_line(
+    time: &str,
+    level: Level,
+    part: Part,
+    msg: &str,
+    fields: &[(&str, String)],
+) -> String {
     let q = |s: &str| serde_json::Value::from(redact::patterns(s)).to_string();
-    let mut line = format!(r#"{{"time":"{time}","level":"{}","part":"{}","msg":{}"#, level.name(), part.name(), q(msg));
+    let mut line = format!(
+        r#"{{"time":"{time}","level":"{}","part":"{}","msg":{}"#,
+        level.name(),
+        part.name(),
+        q(msg)
+    );
     if !fields.is_empty() {
         line.push_str(r#","fields":{"#);
         for (i, (k, v)) in fields.iter().enumerate() {
-            let _ = write!(line, "{}{}:{}", if i == 0 { "" } else { "," }, serde_json::Value::from(*k), q(v));
+            let _ = write!(
+                line,
+                "{}{}:{}",
+                if i == 0 { "" } else { "," },
+                serde_json::Value::from(*k),
+                q(v)
+            );
         }
         line.push('}');
     }
@@ -300,11 +335,20 @@ pub fn append_to(path: &Path, line: &str, max: u64) -> io::Result<()> {
         }
         let _ = std::fs::rename(path, rotated(path, 1));
     }
-    let open = || std::fs::OpenOptions::new().create(true).append(true).mode(0o600).open(path);
+    let open = || {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(path)
+    };
     let mut f = match open() {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             if let Some(dir) = path.parent() {
-                std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+                std::fs::DirBuilder::new()
+                    .recursive(true)
+                    .mode(0o700)
+                    .create(dir)?;
             }
             open()?
         }
@@ -357,40 +401,51 @@ pub fn capture_stderr() {
     ECHO.store(orig, Ordering::Relaxed);
     // SAFETY: the pipe's read end, owned from here by the thread.
     let reader = unsafe { File::from_raw_fd(read) };
-    let spawned = std::thread::Builder::new().name("kiri-stderr".into()).spawn(move || {
-        // This thread starts before the daemon blocks SIGINT and SIGTERM for
-        // its signal thread. Left open here, systemd's SIGTERM lands on this
-        // thread and its default action ends the process at once, without the
-        // daemon's shutdown: containers aren't stopped and kiri-init outlives
-        // the unit, so the next start fails (219/CGROUP).
-        // SAFETY: plain signal-mask calls on a local set, for this thread only.
-        unsafe {
-            let mut set: libc::sigset_t = std::mem::zeroed();
-            libc::sigemptyset(&mut set);
-            libc::sigaddset(&mut set, libc::SIGINT);
-            libc::sigaddset(&mut set, libc::SIGTERM);
-            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
-        }
-        let mut r = BufReader::new(reader);
-        let mut buf = Vec::new();
-        loop {
-            buf.clear();
-            match r.read_until(b'\n', &mut buf) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
+    let spawned = std::thread::Builder::new()
+        .name("kiri-stderr".into())
+        .spawn(move || {
+            // This thread starts before the daemon blocks SIGINT and SIGTERM for
+            // its signal thread. Left open here, systemd's SIGTERM lands on this
+            // thread and its default action ends the process at once, without the
+            // daemon's shutdown: containers aren't stopped and kiri-init outlives
+            // the unit, so the next start fails (219/CGROUP).
+            // SAFETY: plain signal-mask calls on a local set, for this thread only.
+            unsafe {
+                let mut set: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&mut set);
+                libc::sigaddset(&mut set, libc::SIGINT);
+                libc::sigaddset(&mut set, libc::SIGTERM);
+                libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
             }
-            let line = String::from_utf8_lossy(&buf);
-            let line = line.trim_end();
-            if line.is_empty() {
-                continue;
+            let mut r = BufReader::new(reader);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match r.read_until(b'\n', &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+                let line = String::from_utf8_lossy(&buf);
+                let line = line.trim_end();
+                if line.is_empty() {
+                    continue;
+                }
+                let time = now();
+                echo(&format!("{time} {line}"));
+                if enabled(Level::Info) {
+                    let _ = append(
+                        part(),
+                        &json_line(
+                            &time,
+                            Level::Info,
+                            part(),
+                            line,
+                            &[("src", "stderr".into())],
+                        ),
+                    );
+                }
             }
-            let time = now();
-            echo(&format!("{time} {line}"));
-            if enabled(Level::Info) {
-                let _ = append(part(), &json_line(&time, Level::Info, part(), line, &[("src", "stderr".into())]));
-            }
-        }
-    });
+        });
     if spawned.is_err() {
         // Nobody would drain the pipe: put stderr back.
         ECHO.store(-1, Ordering::Relaxed);
@@ -435,39 +490,83 @@ fn sysctl(name: &str) -> Option<String> {
     // SAFETY: sysctlbyname with a valid name; the first call asks the size,
     // the second fills a buffer of that size.
     unsafe {
-        if libc::sysctlbyname(name.as_ptr(), std::ptr::null_mut(), &mut len, std::ptr::null_mut(), 0) != 0 || len == 0 {
+        if libc::sysctlbyname(
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        ) != 0
+            || len == 0
+        {
             return None;
         }
         let mut buf = vec![0u8; len];
-        if libc::sysctlbyname(name.as_ptr(), buf.as_mut_ptr().cast(), &mut len, std::ptr::null_mut(), 0) != 0 {
+        if libc::sysctlbyname(
+            name.as_ptr(),
+            buf.as_mut_ptr().cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        ) != 0
+        {
             return None;
         }
         buf.truncate(len);
-        Some(String::from_utf8_lossy(&buf).trim_end_matches('\0').trim().to_owned())
+        Some(
+            String::from_utf8_lossy(&buf)
+                .trim_end_matches('\0')
+                .trim()
+                .to_owned(),
+        )
     }
 }
 
 pub fn system() -> System {
     #[cfg(target_os = "macos")]
     let (os, build, model) = (
-        format!("macOS {}", sysctl("kern.osproductversion").unwrap_or_default()).trim().to_owned(),
+        format!(
+            "macOS {}",
+            sysctl("kern.osproductversion").unwrap_or_default()
+        )
+        .trim()
+        .to_owned(),
         sysctl("kern.osversion").unwrap_or_default(),
         sysctl("hw.model").unwrap_or_default(),
     );
     #[cfg(not(target_os = "macos"))]
     let (os, build, model) = {
         let release = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-        let pretty = release.lines().find_map(|l| l.strip_prefix("PRETTY_NAME=")).map(|v| v.trim_matches('"').to_owned());
-        let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default().trim().to_owned();
-        (pretty.unwrap_or_else(|| "Linux".into()), kernel, String::new())
+        let pretty = release
+            .lines()
+            .find_map(|l| l.strip_prefix("PRETTY_NAME="))
+            .map(|v| v.trim_matches('"').to_owned());
+        let kernel = std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        (
+            pretty.unwrap_or_else(|| "Linux".into()),
+            kernel,
+            String::new(),
+        )
     };
-    System { os, build, arch: std::env::consts::ARCH, model }
+    System {
+        os,
+        build,
+        arch: std::env::consts::ARCH,
+        model,
+    }
 }
 
 /// `kiri` or `kiri-dev`, as an upload names the flavor (a feature app
 /// counts as Dev); crash files say the exact one.
 pub fn flavor() -> &'static str {
-    if crate::flavor::dev() { "kiri-dev" } else { "kiri" }
+    if crate::flavor::dev() {
+        "kiri-dev"
+    } else {
+        "kiri"
+    }
 }
 
 /// Writes a crash file (and an error line) on every panic, then lets the
@@ -482,7 +581,10 @@ fn install_panic_hook() {
             .map(|s| (*s).to_owned())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "(no message)".into());
-        let at = info.location().map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column())).unwrap_or_default();
+        let at = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_default();
         // A command whose output was closed under it (`kiri share | head`,
         // a closed terminal, the reader gone): not a crash. End quietly, as
         // a command killed by SIGPIPE would, with no crash file.
@@ -490,10 +592,27 @@ fn install_panic_hook() {
             write(Level::Info, "output closed", &[("message", message)]);
             std::process::exit(if cfg!(unix) { 141 } else { 1 });
         }
-        let thread = std::thread::current().name().unwrap_or("unnamed").to_owned();
-        write(Level::Error, "panic", &[("thread", thread.clone()), ("at", at.clone()), ("message", message.clone())]);
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("unnamed")
+            .to_owned();
+        write(
+            Level::Error,
+            "panic",
+            &[
+                ("thread", thread.clone()),
+                ("at", at.clone()),
+                ("message", message.clone()),
+            ],
+        );
         let backtrace = std::backtrace::Backtrace::force_capture();
-        let text = crash_text(SystemTime::now(), &thread, &at, &message, &backtrace.to_string());
+        let text = crash_text(
+            SystemTime::now(),
+            &thread,
+            &at,
+            &message,
+            &backtrace.to_string(),
+        );
         if let Some(dir) = crashes_dir() {
             let _ = save_crash(&dir, SystemTime::now(), part(), &text);
         }
@@ -505,14 +624,24 @@ fn install_panic_hook() {
 /// end of stdout or stderr went away: a broken pipe (EPIPE, os error 32 on
 /// Unix; 109 on Windows) or Windows' "the pipe is being closed" (232).
 fn closed_output(message: &str) -> bool {
-    (message.starts_with("failed printing to stdout") || message.starts_with("failed printing to stderr"))
-        && ["Broken pipe", "(os error 32)", "(os error 109)", "(os error 232)"].iter().any(|m| message.contains(m))
+    (message.starts_with("failed printing to stdout")
+        || message.starts_with("failed printing to stderr"))
+        && [
+            "Broken pipe",
+            "(os error 32)",
+            "(os error 109)",
+            "(os error 232)",
+        ]
+        .iter()
+        .any(|m| message.contains(m))
 }
 
 /// What a crash file holds.
 pub fn crash_text(t: SystemTime, thread: &str, at: &str, message: &str, backtrace: &str) -> String {
     // The subcommand only: arguments can carry values (`-e KEY=VALUE`).
-    let command = std::env::args().nth(1).filter(|a| a.len() <= 20 && a.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
+    let command = std::env::args()
+        .nth(1)
+        .filter(|a| a.len() <= 20 && a.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
     let text = format!(
         "Kiri crash report\n\
          Version:  {app} {version}\n\
@@ -539,13 +668,28 @@ pub fn crash_text(t: SystemTime, thread: &str, at: &str, message: &str, backtrac
 
 /// `<dir>/<unix time>-<part>.txt`, readable only by this user.
 pub fn save_crash(dir: &Path, t: SystemTime, part: Part, text: &str) -> io::Result<PathBuf> {
-    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
-    let secs = t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let mut n = 0;
     loop {
-        let name = if n == 0 { format!("{secs}-{}.txt", part.name()) } else { format!("{secs}-{}-{n}.txt", part.name()) };
+        let name = if n == 0 {
+            format!("{secs}-{}.txt", part.name())
+        } else {
+            format!("{secs}-{}-{n}.txt", part.name())
+        };
         let path = dir.join(name);
-        match std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+        {
             Ok(mut f) => {
                 f.write_all(text.as_bytes())?;
                 return Ok(path);
@@ -562,11 +706,21 @@ mod tests {
 
     #[test]
     fn closed_output_is_not_a_crash() {
-        assert!(closed_output("failed printing to stderr: Broken pipe (os error 32)"));
-        assert!(closed_output("failed printing to stdout: The pipe is being closed. (os error 232)"));
-        assert!(closed_output("failed printing to stdout: The pipe has been ended. (os error 109)"));
-        assert!(!closed_output("failed printing to stdout: No space left on device (os error 28)"));
-        assert!(!closed_output("called `Result::unwrap()` on an `Err` value: Broken pipe (os error 32)"));
+        assert!(closed_output(
+            "failed printing to stderr: Broken pipe (os error 32)"
+        ));
+        assert!(closed_output(
+            "failed printing to stdout: The pipe is being closed. (os error 232)"
+        ));
+        assert!(closed_output(
+            "failed printing to stdout: The pipe has been ended. (os error 109)"
+        ));
+        assert!(!closed_output(
+            "failed printing to stdout: No space left on device (os error 28)"
+        ));
+        assert!(!closed_output(
+            "called `Result::unwrap()` on an `Err` value: Broken pipe (os error 32)"
+        ));
     }
 
     fn temp(name: &str) -> PathBuf {
@@ -578,7 +732,13 @@ mod tests {
 
     #[test]
     fn a_line_is_one_json_object_in_order() {
-        let line = json_line("2026-10-28T09:41:07.123Z", Level::Warn, Part::Daemon, "container \"web\" exited\n", &[("id", "3f2a".into()), ("exit_code", "137".into())]);
+        let line = json_line(
+            "2026-10-28T09:41:07.123Z",
+            Level::Warn,
+            Part::Daemon,
+            "container \"web\" exited\n",
+            &[("id", "3f2a".into()), ("exit_code", "137".into())],
+        );
         assert_eq!(
             line,
             r#"{"time":"2026-10-28T09:41:07.123Z","level":"warn","part":"daemon","msg":"container \"web\" exited\n","fields":{"id":"3f2a","exit_code":"137"}}"#
@@ -587,20 +747,35 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["fields"]["exit_code"], "137");
         let bare = json_line("t", Level::Info, Part::Ui, "hi", &[]);
-        assert_eq!(bare, r#"{"time":"t","level":"info","part":"ui","msg":"hi"}"#);
+        assert_eq!(
+            bare,
+            r#"{"time":"t","level":"info","part":"ui","msg":"hi"}"#
+        );
     }
 
     #[test]
     fn lines_are_redacted_on_the_way_in() {
-        let line = json_line("t", Level::Error, Part::Cli, "login failed: Authorization: Bearer abcdefgh12345678", &[("url", "https://x/?token=s3cr3tvalue&a=1".into())]);
-        assert!(!line.contains("abcdefgh12345678") && !line.contains("s3cr3tvalue"), "{line}");
+        let line = json_line(
+            "t",
+            Level::Error,
+            Part::Cli,
+            "login failed: Authorization: Bearer abcdefgh12345678",
+            &[("url", "https://x/?token=s3cr3tvalue&a=1".into())],
+        );
+        assert!(
+            !line.contains("abcdefgh12345678") && !line.contains("s3cr3tvalue"),
+            "{line}"
+        );
         assert!(line.contains("a=1"));
     }
 
     #[test]
     fn ops_are_per_thread_and_scoped() {
         let op = new_op("run");
-        assert!(op.starts_with("run-") && op.len() == 8 && valid_op(&op), "{op}");
+        assert!(
+            op.starts_with("run-") && op.len() == 8 && valid_op(&op),
+            "{op}"
+        );
         assert!(!valid_op("a b") && !valid_op("") && !valid_op("x\r\nEvil: 1"));
         assert_eq!(super::op(), None);
         {
@@ -608,7 +783,9 @@ mod tests {
             {
                 let _inner = enter_op("run-0002".into());
                 assert_eq!(op_header(), "X-Kiri-Op: run-0002\r\n");
-                std::thread::spawn(|| assert_eq!(super::op(), None)).join().unwrap();
+                std::thread::spawn(|| assert_eq!(super::op(), None))
+                    .join()
+                    .unwrap();
             }
             assert_eq!(super::op().as_deref(), Some("pull-0001"));
         }
@@ -630,7 +807,14 @@ mod tests {
         for i in 0..9 {
             append_to(&path, &format!("{i}{}", &line[1..]), 250).unwrap();
         }
-        let read = |p: &Path| std::fs::read_to_string(p).unwrap().lines().map(|l| l[..1].to_owned()).collect::<Vec<_>>().join("");
+        let read = |p: &Path| {
+            std::fs::read_to_string(p)
+                .unwrap()
+                .lines()
+                .map(|l| l[..1].to_owned())
+                .collect::<Vec<_>>()
+                .join("")
+        };
         assert_eq!(read(&path), "8");
         assert_eq!(read(&rotated(&path, 1)), "67");
         assert_eq!(read(&rotated(&path, 2)), "45");
@@ -655,7 +839,12 @@ mod tests {
         assert_eq!(a.file_name().unwrap(), "1792800000-daemon.txt");
         assert_eq!(b.file_name().unwrap(), "1792800000-daemon-1.txt");
         let text = crash_text(t, "kiri-api", "src/x.rs:1:2", "boom", "0: main");
-        assert!(text.contains("Message:  boom") && text.contains("Thread:   kiri-api") && text.contains("Backtrace:\n0: main"), "{text}");
+        assert!(
+            text.contains("Message:  boom")
+                && text.contains("Thread:   kiri-api")
+                && text.contains("Backtrace:\n0: main"),
+            "{text}"
+        );
         assert!(text.contains(&format!("Version:  Kiri {}", env!("CARGO_PKG_VERSION"))));
         let _ = std::fs::remove_dir_all(&dir);
     }

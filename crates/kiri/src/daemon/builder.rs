@@ -34,7 +34,8 @@ pub const IMAGE: &str = "moby/buildkit:buildx-stable-1";
 /// What a fresh pull fetches: that tag's index on 2026-10-30 (BuildKit
 /// 0.2x), pinned so every Kiri builds with the same BuildKit. Stored under
 /// [`IMAGE`]. Moving the pin changes nothing for an image already pulled.
-const PINNED: &str = "moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea";
+const PINNED: &str =
+    "moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea";
 /// Marks the container as Kiri's builder. It stays in `docker ps`, as
 /// buildx's does on any engine.
 const LABEL: &str = "dev.kiri.builder";
@@ -68,13 +69,19 @@ fn volume_name() -> String {
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// The builder container, if there is one: (id, status).
 fn find(engine: &Engine) -> Option<(String, Status)> {
     let name = container_name();
-    engine.each(|c| (c.name == name).then(|| (c.id.clone(), c.status))).into_iter().next()
+    engine
+        .each(|c| (c.name == name).then(|| (c.id.clone(), c.status)))
+        .into_iter()
+        .next()
 }
 
 // --- Settings ----------------------------------------------------------
@@ -84,12 +91,20 @@ fn settings_path() -> Option<std::path::PathBuf> {
 }
 
 fn settings() -> Value {
-    settings_path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null)
+    settings_path()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or(Value::Null)
 }
 
 /// The disk the daemon's state is on, in bytes (0 if unknown).
 fn disk_total() -> u64 {
-    let Some(dir) = super::state_dir().ok().and_then(|d| std::ffi::CString::new(d.as_os_str().as_encoded_bytes()).ok()) else { return 0 };
+    let Some(dir) = super::state_dir()
+        .ok()
+        .and_then(|d| std::ffi::CString::new(d.as_os_str().as_encoded_bytes()).ok())
+    else {
+        return 0;
+    };
     // SAFETY: statvfs fills the zeroed struct for a valid C path.
     unsafe {
         let mut s: libc::statvfs = std::mem::zeroed();
@@ -102,20 +117,32 @@ fn disk_total() -> u64 {
 
 /// The build cache's default cap: a tenth of the disk, at most 20 GB.
 fn default_cache(disk: u64) -> u64 {
-    if disk == 0 { 20 * GB } else { (disk / 10).clamp(GB, 20 * GB) }
+    if disk == 0 {
+        20 * GB
+    } else {
+        (disk / 10).clamp(GB, 20 * GB)
+    }
 }
 
 /// The build cache's cap in bytes: `KIRI_BUILD_CACHE_GB`, else Settings,
 /// else [`default_cache`]. BuildKit's garbage collector keeps the cache under it.
 pub fn cache_limit() -> u64 {
-    let gb = std::env::var("KIRI_BUILD_CACHE_GB").ok().and_then(|v| v.parse::<u64>().ok()).or_else(|| settings()["cache_gb"].as_u64());
-    gb.filter(|g| *g > 0).map_or_else(|| default_cache(disk_total()), |g| g * GB)
+    let gb = std::env::var("KIRI_BUILD_CACHE_GB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .or_else(|| settings()["cache_gb"].as_u64());
+    gb.filter(|g| *g > 0)
+        .map_or_else(|| default_cache(disk_total()), |g| g * GB)
 }
 
 /// Seconds without a build before the builder stops: `KIRI_BUILDER_IDLE_SECS`,
 /// else Settings, else five minutes. 0 keeps it running.
 pub fn idle_secs() -> u64 {
-    std::env::var("KIRI_BUILDER_IDLE_SECS").ok().and_then(|v| v.parse().ok()).or_else(|| settings()["idle_secs"].as_u64()).unwrap_or(300)
+    std::env::var("KIRI_BUILDER_IDLE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .or_else(|| settings()["idle_secs"].as_u64())
+        .unwrap_or(300)
 }
 
 /// buildkitd.toml, written at each start: the garbage collector's limits.
@@ -143,7 +170,8 @@ pub fn settings_report(engine: &Engine) -> Value {
 /// `POST /kiri/builder` `{"cache_gb": 20 | null, "idle_secs": 300}`: null or
 /// 0 is the default cap. Used from the builder's next start.
 pub fn set_settings(req: &Request) -> Result<(), Error> {
-    let body: Value = serde_json::from_slice(&req.body).map_err(|e| Error::BadRequest(format!("invalid JSON: {e}")))?;
+    let body: Value = serde_json::from_slice(&req.body)
+        .map_err(|e| Error::BadRequest(format!("invalid JSON: {e}")))?;
     let mut s = settings();
     if !s.is_object() {
         s = json!({});
@@ -152,16 +180,25 @@ pub fn set_settings(req: &Request) -> Result<(), Error> {
         Value::Null if body.get("cache_gb").is_some() => s["cache_gb"] = Value::Null,
         Value::Null => {}
         v => {
-            let gb = v.as_u64().filter(|g| *g <= 100_000).ok_or_else(|| Error::BadRequest("cache_gb must be a whole number of GB".into()))?;
+            let gb = v
+                .as_u64()
+                .filter(|g| *g <= 100_000)
+                .ok_or_else(|| Error::BadRequest("cache_gb must be a whole number of GB".into()))?;
             s["cache_gb"] = if gb == 0 { Value::Null } else { gb.into() };
         }
     }
     if !body["idle_secs"].is_null() {
-        s["idle_secs"] = body["idle_secs"].as_u64().filter(|v| *v <= 7 * 86400).ok_or_else(|| Error::BadRequest("idle_secs must be 0 to 604800".into()))?.into();
+        s["idle_secs"] = body["idle_secs"]
+            .as_u64()
+            .filter(|v| *v <= 7 * 86400)
+            .ok_or_else(|| Error::BadRequest("idle_secs must be 0 to 604800".into()))?
+            .into();
     }
     let path = settings_path().ok_or_else(|| Error::Io(io::Error::other("HOME is not set")))?;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, s.to_string()).and_then(|()| std::fs::rename(&tmp, &path)).map_err(Error::Io)
+    std::fs::write(&tmp, s.to_string())
+        .and_then(|()| std::fs::rename(&tmp, &path))
+        .map_err(Error::Io)
 }
 
 // --- The container -------------------------------------------------------
@@ -177,18 +214,26 @@ fn ensure_image(engine: &Engine, say: &mut dyn FnMut(&str)) -> Result<kiri_image
         return Ok(i);
     }
     say(&format!("Pulling {IMAGE} for Kiri's builder"));
-    let reference = Reference::parse(PINNED).map_err(|e| Error::Io(io::Error::other(e.to_string())))?;
+    let reference =
+        Reference::parse(PINNED).map_err(|e| Error::Io(io::Error::other(e.to_string())))?;
     let pulled = Client::new()
         .pull(&engine.store, &reference, &Platform::host_linux(), &|_| {})
         .map_err(|e| Error::Io(io::Error::other(format!("pulling {IMAGE}: {e}"))))?;
-    let name = Reference::parse(IMAGE).map(|r| r.short()).unwrap_or_else(|_| IMAGE.to_owned());
-    engine.store.put_image(kiri_image::Image { name: name.clone(), ..pulled.clone() })?;
+    let name = Reference::parse(IMAGE)
+        .map(|r| r.short())
+        .unwrap_or_else(|_| IMAGE.to_owned());
+    engine.store.put_image(kiri_image::Image {
+        name: name.clone(),
+        ..pulled.clone()
+    })?;
     // Known by its tag only: the blobs stay, the tagged record uses them.
     if pulled.name != name {
         let _ = engine.store.remove_image(&pulled.name);
     }
     engine.emit_image("pull", &pulled.config_digest, &name);
-    engine.image(IMAGE)?.ok_or_else(|| Error::Io(io::Error::other(format!("{IMAGE} vanished after its pull"))))
+    engine
+        .image(IMAGE)?
+        .ok_or_else(|| Error::Io(io::Error::other(format!("{IMAGE} vanished after its pull"))))
 }
 
 /// The body of the builder's create: what buildx's docker-container driver
@@ -210,7 +255,12 @@ fn create_body() -> Value {
 fn create(engine: &Engine, say: &mut dyn FnMut(&str)) -> Result<String, Error> {
     ensure_image(engine, say)?;
     let name = container_name();
-    let req = Request::internal("POST", "/containers/create", &[("name", &name)], create_body().to_string().into_bytes());
+    let req = Request::internal(
+        "POST",
+        "/containers/create",
+        &[("name", &name)],
+        create_body().to_string().into_bytes(),
+    );
     let made = api::create(&req, engine)?;
     crate::diag::info!("builder created", name = name);
     let id = made["Id"].as_str().unwrap_or_default().to_owned();
@@ -225,9 +275,13 @@ fn create(engine: &Engine, say: &mut dyn FnMut(&str)) -> Result<String, Error> {
 /// are today's, not whatever the container was made with (an older Kiri's
 /// mirror address, a bridge gateway that has since moved).
 pub fn before_start(engine: &Engine, key: &str) {
-    let Some((id, status)) = find(engine) else { return };
+    let Some((id, status)) = find(engine) else {
+        return;
+    };
     let key = key.trim_start_matches('/');
-    if status == Status::Running || !(key == container_name() || (key.len() >= 6 && id.starts_with(key))) {
+    if status == Status::Running
+        || !(key == container_name() || (key.len() >= 6 && id.starts_with(key)))
+    {
         return;
     }
     let _g = ENSURE.lock().unwrap_or_else(|e| e.into_inner());
@@ -236,7 +290,13 @@ pub fn before_start(engine: &Engine, key: &str) {
 
 /// The garbage collector's limits, for buildkitd's next start.
 fn write_config(engine: &Engine, id: &str) {
-    let archive = tar(&[("buildkit/", None), ("buildkit/buildkitd.toml", Some(config_toml(cache_limit(), &super::mirror::config(engine)).as_bytes()))]);
+    let archive = tar(&[
+        ("buildkit/", None),
+        (
+            "buildkit/buildkitd.toml",
+            Some(config_toml(cache_limit(), &super::mirror::config(engine)).as_bytes()),
+        ),
+    ]);
     if let Err(e) = copy_in(engine, id, "/etc", &mut io::Cursor::new(archive)) {
         crate::diag::warn!("builder config not written", error = format!("{e:?}"));
     }
@@ -287,10 +347,18 @@ fn ensure_running(engine: &Engine, say: &mut dyn FnMut(&str)) -> Result<String, 
             return Ok(id);
         }
         if find(engine).is_none_or(|(_, s)| s != Status::Running) || Instant::now() > deadline {
-            let text: Vec<u8> = engine.logs(&id, false).ok().flatten().map(|l| l.past.tail(Some(5)).flat_map(|r| r.data).collect()).unwrap_or_default();
+            let text: Vec<u8> = engine
+                .logs(&id, false)
+                .ok()
+                .flatten()
+                .map(|l| l.past.tail(Some(5)).flat_map(|r| r.data).collect())
+                .unwrap_or_default();
             let text = String::from_utf8_lossy(&text);
             let tail: Vec<&str> = text.lines().collect();
-            return Err(Error::Io(io::Error::other(format!("Kiri's builder (BuildKit) did not start: {}", tail.join(" / ")))));
+            return Err(Error::Io(io::Error::other(format!(
+                "Kiri's builder (BuildKit) did not start: {}",
+                tail.join(" / ")
+            ))));
         }
         std::thread::sleep(Duration::from_millis(200));
     }
@@ -302,39 +370,43 @@ pub fn watch(engine: Arc<Engine>) {
     super::mirror::start(&engine);
     let me = Arc::downgrade(&engine);
     drop(engine);
-    let _ = std::thread::Builder::new().name("kiri-builder-idle".into()).spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(15));
-        let Some(engine) = me.upgrade() else { return };
-        let idle = idle_secs();
-        let Some((id, Status::Running)) = find(&engine) else {
-            LAST_USE.store(0, Ordering::Relaxed);
-            continue;
-        };
-        // Paused already: once something resumes it, it gets a full idle
-        // time again (counted from the first look at it running).
-        if engine.is_paused(&id) {
-            LAST_USE.store(0, Ordering::Relaxed);
-            continue;
-        }
-        let now = now_secs();
-        let busy = || BUILDS.load(Ordering::Relaxed) > 0 || engine.running_execs(&id) > 0;
-        if idle == 0 || busy() || LAST_USE.load(Ordering::Relaxed) == 0 {
-            LAST_USE.store(now, Ordering::Relaxed);
-            continue;
-        }
-        if now.saturating_sub(LAST_USE.load(Ordering::Relaxed)) < idle {
-            continue;
-        }
-        let _g = ENSURE.lock().unwrap_or_else(|e| e.into_inner());
-        if busy() {
-            continue;
-        }
-        crate::diag::info!("builder idle, pausing it", secs = idle);
-        if let Err(e) = engine.pause_idle_builder(&id) {
-            crate::diag::warn!("builder did not pause", error = format!("{e:?}"));
-        }
-        LAST_USE.store(0, Ordering::Relaxed);
-    });
+    let _ = std::thread::Builder::new()
+        .name("kiri-builder-idle".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_secs(15));
+                let Some(engine) = me.upgrade() else { return };
+                let idle = idle_secs();
+                let Some((id, Status::Running)) = find(&engine) else {
+                    LAST_USE.store(0, Ordering::Relaxed);
+                    continue;
+                };
+                // Paused already: once something resumes it, it gets a full idle
+                // time again (counted from the first look at it running).
+                if engine.is_paused(&id) {
+                    LAST_USE.store(0, Ordering::Relaxed);
+                    continue;
+                }
+                let now = now_secs();
+                let busy = || BUILDS.load(Ordering::Relaxed) > 0 || engine.running_execs(&id) > 0;
+                if idle == 0 || busy() || LAST_USE.load(Ordering::Relaxed) == 0 {
+                    LAST_USE.store(now, Ordering::Relaxed);
+                    continue;
+                }
+                if now.saturating_sub(LAST_USE.load(Ordering::Relaxed)) < idle {
+                    continue;
+                }
+                let _g = ENSURE.lock().unwrap_or_else(|e| e.into_inner());
+                if busy() {
+                    continue;
+                }
+                crate::diag::info!("builder idle, pausing it", secs = idle);
+                if let Err(e) = engine.pause_idle_builder(&id) {
+                    crate::diag::warn!("builder did not pause", error = format!("{e:?}"));
+                }
+                LAST_USE.store(0, Ordering::Relaxed);
+            }
+        });
 }
 
 /// A build in progress, for the idle watch.
@@ -357,7 +429,17 @@ impl Drop for Busy {
 // --- In and out of the container -------------------------------------------
 
 fn internal_exec(argv: &[String], stdin: bool, env: Vec<String>) -> ExecConfig {
-    ExecConfig { console_size: None, argv: argv.to_vec(), env, cwd: "/".into(), user: String::new(), tty: false, stdin, privileged: true, internal: true }
+    ExecConfig {
+        console_size: None,
+        argv: argv.to_vec(),
+        env,
+        cwd: "/".into(),
+        user: String::new(),
+        tty: false,
+        stdin,
+        privileged: true,
+        internal: true,
+    }
 }
 
 /// A tar archive, as `docker cp` takes it, from (path, contents) entries; a
@@ -366,10 +448,21 @@ fn tar(entries: &[(&str, Option<&[u8]>)]) -> Vec<u8> {
     let mut out = Vec::new();
     for (name, data) in entries {
         let mut h = [0u8; 512];
-        let field = |h: &mut [u8; 512], at: usize, len: usize, v: &[u8]| h[at..at + v.len().min(len)].copy_from_slice(&v[..v.len().min(len)]);
+        let field = |h: &mut [u8; 512], at: usize, len: usize, v: &[u8]| {
+            h[at..at + v.len().min(len)].copy_from_slice(&v[..v.len().min(len)])
+        };
         field(&mut h, 0, 100, name.as_bytes());
         let size = data.map_or(0, <[u8]>::len);
-        field(&mut h, 100, 8, if data.is_some() { b"0000644\0" } else { b"0000755\0" });
+        field(
+            &mut h,
+            100,
+            8,
+            if data.is_some() {
+                b"0000644\0"
+            } else {
+                b"0000755\0"
+            },
+        );
         field(&mut h, 108, 8, b"0000000\0");
         field(&mut h, 116, 8, b"0000000\0");
         field(&mut h, 124, 12, format!("{size:011o}\0").as_bytes());
@@ -391,7 +484,12 @@ fn tar(entries: &[(&str, Option<&[u8]>)]) -> Vec<u8> {
 
 /// Unpacks a tar archive into a directory of the container, as `docker cp` does.
 fn copy_in(engine: &Engine, id: &str, path: &str, archive: &mut dyn Read) -> Result<(), Error> {
-    let stream = engine.copy(id, kiri_proto::copy_op::IN, path, kiri_proto::copy_flags::CHUNKED)?;
+    let stream = engine.copy(
+        id,
+        kiri_proto::copy_op::IN,
+        path,
+        kiri_proto::copy_flags::CHUNKED,
+    )?;
     let mut to_guest = std::fs::File::from(stream.fd.try_clone()?);
     api::send_chunks(archive, &mut to_guest)?;
     let mut from_guest = std::fs::File::from(stream.fd.try_clone()?);
@@ -399,14 +497,23 @@ fn copy_in(engine: &Engine, id: &str, path: &str, archive: &mut dyn Read) -> Res
     match kiri_proto::decode(&frame) {
         Ok(kiri_proto::Msg::CopyDone) => Ok(()),
         Ok(kiri_proto::Msg::Error(m)) => Err(api::copy_error(m)),
-        Ok(other) => Err(Error::Io(io::Error::other(format!("unexpected copy reply: {other:?}")))),
-        Err(e) => Err(Error::Io(io::Error::other(format!("bad copy reply: {e:?}")))),
+        Ok(other) => Err(Error::Io(io::Error::other(format!(
+            "unexpected copy reply: {other:?}"
+        )))),
+        Err(e) => Err(Error::Io(io::Error::other(format!(
+            "bad copy reply: {e:?}"
+        )))),
     }
 }
 
 /// Runs a command in the container with `input` as its stdin; returns its
 /// exit code and output.
-fn exec_with_input(engine: &Engine, id: &str, argv: &[String], input: &mut dyn Read) -> Result<(i32, String), Error> {
+fn exec_with_input(
+    engine: &Engine,
+    id: &str,
+    argv: &[String],
+    input: &mut dyn Read,
+) -> Result<(i32, String), Error> {
     let exec = engine.exec_create(id, internal_exec(argv, true, Vec::new()))?;
     let (_, rx) = engine.exec_start(&exec)?;
     let mut buf = vec![0u8; 64 * 1024];
@@ -422,7 +529,9 @@ fn exec_with_input(engine: &Engine, id: &str, argv: &[String], input: &mut dyn R
     }
     let _ = engine.close_stdin(&exec);
     let out: Vec<u8> = rx.into_iter().flat_map(|(_, d)| d).collect();
-    let code = engine.with_exec(&exec, |e| e.exit_code.unwrap_or(-1)).unwrap_or(-1);
+    let code = engine
+        .with_exec(&exec, |e| e.exit_code.unwrap_or(-1))
+        .unwrap_or(-1);
     engine.forget_exec(&exec);
     Ok((code, String::from_utf8_lossy(&out).into_owned()))
 }
@@ -430,7 +539,11 @@ fn exec_with_input(engine: &Engine, id: &str, argv: &[String], input: &mut dyn R
 fn run_ok(engine: &Engine, id: &str, argv: &[&str]) -> Result<(), String> {
     match engine.exec_capture(id, argv) {
         Ok((0, _)) => Ok(()),
-        Ok((code, out)) => Err(format!("{} failed ({code}): {}", argv.join(" "), out.trim())),
+        Ok((code, out)) => Err(format!(
+            "{} failed ({code}): {}",
+            argv.join(" "),
+            out.trim()
+        )),
         Err(e) => Err(format!("{e:?}")),
     }
 }
@@ -465,15 +578,22 @@ struct Options {
 fn json_query(req: &Request, key: &str) -> Result<Value, Error> {
     match req.query(key).filter(|v| !v.is_empty()) {
         None => Ok(Value::Null),
-        Some(v) => serde_json::from_str(v).map_err(|e| Error::BadRequest(format!("invalid {key}: {e}"))),
+        Some(v) => {
+            serde_json::from_str(v).map_err(|e| Error::BadRequest(format!("invalid {key}: {e}")))
+        }
     }
 }
 
 /// `a/b/Dockerfile` stays; a leading `./` or `/` goes; `..` is refused.
 fn clean_path(p: &str) -> Result<String, Error> {
-    let parts: Vec<&str> = p.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
+    let parts: Vec<&str> = p
+        .split('/')
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect();
     if parts.contains(&"..") {
-        return Err(Error::BadRequest(format!("the Dockerfile ({p}) must be within the build context")));
+        return Err(Error::BadRequest(format!(
+            "the Dockerfile ({p}) must be within the build context"
+        )));
     }
     Ok(parts.join("/"))
 }
@@ -487,40 +607,88 @@ impl Options {
         }
         let mut tags = Vec::new();
         for t in req.queries("t").filter(|t| !t.is_empty()) {
-            let r = Reference::parse(t).map_err(|_| Error::BadRequest(format!("invalid reference format: {t}")))?;
+            let r = Reference::parse(t)
+                .map_err(|_| Error::BadRequest(format!("invalid reference format: {t}")))?;
             if r.is_digest() {
-                return Err(Error::BadRequest(format!("invalid reference format: {t}: a tag, not a digest")));
+                return Err(Error::BadRequest(format!(
+                    "invalid reference format: {t}: a tag, not a digest"
+                )));
             }
             tags.push(r.short());
         }
         let pairs = |v: Value| -> Vec<(String, String)> {
-            let mut out: Vec<(String, String)> = v.as_object().into_iter().flatten().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned()))).collect();
+            let mut out: Vec<(String, String)> = v
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
+                .collect();
             out.sort();
             out
         };
         let network = match req.query("networkmode").unwrap_or_default() {
             "" | "default" | "bridge" => String::new(),
             m @ ("host" | "none") => m.to_owned(),
-            m => return Err(Error::BadRequest(format!("network mode \"{m}\" not supported by buildkit"))),
+            m => {
+                return Err(Error::BadRequest(format!(
+                    "network mode \"{m}\" not supported by buildkit"
+                )));
+            }
         };
         let mut extra_hosts = Vec::new();
-        for h in req.queries("extrahosts").flat_map(|h| h.split(',')).map(str::trim).filter(|h| !h.is_empty()) {
-            let (name, ip) = h.split_once(':').or_else(|| h.split_once('=')).ok_or_else(|| Error::BadRequest(format!("invalid extra host {h}: name:ip")))?;
-            let ip = if ip == "host-gateway" { super::ports::HOST_ADDR } else { ip };
+        for h in req
+            .queries("extrahosts")
+            .flat_map(|h| h.split(','))
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+        {
+            let (name, ip) = h
+                .split_once(':')
+                .or_else(|| h.split_once('='))
+                .ok_or_else(|| Error::BadRequest(format!("invalid extra host {h}: name:ip")))?;
+            let ip = if ip == "host-gateway" {
+                super::ports::HOST_ADDR
+            } else {
+                ip
+            };
             extra_hosts.push(format!("{name}={ip}"));
         }
         let ulimits = json_query(req, "ulimits")?
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|u| Some(format!("{}={}:{}", u["Name"].as_str()?, u["Soft"].as_i64()?, u["Hard"].as_i64()?)))
+            .filter_map(|u| {
+                Some(format!(
+                    "{}={}:{}",
+                    u["Name"].as_str()?,
+                    u["Soft"].as_i64()?,
+                    u["Hard"].as_i64()?
+                ))
+            })
             .collect();
-        let cache_from = json_query(req, "cachefrom")?.as_array().into_iter().flatten().filter_map(|c| c.as_str().map(str::to_owned)).filter(|c| !c.is_empty()).collect();
-        let dockerfile = clean_path(req.query("dockerfile").filter(|d| !d.is_empty()).unwrap_or("Dockerfile"))?;
+        let cache_from = json_query(req, "cachefrom")?
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c.as_str().map(str::to_owned))
+            .filter(|c| !c.is_empty())
+            .collect();
+        let dockerfile = clean_path(
+            req.query("dockerfile")
+                .filter(|d| !d.is_empty())
+                .unwrap_or("Dockerfile"),
+        )?;
         Ok(Options {
             tags,
-            dockerfile: if dockerfile.is_empty() { "Dockerfile".into() } else { dockerfile },
-            remote: req.query("remote").filter(|r| !r.is_empty()).map(str::to_owned),
+            dockerfile: if dockerfile.is_empty() {
+                "Dockerfile".into()
+            } else {
+                dockerfile
+            },
+            remote: req
+                .query("remote")
+                .filter(|r| !r.is_empty())
+                .map(str::to_owned),
             target: req.query("target").unwrap_or_default().to_owned(),
             build_args: pairs(json_query(req, "buildargs")?),
             labels: pairs(json_query(req, "labels")?),
@@ -529,7 +697,10 @@ impl Options {
             platform: req.query("platform").unwrap_or_default().to_lowercase(),
             network,
             extra_hosts,
-            shm_size: req.query("shmsize").and_then(|s| s.parse().ok()).unwrap_or(0),
+            shm_size: req
+                .query("shmsize")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0),
             ulimits,
             cache_from,
             quiet: req.flag("q"),
@@ -539,7 +710,16 @@ impl Options {
 
     /// `buildctl build …` for a context unpacked at `dir/context`.
     fn argv(&self, dir: &str) -> Vec<String> {
-        let mut a: Vec<String> = ["buildctl", "build", "--progress", "plain", "--frontend", "dockerfile.v0"].map(str::to_owned).to_vec();
+        let mut a: Vec<String> = [
+            "buildctl",
+            "build",
+            "--progress",
+            "plain",
+            "--frontend",
+            "dockerfile.v0",
+        ]
+        .map(str::to_owned)
+        .to_vec();
         let mut opt = |s: String| {
             a.push("--opt".into());
             a.push(s);
@@ -549,7 +729,13 @@ impl Options {
                 opt(format!("context={url}"));
                 opt(format!("filename={}", self.dockerfile));
             }
-            None => opt(format!("filename={}", self.dockerfile.rsplit('/').next().unwrap_or(&self.dockerfile))),
+            None => opt(format!(
+                "filename={}",
+                self.dockerfile
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&self.dockerfile)
+            )),
         }
         if !self.target.is_empty() {
             opt(format!("target={}", self.target));
@@ -580,8 +766,16 @@ impl Options {
         }
         if self.remote.is_none() {
             let (sub, _) = self.dockerfile.rsplit_once('/').unwrap_or(("", ""));
-            a.extend(["--local".into(), format!("context={dir}/context"), "--local".into()]);
-            a.push(if sub.is_empty() { format!("dockerfile={dir}/context") } else { format!("dockerfile={dir}/context/{sub}") });
+            a.extend([
+                "--local".into(),
+                format!("context={dir}/context"),
+                "--local".into(),
+            ]);
+            a.push(if sub.is_empty() {
+                format!("dockerfile={dir}/context")
+            } else {
+                format!("dockerfile={dir}/context/{sub}")
+            });
         }
         if self.network == "host" {
             a.extend(["--allow".into(), "network.host".into()]);
@@ -595,7 +789,11 @@ impl Options {
         // An image archive on stdout, which the daemon loads into Kiri's
         // store; the names are quoted, the CSV way, since there may be several.
         a.push("--output".into());
-        a.push(if self.tags.is_empty() { "type=docker,dest=-".into() } else { format!("type=docker,\"name={}\",dest=-", self.tags.join(",")) });
+        a.push(if self.tags.is_empty() {
+            "type=docker,dest=-".into()
+        } else {
+            format!("type=docker,\"name={}\",dest=-", self.tags.join(","))
+        });
         a
     }
 }
@@ -609,7 +807,10 @@ fn registry_config(header: &str) -> Option<Vec<u8>> {
     for (server, a) in v.as_object()? {
         let mut e = serde_json::Map::new();
         if let (Some(u), Some(p)) = (a["username"].as_str(), a["password"].as_str()) {
-            e.insert("auth".into(), kiri_image::b64::encode(format!("{u}:{p}").as_bytes()).into());
+            e.insert(
+                "auth".into(),
+                kiri_image::b64::encode(format!("{u}:{p}").as_bytes()).into(),
+            );
         } else if let Some(t) = a["auth"].as_str().filter(|t| !t.is_empty()) {
             e.insert("auth".into(), t.into());
         }
@@ -690,7 +891,12 @@ fn sniff(head: &[u8]) -> Context {
 }
 
 /// `POST /build`: the classic builder API, run in the managed BuildKit.
-pub fn build(req: &Request, engine: &Arc<Engine>, w: &mut UnixStream, r: &mut BufReader<UnixStream>) -> io::Result<Next> {
+pub fn build(
+    req: &Request,
+    engine: &Arc<Engine>,
+    w: &mut UnixStream,
+    r: &mut BufReader<UnixStream>,
+) -> io::Result<Next> {
     let mut o = match Options::parse(req) {
         Ok(o) => o,
         Err(e) => {
@@ -729,7 +935,11 @@ pub fn build(req: &Request, engine: &Arc<Engine>, w: &mut UnixStream, r: &mut Bu
                     out.stream(&format!("Successfully tagged {}\n", i.name));
                 }
             }
-            crate::diag::info!("image built", tags = o.tags.join(","), ms = began.elapsed().as_millis());
+            crate::diag::info!(
+                "image built",
+                tags = o.tags.join(","),
+                ms = began.elapsed().as_millis()
+            );
         }
         Err(m) => {
             crate::diag::warn!("build failed", error = m);
@@ -743,7 +953,14 @@ pub fn build(req: &Request, engine: &Arc<Engine>, w: &mut UnixStream, r: &mut Bu
     Ok(Next::Close)
 }
 
-fn run(req: &Request, engine: &Engine, o: &mut Options, r: &mut BufReader<UnixStream>, out: &mut Out<'_>, probe: &UnixStream) -> Result<Vec<kiri_image::Image>, String> {
+fn run(
+    req: &Request,
+    engine: &Engine,
+    o: &mut Options,
+    r: &mut BufReader<UnixStream>,
+    out: &mut Out<'_>,
+    probe: &UnixStream,
+) -> Result<Vec<kiri_image::Image>, String> {
     let quiet = o.quiet;
     let id = ensure_running(engine, &mut |m| {
         if !quiet {
@@ -751,7 +968,9 @@ fn run(req: &Request, engine: &Engine, o: &mut Options, r: &mut BufReader<UnixSt
         }
     })
     .map_err(|e| match e {
-        Error::NotFound(m) | Error::Conflict(m) | Error::BadRequest(m) | Error::Unauthorized(m) => m,
+        Error::NotFound(m) | Error::Conflict(m) | Error::BadRequest(m) | Error::Unauthorized(m) => {
+            m
+        }
         Error::Io(e) => e.to_string(),
     })?;
     let dir = format!("{WORK}/{}", super::engine::random_hex(8));
@@ -759,7 +978,16 @@ fn run(req: &Request, engine: &Engine, o: &mut Options, r: &mut BufReader<UnixSt
     let built = (|| {
         let env = match req.header("X-Registry-Config").and_then(registry_config) {
             Some(config) => {
-                copy_in(engine, &id, &dir, &mut io::Cursor::new(tar(&[("docker/", None), ("docker/config.json", Some(&config))]))).map_err(|e| format!("{e:?}"))?;
+                copy_in(
+                    engine,
+                    &id,
+                    &dir,
+                    &mut io::Cursor::new(tar(&[
+                        ("docker/", None),
+                        ("docker/config.json", Some(&config)),
+                    ])),
+                )
+                .map_err(|e| format!("{e:?}"))?;
                 vec![format!("DOCKER_CONFIG={dir}/docker")]
             }
             None => Vec::new(),
@@ -774,49 +1002,100 @@ fn run(req: &Request, engine: &Engine, o: &mut Options, r: &mut BufReader<UnixSt
 }
 
 /// The request body, unpacked into `dir/context` in the builder.
-fn send_context(engine: &Engine, id: &str, dir: &str, req: &Request, r: &mut BufReader<UnixStream>, o: &mut Options) -> Result<(), String> {
+fn send_context(
+    engine: &Engine,
+    id: &str,
+    dir: &str,
+    req: &Request,
+    r: &mut BufReader<UnixStream>,
+    o: &mut Options,
+) -> Result<(), String> {
     let mut body = http::Body::new(req, r);
     let mut head = Vec::with_capacity(512);
-    (&mut body).take(512).read_to_end(&mut head).map_err(|e| format!("reading the build context: {e}"))?;
+    (&mut body)
+        .take(512)
+        .read_to_end(&mut head)
+        .map_err(|e| format!("reading the build context: {e}"))?;
     let ctx = format!("{dir}/context");
     match sniff(&head) {
         // Two zero blocks after the body end an archive whose last entry
         // isn't padded (Compose's classic builder sends those).
-        Context::Tar => copy_in(engine, id, &ctx, &mut io::Cursor::new(head).chain(body).chain(io::repeat(0).take(1024))).map_err(|e| format!("unpacking the build context: {e:?}")),
+        Context::Tar => copy_in(
+            engine,
+            id,
+            &ctx,
+            &mut io::Cursor::new(head)
+                .chain(body)
+                .chain(io::repeat(0).take(1024)),
+        )
+        .map_err(|e| format!("unpacking the build context: {e:?}")),
         Context::Compressed(flag) => {
-            let argv: Vec<String> = ["tar", "-x", flag, "-f", "-", "-C", &ctx].map(str::to_owned).to_vec();
+            let argv: Vec<String> = ["tar", "-x", flag, "-f", "-", "-C", &ctx]
+                .map(str::to_owned)
+                .to_vec();
             match exec_with_input(engine, id, &argv, &mut io::Cursor::new(head).chain(body)) {
                 Ok((0, _)) => Ok(()),
                 Ok((_, m)) => Err(format!("unpacking the build context: {}", m.trim())),
                 Err(e) => Err(format!("unpacking the build context: {e:?}")),
             }
         }
-        Context::Zstd => Err("a zstd-compressed build context isn't supported: send it as tar, gzip, bzip2 or xz".into()),
+        Context::Zstd => Err(
+            "a zstd-compressed build context isn't supported: send it as tar, gzip, bzip2 or xz"
+                .into(),
+        ),
         Context::Dockerfile => {
             let mut text = head;
-            body.take(MAX_DOCKERFILE).read_to_end(&mut text).map_err(|e| format!("reading the Dockerfile: {e}"))?;
+            body.take(MAX_DOCKERFILE)
+                .read_to_end(&mut text)
+                .map_err(|e| format!("reading the Dockerfile: {e}"))?;
             o.dockerfile = "Dockerfile".into();
-            copy_in(engine, id, &ctx, &mut io::Cursor::new(tar(&[("Dockerfile", Some(&text))]))).map_err(|e| format!("{e:?}"))
+            copy_in(
+                engine,
+                id,
+                &ctx,
+                &mut io::Cursor::new(tar(&[("Dockerfile", Some(&text))])),
+            )
+            .map_err(|e| format!("{e:?}"))
         }
     }
 }
 
 /// Runs the build: its progress (stderr) to the client as it comes, the
 /// image archive (stdout) into Kiri's store as it comes.
-fn buildctl(engine: &Engine, id: &str, dir: &str, o: &Options, env: Vec<String>, out: &mut Out<'_>, probe: &UnixStream) -> Result<Vec<kiri_image::Image>, String> {
+fn buildctl(
+    engine: &Engine,
+    id: &str,
+    dir: &str,
+    o: &Options,
+    env: Vec<String>,
+    out: &mut Out<'_>,
+    probe: &UnixStream,
+) -> Result<Vec<kiri_image::Image>, String> {
     let argv = o.argv(dir);
     if !o.build_id.is_empty() {
-        CANCELLABLE.lock().unwrap_or_else(|e| e.into_inner()).push((o.build_id.clone(), id.to_owned(), dir.to_owned()));
+        CANCELLABLE.lock().unwrap_or_else(|e| e.into_inner()).push((
+            o.build_id.clone(),
+            id.to_owned(),
+            dir.to_owned(),
+        ));
     }
     let built = buildctl_run(engine, id, dir, o, argv, env, out, probe);
-    CANCELLABLE.lock().unwrap_or_else(|e| e.into_inner()).retain(|(_, _, d)| d != dir);
+    CANCELLABLE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(_, _, d)| d != dir);
     built
 }
 
 /// `POST /build/cancel?id=`: interrupts that build (BuildKit cancels on SIGINT).
 pub fn cancel(req: &Request, engine: &Engine) -> Result<Value, Error> {
     let id = req.query("id").unwrap_or_default();
-    let found = CANCELLABLE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(b, _, _)| !id.is_empty() && b == id).cloned();
+    let found = CANCELLABLE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(b, _, _)| !id.is_empty() && b == id)
+        .cloned();
     if let Some((_, container, dir)) = found {
         let _ = engine.exec_capture(&container, &["pkill", "-INT", "-f", &dir]);
     }
@@ -824,14 +1103,34 @@ pub fn cancel(req: &Request, engine: &Engine) -> Result<Value, Error> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn buildctl_run(engine: &Engine, id: &str, dir: &str, o: &Options, argv: Vec<String>, env: Vec<String>, out: &mut Out<'_>, probe: &UnixStream) -> Result<Vec<kiri_image::Image>, String> {
-    let exec = engine.exec_create(id, internal_exec(&argv, false, env)).map_err(|e| format!("{e:?}"))?;
+fn buildctl_run(
+    engine: &Engine,
+    id: &str,
+    dir: &str,
+    o: &Options,
+    argv: Vec<String>,
+    env: Vec<String>,
+    out: &mut Out<'_>,
+    probe: &UnixStream,
+) -> Result<Vec<kiri_image::Image>, String> {
+    let exec = engine
+        .exec_create(id, internal_exec(&argv, false, env))
+        .map_err(|e| format!("{e:?}"))?;
     let (_, rx) = engine.exec_start(&exec).map_err(|e| format!("{e:?}"))?;
     let mut cancelled = false;
     let mut tail: Vec<String> = Vec::new();
     let loaded = std::thread::scope(|s| {
         let (tx, lrx) = mpsc::sync_channel::<Vec<u8>>(64);
-        let loader = s.spawn(move || kiri_image::archive::load(&engine.store, ChanReader { rx: lrx, buf: Vec::new(), at: 0 }));
+        let loader = s.spawn(move || {
+            kiri_image::archive::load(
+                &engine.store,
+                ChanReader {
+                    rx: lrx,
+                    buf: Vec::new(),
+                    at: 0,
+                },
+            )
+        });
         let mut tx = Some(tx);
         let mut partial = Vec::new();
         loop {
@@ -874,9 +1173,13 @@ fn buildctl_run(engine: &Engine, id: &str, dir: &str, o: &Options, argv: Vec<Str
             tail.push(line);
         }
         drop(tx);
-        loader.join().unwrap_or_else(|_| Err(io::Error::other("the image loader panicked")))
+        loader
+            .join()
+            .unwrap_or_else(|_| Err(io::Error::other("the image loader panicked")))
     });
-    let code = engine.with_exec(&exec, |e| e.exit_code.unwrap_or(-1)).unwrap_or(-1);
+    let code = engine
+        .with_exec(&exec, |e| e.exit_code.unwrap_or(-1))
+        .unwrap_or(-1);
     engine.forget_exec(&exec);
     if cancelled {
         return Err("build cancelled".into());
@@ -895,7 +1198,10 @@ fn buildctl_run(engine: &Engine, id: &str, dir: &str, o: &Options, argv: Vec<Str
 fn failure(tail: &[String], code: i32) -> String {
     tail.iter()
         .rev()
-        .find_map(|l| l.strip_prefix("error: ").or_else(|| l.strip_prefix("ERROR: ")))
+        .find_map(|l| {
+            l.strip_prefix("error: ")
+                .or_else(|| l.strip_prefix("ERROR: "))
+        })
         .map(str::to_owned)
         .or_else(|| tail.iter().rev().find(|l| !l.trim().is_empty()).cloned())
         .unwrap_or_else(|| format!("buildctl exited with code {code}"))
@@ -906,7 +1212,20 @@ fn failure(tail: &[String], code: i32) -> String {
 /// `POST /build/prune`: BuildKit's prune, if the builder exists (started
 /// for it if stopped). `{CachesDeleted, SpaceReclaimed}`.
 pub fn prune(req: &Request, engine: &Engine) -> Result<Value, Error> {
-    let f = api::filters(req, &["until", "unused-for", "id", "parent", "type", "description", "inuse", "shared", "private"])?;
+    let f = api::filters(
+        req,
+        &[
+            "until",
+            "unused-for",
+            "id",
+            "parent",
+            "type",
+            "description",
+            "inuse",
+            "shared",
+            "private",
+        ],
+    )?;
     let argv = prune_argv(req, &f)?;
     if find(engine).is_none() {
         return Ok(json!({"CachesDeleted": [], "SpaceReclaimed": 0}));
@@ -916,21 +1235,39 @@ pub fn prune(req: &Request, engine: &Engine) -> Result<Value, Error> {
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
     let (code, text) = engine.exec_capture(&id, &argv)?;
     if code != 0 {
-        let last = text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("buildctl prune failed");
-        return Err(Error::Io(io::Error::other(last.trim_start_matches("error: ").to_owned())));
+        let last = text
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("buildctl prune failed");
+        return Err(Error::Io(io::Error::other(
+            last.trim_start_matches("error: ").to_owned(),
+        )));
     }
     let (ids, space) = parse_prune(&text);
     Ok(json!({"CachesDeleted": ids, "SpaceReclaimed": space}))
 }
 
 fn prune_argv(req: &Request, f: &super::filters::Filters) -> Result<Vec<String>, Error> {
-    let mut a: Vec<String> = ["buildctl", "prune", "--format", "{{json .}}"].map(str::to_owned).to_vec();
+    let mut a: Vec<String> = ["buildctl", "prune", "--format", "{{json .}}"]
+        .map(str::to_owned)
+        .to_vec();
     if req.flag("all") {
         a.push("--all".into());
     }
     // Docker's sizes are bytes; buildctl's are MB (10^6).
-    let mb = |key: &str| req.query(key).and_then(|v| v.parse::<u64>().ok()).filter(|v| *v > 0).map(|v| format!("{}", v as f64 / 1e6));
-    for (key, flag) in [("keep-storage", "--keep-storage"), ("max-used-space", "--keep-storage"), ("reserved-space", "--keep-storage-min"), ("min-free-space", "--free-storage")] {
+    let mb = |key: &str| {
+        req.query(key)
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .map(|v| format!("{}", v as f64 / 1e6))
+    };
+    for (key, flag) in [
+        ("keep-storage", "--keep-storage"),
+        ("max-used-space", "--keep-storage"),
+        ("reserved-space", "--keep-storage-min"),
+        ("min-free-space", "--free-storage"),
+    ] {
         if let Some(v) = mb(key)
             && !a.iter().any(|x| x == flag)
         {
@@ -939,20 +1276,34 @@ fn prune_argv(req: &Request, f: &super::filters::Filters) -> Result<Vec<String>,
     }
     for key in ["until", "unused-for"] {
         if let Some(v) = f.values(key).and_then(|v| v.first()) {
-            let ok = v.len() > 1 && v.ends_with(['h', 'm', 's']) && v[..v.len() - 1].bytes().all(|b| b.is_ascii_digit() || b"hms.".contains(&b));
+            let ok = v.len() > 1
+                && v.ends_with(['h', 'm', 's'])
+                && v[..v.len() - 1]
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || b"hms.".contains(&b));
             if !ok {
-                return Err(Error::BadRequest(format!("{key}: give a duration such as 24h")));
+                return Err(Error::BadRequest(format!(
+                    "{key}: give a duration such as 24h"
+                )));
             }
             a.extend(["--keep-duration".into(), v.clone()]);
         }
     }
-    for (key, as_) in [("id", "id~="), ("parent", "parents=="), ("type", "type=="), ("description", "description==")] {
+    for (key, as_) in [
+        ("id", "id~="),
+        ("parent", "parents=="),
+        ("type", "type=="),
+        ("description", "description=="),
+    ] {
         for v in f.values(key).into_iter().flatten() {
             a.extend(["--filter".into(), format!("{as_}{v}")]);
         }
     }
     for key in ["inuse", "shared", "private"] {
-        if f.bool(key) == Some(true) || f.values(key).is_some_and(|v| v.iter().any(String::is_empty)) {
+        if f.bool(key) == Some(true)
+            || f.values(key)
+                .is_some_and(|v| v.iter().any(String::is_empty))
+        {
             a.extend(["--filter".into(), key.to_owned()]);
         }
     }
@@ -963,7 +1314,11 @@ fn prune_argv(req: &Request, f: &super::filters::Filters) -> Result<Vec<String>,
 fn parse_prune(text: &str) -> (Vec<String>, u64) {
     let mut ids = Vec::new();
     let mut space = 0;
-    for v in text.lines().filter(|l| l.starts_with('{')).filter_map(|l| serde_json::from_str::<Value>(l).ok()) {
+    for v in text
+        .lines()
+        .filter(|l| l.starts_with('{'))
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+    {
         if let Some(id) = v["ID"].as_str() {
             ids.push(id.to_owned());
         }
@@ -975,7 +1330,9 @@ fn parse_prune(text: &str) -> (Vec<String>, u64) {
 /// `system df`'s BuildCache: BuildKit's records while the builder runs
 /// (asking a stopped one would start it); none otherwise.
 pub fn cache(engine: &Engine) -> Value {
-    let Some((id, Status::Running)) = find(engine) else { return json!([]) };
+    let Some((id, Status::Running)) = find(engine) else {
+        return json!([]);
+    };
     let _busy = Busy::new();
     match engine.exec_capture(&id, &["buildctl", "du", "--format", "{{json .}}"]) {
         Ok((0, text)) => du_rows(&text),
@@ -986,7 +1343,11 @@ pub fn cache(engine: &Engine) -> Value {
 /// buildctl's usage records as Docker's BuildCache entries.
 fn du_rows(text: &str) -> Value {
     let start = text.find('[').unwrap_or(text.len());
-    let records: Vec<Value> = serde_json::Deserializer::from_str(&text[start..]).into_iter::<Vec<Value>>().next().and_then(Result::ok).unwrap_or_default();
+    let records: Vec<Value> = serde_json::Deserializer::from_str(&text[start..])
+        .into_iter::<Vec<Value>>()
+        .next()
+        .and_then(Result::ok)
+        .unwrap_or_default();
     Value::Array(
         records
             .iter()
@@ -1034,20 +1395,51 @@ mod tests {
         .unwrap();
         assert_eq!(o.tags, ["app:latest", "ghcr.io/o/app:1"]);
         assert_eq!(o.dockerfile, "docker/Dockerfile.dev");
-        assert_eq!(o.build_args, [("A".to_owned(), "1".to_owned()), ("B".to_owned(), "2".to_owned())]);
+        assert_eq!(
+            o.build_args,
+            [
+                ("A".to_owned(), "1".to_owned()),
+                ("B".to_owned(), "2".to_owned())
+            ]
+        );
         assert!(o.no_cache && o.pull && o.quiet);
         assert_eq!(o.platform, "linux/amd64");
-        assert_eq!(o.extra_hosts, ["db=10.0.0.2".to_owned(), format!("host.docker.internal={}", super::super::ports::HOST_ADDR)]);
+        assert_eq!(
+            o.extra_hosts,
+            [
+                "db=10.0.0.2".to_owned(),
+                format!("host.docker.internal={}", super::super::ports::HOST_ADDR)
+            ]
+        );
         let a = o.argv("/tmp/kiri-build/x");
         let has = |pair: &[&str]| a.windows(pair.len()).any(|w| w == pair);
         assert!(has(&["--opt", "filename=Dockerfile.dev"]));
-        assert!(has(&["--local", "context=/tmp/kiri-build/x/context", "--local", "dockerfile=/tmp/kiri-build/x/context/docker"]));
-        assert!(has(&["--opt", "build-arg:A=1"]) && has(&["--opt", "label:team=core"]) && has(&["--opt", "target=dev"]));
-        assert!(has(&["--opt", "image-resolve-mode=pull"]) && has(&["--no-cache"]) && has(&["--opt", "platform=linux/amd64"]));
+        assert!(has(&[
+            "--local",
+            "context=/tmp/kiri-build/x/context",
+            "--local",
+            "dockerfile=/tmp/kiri-build/x/context/docker"
+        ]));
+        assert!(
+            has(&["--opt", "build-arg:A=1"])
+                && has(&["--opt", "label:team=core"])
+                && has(&["--opt", "target=dev"])
+        );
+        assert!(
+            has(&["--opt", "image-resolve-mode=pull"])
+                && has(&["--no-cache"])
+                && has(&["--opt", "platform=linux/amd64"])
+        );
         assert!(has(&["--opt", "force-network-mode=host"]) && has(&["--allow", "network.host"]));
         assert!(has(&["--opt", "shm-size=67108864"]) && has(&["--opt", "ulimit=nofile=1024:2048"]));
-        assert!(has(&["--import-cache", "type=registry,ref=ghcr.io/o/app:cache"]));
-        assert_eq!(a.last().unwrap(), "type=docker,\"name=app:latest,ghcr.io/o/app:1\",dest=-");
+        assert!(has(&[
+            "--import-cache",
+            "type=registry,ref=ghcr.io/o/app:cache"
+        ]));
+        assert_eq!(
+            a.last().unwrap(),
+            "type=docker,\"name=app:latest,ghcr.io/o/app:1\",dest=-"
+        );
         assert!(!a.iter().any(|x| x.contains("UNSET")));
     }
 
@@ -1056,14 +1448,23 @@ mod tests {
         let o = Options::parse(&req(&[])).unwrap();
         assert_eq!(o.dockerfile, "Dockerfile");
         let a = o.argv("/d");
-        assert!(a.windows(2).any(|w| w == ["--local", "dockerfile=/d/context"]));
+        assert!(
+            a.windows(2)
+                .any(|w| w == ["--local", "dockerfile=/d/context"])
+        );
         assert_eq!(a.last().unwrap(), "type=docker,dest=-");
         assert!(Options::parse(&req(&[("t", "Bad:Tag!")])).is_err());
         assert!(Options::parse(&req(&[("dockerfile", "../Dockerfile")])).is_err());
         assert!(Options::parse(&req(&[("networkmode", "mynet")])).is_err());
         assert!(Options::parse(&req(&[("version", "2")])).is_err());
-        let remote = Options::parse(&req(&[("remote", "https://github.com/o/r.git#main")])).unwrap().argv("/d");
-        assert!(remote.windows(2).any(|w| w == ["--opt", "context=https://github.com/o/r.git#main"]));
+        let remote = Options::parse(&req(&[("remote", "https://github.com/o/r.git#main")]))
+            .unwrap()
+            .argv("/d");
+        assert!(
+            remote
+                .windows(2)
+                .any(|w| w == ["--opt", "context=https://github.com/o/r.git#main"])
+        );
         assert!(!remote.iter().any(|x| x == "--local"));
     }
 
@@ -1073,7 +1474,10 @@ mod tests {
         assert_eq!(sniff(&t[..512]), Context::Tar);
         assert_eq!(sniff(&[0x1f, 0x8b, 8]), Context::Compressed("-z"));
         assert_eq!(sniff(b"BZh91AY"), Context::Compressed("-j"));
-        assert_eq!(sniff(&[0xfd, b'7', b'z', b'X', b'Z', 0]), Context::Compressed("-J"));
+        assert_eq!(
+            sniff(&[0xfd, b'7', b'z', b'X', b'Z', 0]),
+            Context::Compressed("-J")
+        );
         assert_eq!(sniff(b"FROM alpine\nRUN true\n"), Context::Dockerfile);
         assert_eq!(sniff(b""), Context::Tar);
         // The archive reads back with the tar crate (as the guest's would).
@@ -1089,23 +1493,48 @@ mod tests {
     fn registry_config_becomes_docker_config() {
         let header = kiri_image::b64::encode(br#"{"https://index.docker.io/v1/":{"username":"u","password":"p"},"ghcr.io":{"identitytoken":"tok"},"empty":{}}"#);
         let v: Value = serde_json::from_slice(&registry_config(&header).unwrap()).unwrap();
-        assert_eq!(v["auths"]["https://index.docker.io/v1/"]["auth"], kiri_image::b64::encode(b"u:p"));
+        assert_eq!(
+            v["auths"]["https://index.docker.io/v1/"]["auth"],
+            kiri_image::b64::encode(b"u:p")
+        );
         assert_eq!(v["auths"]["ghcr.io"]["identitytoken"], "tok");
         assert!(v["auths"].get("empty").is_none());
     }
 
     #[test]
     fn prune_and_du() {
-        let r = Request::internal("POST", "/build/prune", &[("all", "1"), ("keep-storage", "5000000000"), ("filters", r#"{"until":["24h"],"type":["regular"]}"#)], Vec::new());
+        let r = Request::internal(
+            "POST",
+            "/build/prune",
+            &[
+                ("all", "1"),
+                ("keep-storage", "5000000000"),
+                ("filters", r#"{"until":["24h"],"type":["regular"]}"#),
+            ],
+            Vec::new(),
+        );
         let f = api::filters(&r, &["until", "type"]).unwrap();
         let a = prune_argv(&r, &f).unwrap();
         let has = |pair: &[&str]| a.windows(pair.len()).any(|w| w == pair);
-        assert!(has(&["--all"]) && has(&["--keep-storage", "5000"]) && has(&["--keep-duration", "24h"]) && has(&["--filter", "type==regular"]));
-        let bad = Request::internal("POST", "/build/prune", &[("filters", r#"{"until":["2026-01-01"]}"#)], Vec::new());
+        assert!(
+            has(&["--all"])
+                && has(&["--keep-storage", "5000"])
+                && has(&["--keep-duration", "24h"])
+                && has(&["--filter", "type==regular"])
+        );
+        let bad = Request::internal(
+            "POST",
+            "/build/prune",
+            &[("filters", r#"{"until":["2026-01-01"]}"#)],
+            Vec::new(),
+        );
         assert!(prune_argv(&bad, &api::filters(&bad, &["until"]).unwrap()).is_err());
-        let (ids, space) = parse_prune("{\"ID\":\"a\",\"Size\":10}\n{\"ID\":\"b\",\"Size\":5}\nTotal: 15B\n");
+        let (ids, space) =
+            parse_prune("{\"ID\":\"a\",\"Size\":10}\n{\"ID\":\"b\",\"Size\":5}\nTotal: 15B\n");
         assert_eq!((ids, space), (vec!["a".to_owned(), "b".to_owned()], 15));
-        let rows = du_rows(r#"[{"ID":"x","Mutable":false,"InUse":true,"Size":42,"Parents":["p"],"CreatedAt":"2026-10-30T10:00:00Z","LastUsedAt":null,"UsageCount":3,"Description":"mount / from exec","RecordType":"regular","Shared":false}]"#);
+        let rows = du_rows(
+            r#"[{"ID":"x","Mutable":false,"InUse":true,"Size":42,"Parents":["p"],"CreatedAt":"2026-10-30T10:00:00Z","LastUsedAt":null,"UsageCount":3,"Description":"mount / from exec","RecordType":"regular","Shared":false}]"#,
+        );
         assert_eq!(rows[0]["ID"], "x");
         assert_eq!(rows[0]["Parent"], "p");
         assert_eq!(rows[0]["Type"], "regular");
@@ -1119,7 +1548,16 @@ mod tests {
         assert_eq!(default_cache(100 * GB), 10 * GB);
         assert_eq!(default_cache(2000 * GB), 20 * GB);
         assert!(config_toml(8 * GB, "").contains(&format!("maxUsedSpace = {}", 8 * GB)));
-        assert_eq!(failure(&["#5 ERROR: boom".into(), "error: failed to solve: boom".into()], 1), "failed to solve: boom");
+        assert_eq!(
+            failure(
+                &[
+                    "#5 ERROR: boom".into(),
+                    "error: failed to solve: boom".into()
+                ],
+                1
+            ),
+            "failed to solve: boom"
+        );
         assert_eq!(failure(&[], 2), "buildctl exited with code 2");
     }
 }

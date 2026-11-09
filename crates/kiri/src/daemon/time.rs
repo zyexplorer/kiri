@@ -21,23 +21,27 @@ pub fn rfc3339(t: SystemTime) -> String {
 pub const ZERO: &str = "0001-01-01T00:00:00Z";
 
 pub fn unix(t: SystemTime) -> i64 {
-    t.duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    t.duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// Parses the date and time of an RFC 3339 string to Unix seconds, ignoring
 /// fractions; offsets other than `Z` are applied. Returns 0 if unparseable.
 pub fn parse_unix(s: &str) -> i64 {
     let n = |r: std::ops::Range<usize>| s.get(r).and_then(|v| v.parse::<i64>().ok());
-    let (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(se)) = (n(0..4), n(5..7), n(8..10), n(11..13), n(14..16), n(17..19))
+    let (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(se)) =
+        (n(0..4), n(5..7), n(8..10), n(11..13), n(14..16), n(17..19))
     else {
         return 0;
     };
     let mut t = days_from_civil(y, mo, d) * 86_400 + h * 3600 + mi * 60 + se;
     if let Some(i) = s[19..].find(['+', '-']).map(|i| i + 19)
-        && let (Some(oh), Some(om)) = (n(i + 1..i + 3), n(i + 4..i + 6)) {
-            let off = oh * 3600 + om * 60;
-            t -= if &s[i..i + 1] == "+" { off } else { -off };
-        }
+        && let (Some(oh), Some(om)) = (n(i + 1..i + 3), n(i + 4..i + 6))
+    {
+        let off = oh * 3600 + om * 60;
+        t -= if &s[i..i + 1] == "+" { off } else { -off };
+    }
     t
 }
 

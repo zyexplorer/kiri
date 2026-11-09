@@ -35,7 +35,10 @@ pub fn size(v: &Value) -> (u16, u16) {
 }
 
 pub fn shells(list: &[Shell], default: &str) -> String {
-    let list: Vec<Value> = list.iter().map(|s| json!({"id": s.id, "label": s.label, "group": s.group})).collect();
+    let list: Vec<Value> = list
+        .iter()
+        .map(|s| json!({"id": s.id, "label": s.label, "group": s.group}))
+        .collect();
     json!({"type": "term", "ev": "shells", "shells": list, "default": default}).to_string()
 }
 
@@ -56,8 +59,12 @@ pub fn paste(id: &str, text: &str) -> String {
 /// A link the terminal may open: http or https with a host, and nothing
 /// that would read as more than one address.
 pub fn web_link(url: &str) -> bool {
-    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"));
-    rest.is_some_and(|r| !r.is_empty() && !r.starts_with('/')) && url.len() <= 2048 && url.chars().all(|c| c.is_ascii_graphic())
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"));
+    rest.is_some_and(|r| !r.is_empty() && !r.starts_with('/'))
+        && url.len() <= 2048
+        && url.chars().all(|c| c.is_ascii_graphic())
 }
 
 /// The most a copy may put on the clipboard: a whole screen of scrollback.
@@ -68,9 +75,15 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 pub fn b64(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for c in bytes.chunks(3) {
-        let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+        let n = (u32::from(c[0]) << 16)
+            | (u32::from(*c.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*c.get(2).unwrap_or(&0));
         for i in 0..4 {
-            out.push(if i <= c.len() { B64[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+            out.push(if i <= c.len() {
+                B64[(n >> (18 - 6 * i) & 63) as usize] as char
+            } else {
+                '='
+            });
         }
     }
     out
@@ -106,8 +119,14 @@ mod tests {
     #[test]
     fn base64_goes_both_ways_at_every_length() {
         for n in 0..70u8 {
-            let bytes: Vec<u8> = (0..n).map(|i| i.wrapping_mul(37).wrapping_add(200)).collect();
-            assert_eq!(unb64(&b64(&bytes)).as_deref(), Some(&bytes[..]), "{n} bytes");
+            let bytes: Vec<u8> = (0..n)
+                .map(|i| i.wrapping_mul(37).wrapping_add(200))
+                .collect();
+            assert_eq!(
+                unb64(&b64(&bytes)).as_deref(),
+                Some(&bytes[..]),
+                "{n} bytes"
+            );
         }
         assert_eq!(b64(b"Kiri"), "S2lyaQ==");
         assert_eq!(unb64("not base64!"), None);
@@ -116,13 +135,23 @@ mod tests {
     #[test]
     fn a_page_cant_name_a_session_that_isnt_plain() {
         assert!(valid_id("t12"));
-        assert!(!valid_id("") && !valid_id("../x") && !valid_id("a b") && !valid_id(&"a".repeat(17)));
+        assert!(
+            !valid_id("") && !valid_id("../x") && !valid_id("a b") && !valid_id(&"a".repeat(17))
+        );
     }
 
     #[test]
     fn only_web_links_open() {
         assert!(web_link("https://example.com/a?b=c") && web_link("http://localhost:3000"));
-        for bad in ["file:///etc/passwd", "javascript:alert(1)", "https://", "http:///x", "https://a b", "vscode://x", "ssh://h"] {
+        for bad in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "https://",
+            "http:///x",
+            "https://a b",
+            "vscode://x",
+            "ssh://h",
+        ] {
             assert!(!web_link(bad), "{bad}");
         }
     }

@@ -54,7 +54,14 @@ impl Healthcheck {
         if !v.is_object() {
             return None;
         }
-        let test = v["Test"].as_array().map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+        let test = v["Test"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
         let n = |k: &str| v[k].as_i64().unwrap_or(0);
         Some(Healthcheck {
             test,
@@ -73,7 +80,12 @@ impl Healthcheck {
     /// Docker's checks at create, with its messages.
     pub fn validate(&self) -> Result<(), String> {
         const MIN: i64 = 1_000_000; // 1ms
-        for (name, v) in [("Interval", self.interval), ("Timeout", self.timeout), ("StartPeriod", self.start_period), ("StartInterval", self.start_interval)] {
+        for (name, v) in [
+            ("Interval", self.interval),
+            ("Timeout", self.timeout),
+            ("StartPeriod", self.start_period),
+            ("StartInterval", self.start_interval),
+        ] {
             if v != 0 && v < MIN {
                 return Err(format!("{name} in Healthcheck cannot be less than 1ms"));
             }
@@ -91,7 +103,11 @@ impl Healthcheck {
         match kind.as_str() {
             "CMD" if !rest.is_empty() => Some(rest.to_vec()),
             "CMD-SHELL" if !rest.is_empty() => {
-                let mut argv = if shell.is_empty() { vec!["/bin/sh".to_owned(), "-c".to_owned()] } else { shell.to_vec() };
+                let mut argv = if shell.is_empty() {
+                    vec!["/bin/sh".to_owned(), "-c".to_owned()]
+                } else {
+                    shell.to_vec()
+                };
                 argv.extend(rest.iter().cloned());
                 Some(argv)
             }
@@ -116,12 +132,20 @@ impl Healthcheck {
     }
 
     pub fn retries(&self) -> u32 {
-        if self.retries <= 0 { DEFAULT_RETRIES } else { self.retries.min(i64::from(u32::MAX)) as u32 }
+        if self.retries <= 0 {
+            DEFAULT_RETRIES
+        } else {
+            self.retries.min(i64::from(u32::MAX)) as u32
+        }
     }
 }
 
 fn or_default(ns: i64, default: Duration) -> Duration {
-    if ns <= 0 { default } else { Duration::from_nanos(ns as u64) }
+    if ns <= 0 {
+        default
+    } else {
+        Duration::from_nanos(ns as u64)
+    }
 }
 
 /// Docker's merge of the container's healthcheck over the image's: no
@@ -129,7 +153,9 @@ fn or_default(ns: i64, default: Duration) -> Duration {
 /// left empty or 0 comes from the image.
 pub fn merge(container: Option<Healthcheck>, image: Option<Healthcheck>) -> Option<Healthcheck> {
     let Some(image) = image else { return container };
-    let Some(mut c) = container else { return Some(image) };
+    let Some(mut c) = container else {
+        return Some(image);
+    };
     if c.test.is_empty() {
         c.test = image.test;
     }
@@ -169,7 +195,11 @@ pub struct Health {
 
 impl Default for Health {
     fn default() -> Self {
-        Health { status: STARTING.into(), failing_streak: 0, log: VecDeque::new() }
+        Health {
+            status: STARTING.into(),
+            failing_streak: 0,
+            log: VecDeque::new(),
+        }
     }
 }
 
@@ -200,12 +230,20 @@ impl Health {
     /// The wait before the next probe: the start interval while starting
     /// inside the start period, the interval otherwise.
     pub fn next_wait(&self, since_start: Duration, check: &Healthcheck) -> Duration {
-        if since_start < check.start_period() && self.status == STARTING { check.start_interval() } else { check.interval() }
+        if since_start < check.start_period() && self.status == STARTING {
+            check.start_interval()
+        } else {
+            check.interval()
+        }
     }
 
     /// What `docker ps` puts in brackets after "Up …".
     pub fn ps_word(&self) -> String {
-        if self.status == STARTING { "health: starting".into() } else { self.status.clone() }
+        if self.status == STARTING {
+            "health: starting".into()
+        } else {
+            self.status.clone()
+        }
     }
 }
 
@@ -267,7 +305,12 @@ mod tests {
     use serde_json::json;
 
     fn probe(code: i64) -> Probe {
-        Probe { start: String::new(), end: String::new(), exit_code: code, output: String::new() }
+        Probe {
+            start: String::new(),
+            end: String::new(),
+            exit_code: code,
+            output: String::new(),
+        }
     }
 
     #[test]
@@ -285,43 +328,115 @@ mod tests {
     #[test]
     fn defaults_are_dockers() {
         let h = Healthcheck::default();
-        assert_eq!((h.interval(), h.timeout(), h.start_period(), h.start_interval(), h.retries()), (Duration::from_secs(30), Duration::from_secs(30), Duration::ZERO, Duration::from_secs(5), 3));
+        assert_eq!(
+            (
+                h.interval(),
+                h.timeout(),
+                h.start_period(),
+                h.start_interval(),
+                h.retries()
+            ),
+            (
+                Duration::from_secs(30),
+                Duration::from_secs(30),
+                Duration::ZERO,
+                Duration::from_secs(5),
+                3
+            )
+        );
     }
 
     #[test]
     fn the_container_overrides_the_image_field_by_field() {
-        let image = Healthcheck { test: vec!["CMD".into(), "true".into()], interval: 5, timeout: 6, start_period: 7, start_interval: 8, retries: 9 };
+        let image = Healthcheck {
+            test: vec!["CMD".into(), "true".into()],
+            interval: 5,
+            timeout: 6,
+            start_period: 7,
+            start_interval: 8,
+            retries: 9,
+        };
         assert_eq!(merge(None, Some(image.clone())), Some(image.clone()));
-        let mine = Healthcheck { interval: 1, ..Default::default() };
+        let mine = Healthcheck {
+            interval: 1,
+            ..Default::default()
+        };
         let merged = merge(Some(mine), Some(image.clone())).unwrap();
         assert_eq!(merged.test, image.test);
         assert_eq!((merged.interval, merged.timeout, merged.retries), (1, 6, 9));
-        let off = merge(Some(Healthcheck { test: vec!["NONE".into()], ..Default::default() }), Some(image)).unwrap();
+        let off = merge(
+            Some(Healthcheck {
+                test: vec!["NONE".into()],
+                ..Default::default()
+            }),
+            Some(image),
+        )
+        .unwrap();
         assert_eq!(off.probe(&[]), None);
     }
 
     #[test]
     fn probes_run_as_docker_runs_them() {
-        let cmd = Healthcheck { test: vec!["CMD".into(), "curl".into(), "-f".into(), "x".into()], ..Default::default() };
+        let cmd = Healthcheck {
+            test: vec!["CMD".into(), "curl".into(), "-f".into(), "x".into()],
+            ..Default::default()
+        };
         assert_eq!(cmd.probe(&[]).unwrap(), ["curl", "-f", "x"]);
-        let shell = Healthcheck { test: vec!["CMD-SHELL".into(), "exit 1".into()], ..Default::default() };
+        let shell = Healthcheck {
+            test: vec!["CMD-SHELL".into(), "exit 1".into()],
+            ..Default::default()
+        };
         assert_eq!(shell.probe(&[]).unwrap(), ["/bin/sh", "-c", "exit 1"]);
-        assert_eq!(shell.probe(&["/bin/bash".into(), "-ec".into()]).unwrap(), ["/bin/bash", "-ec", "exit 1"]);
-        for off in [vec![], vec!["NONE".to_owned()], vec!["CMD".to_owned()], vec!["WHAT".to_owned(), "x".to_owned()]] {
-            assert_eq!(Healthcheck { test: off, ..Default::default() }.probe(&[]), None);
+        assert_eq!(
+            shell.probe(&["/bin/bash".into(), "-ec".into()]).unwrap(),
+            ["/bin/bash", "-ec", "exit 1"]
+        );
+        for off in [
+            vec![],
+            vec!["NONE".to_owned()],
+            vec!["CMD".to_owned()],
+            vec!["WHAT".to_owned(), "x".to_owned()],
+        ] {
+            assert_eq!(
+                Healthcheck {
+                    test: off,
+                    ..Default::default()
+                }
+                .probe(&[]),
+                None
+            );
         }
     }
 
     #[test]
     fn validation_matches_docker() {
         assert!(Healthcheck::default().validate().is_ok());
-        assert_eq!(Healthcheck { interval: 999, ..Default::default() }.validate().unwrap_err(), "Interval in Healthcheck cannot be less than 1ms");
-        assert_eq!(Healthcheck { retries: -1, ..Default::default() }.validate().unwrap_err(), "Retries in Healthcheck cannot be negative");
+        assert_eq!(
+            Healthcheck {
+                interval: 999,
+                ..Default::default()
+            }
+            .validate()
+            .unwrap_err(),
+            "Interval in Healthcheck cannot be less than 1ms"
+        );
+        assert_eq!(
+            Healthcheck {
+                retries: -1,
+                ..Default::default()
+            }
+            .validate()
+            .unwrap_err(),
+            "Retries in Healthcheck cannot be negative"
+        );
     }
 
     #[test]
     fn status_moves_like_dockers() {
-        let check = Healthcheck { retries: 2, ..Default::default() };
+        let check = Healthcheck {
+            retries: 2,
+            ..Default::default()
+        };
         let mut h = Health::default();
         h.record(probe(1), Duration::from_secs(1), &check);
         assert_eq!((h.status.as_str(), h.failing_streak), (STARTING, 1));
@@ -342,12 +457,23 @@ mod tests {
 
     #[test]
     fn the_start_period_forgives_failures_until_the_first_success() {
-        let check = Healthcheck { retries: 1, start_period: 10_000_000_000, start_interval: 1_000_000_000, ..Default::default() };
+        let check = Healthcheck {
+            retries: 1,
+            start_period: 10_000_000_000,
+            start_interval: 1_000_000_000,
+            ..Default::default()
+        };
         let mut h = Health::default();
         h.record(probe(1), Duration::from_secs(3), &check);
         assert_eq!((h.status.as_str(), h.failing_streak), (STARTING, 0));
-        assert_eq!(h.next_wait(Duration::from_secs(3), &check), Duration::from_secs(1));
-        assert_eq!(h.next_wait(Duration::from_secs(11), &check), DEFAULT_INTERVAL);
+        assert_eq!(
+            h.next_wait(Duration::from_secs(3), &check),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            h.next_wait(Duration::from_secs(11), &check),
+            DEFAULT_INTERVAL
+        );
         h.record(probe(1), Duration::from_secs(11), &check);
         assert_eq!(h.status, UNHEALTHY);
     }

@@ -21,7 +21,7 @@ use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
 
 /// A frame: kind, connection id (u32 BE), length (u32 BE), then the data.
@@ -54,12 +54,23 @@ const LIMIT: usize = 2 * WINDOW;
 type Out = Arc<Mutex<dyn Write + Send>>;
 
 pub fn run(args: &[String]) -> io::Result<()> {
-    let socket = match args.iter().position(|a| a == "--socket").and_then(|i| args.get(i + 1)) {
+    let socket = match args
+        .iter()
+        .position(|a| a == "--socket")
+        .and_then(|i| args.get(i + 1))
+    {
         Some(s) => PathBuf::from(s),
         None => crate::daemon::socket_path()?,
     };
-    let out: Out = Arc::new(Mutex::new(BufWriter::with_capacity(64 * 1024, io::stdout())));
-    serve(BufReader::with_capacity(64 * 1024, io::stdin()), &out, &socket)
+    let out: Out = Arc::new(Mutex::new(BufWriter::with_capacity(
+        64 * 1024,
+        io::stdout(),
+    )));
+    serve(
+        BufReader::with_capacity(64 * 1024, io::stdin()),
+        &out,
+        &socket,
+    )
 }
 
 /// One connection, as the frame reader sees it.
@@ -87,16 +98,30 @@ fn serve(mut input: impl Read, out: &Out, socket: &Path) -> io::Result<()> {
                     let (tx, rx) = channel::<Op>();
                     let queued = Arc::new(AtomicUsize::new(0));
                     let window = credit.then(|| Arc::new(Window::default()));
-                    conns.insert(id, Conn { tx, queued: queued.clone(), window: window.clone() });
+                    conns.insert(
+                        id,
+                        Conn {
+                            tx,
+                            queued: queued.clone(),
+                            window: window.clone(),
+                        },
+                    );
                     let acks = credit.then(|| out.clone());
-                    std::thread::Builder::new().name("kiri-bridge-w".into()).spawn(move || writer(id, s, &rx, &queued, acks.as_ref()))?;
+                    std::thread::Builder::new()
+                        .name("kiri-bridge-w".into())
+                        .spawn(move || writer(id, s, &rx, &queued, acks.as_ref()))?;
                     let out = out.clone();
-                    std::thread::Builder::new().name("kiri-bridge".into()).spawn(move || replies(id, reader, &out, window.as_deref()))?;
+                    std::thread::Builder::new()
+                        .name("kiri-bridge".into())
+                        .spawn(move || replies(id, reader, &out, window.as_deref()))?;
                 }
                 Err(_) => send(out, CLOSE, id, &[])?,
             },
             ACK => {
-                if let (Some(w), Some(n)) = (conns.get(&id).and_then(|c| c.window.as_ref()), ack_count(&data)) {
+                if let (Some(w), Some(n)) = (
+                    conns.get(&id).and_then(|c| c.window.as_ref()),
+                    ack_count(&data),
+                ) {
                     w.ack(n);
                 }
             }
@@ -117,15 +142,21 @@ fn serve(mut input: impl Read, out: &Out, socket: &Path) -> io::Result<()> {
                 }
                 if overflow || kind == CLOSE {
                     if let Some(c) = conns.remove(&id)
-                        && let Some(w) = c.window {
-                            w.close();
-                        }
+                        && let Some(w) = c.window
+                    {
+                        w.close();
+                    }
                     if overflow {
                         send(out, CLOSE, id, &[])?;
                     }
                 }
             }
-            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("bad bridge frame {kind}"))),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("bad bridge frame {kind}"),
+                ));
+            }
         }
     }
     for c in conns.into_values() {
@@ -162,12 +193,13 @@ fn writer(id: u32, mut s: UnixStream, rx: &Receiver<Op>, queued: &AtomicUsize, a
                 queued.fetch_sub(d.len(), Ordering::SeqCst);
                 done += d.len();
                 if let Some(out) = acks
-                    && (done >= ACK_EVERY || broken) {
-                        if send(out, ACK, id, &(done as u32).to_be_bytes()).is_err() {
-                            break;
-                        }
-                        done = 0;
+                    && (done >= ACK_EVERY || broken)
+                {
+                    if send(out, ACK, id, &(done as u32).to_be_bytes()).is_err() {
+                        break;
                     }
+                    done = 0;
+                }
             }
             Op::Eof => {
                 let _ = s.shutdown(Shutdown::Write);
@@ -265,7 +297,10 @@ fn read_frame(r: &mut impl Read) -> io::Result<Option<(u8, u32, Vec<u8>)>> {
     let len = u32::from_be_bytes([h[5], h[6], h[7], h[8]]) as usize;
     // The length comes off the wire: refuse it before allocating it.
     if len > MAX_FRAME {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("frame of {len} bytes")));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("frame of {len} bytes"),
+        ));
     }
     let mut data = vec![0u8; len];
     r.read_exact(&mut data)?;
@@ -284,8 +319,14 @@ mod tests {
         wire.extend_from_slice(b"abc");
         wire.extend_from_slice(&super::header(super::EOF, 7, 0));
         let mut r = &wire[..];
-        assert_eq!(super::read_frame(&mut r).unwrap(), Some((super::DATA, 7, b"abc".to_vec())));
-        assert_eq!(super::read_frame(&mut r).unwrap(), Some((super::EOF, 7, vec![])));
+        assert_eq!(
+            super::read_frame(&mut r).unwrap(),
+            Some((super::DATA, 7, b"abc".to_vec()))
+        );
+        assert_eq!(
+            super::read_frame(&mut r).unwrap(),
+            Some((super::EOF, 7, vec![]))
+        );
         assert_eq!(super::read_frame(&mut r).unwrap(), None);
     }
 
@@ -293,16 +334,27 @@ mod tests {
     fn oversized_frames_are_refused() {
         let mut wire = super::header(super::DATA, 7, super::MAX_FRAME).to_vec();
         wire.resize(wire.len() + super::MAX_FRAME, 0);
-        assert_eq!(super::read_frame(&mut &wire[..]).unwrap().map(|f| f.2.len()), Some(super::MAX_FRAME));
+        assert_eq!(
+            super::read_frame(&mut &wire[..])
+                .unwrap()
+                .map(|f| f.2.len()),
+            Some(super::MAX_FRAME)
+        );
         // 4 GiB claimed, nothing behind it: an error at once, not an allocation.
         let huge = super::header(super::DATA, 7, u32::MAX as usize);
-        assert_eq!(super::read_frame(&mut &huge[..]).unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            super::read_frame(&mut &huge[..]).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
     }
 
     /// A bridge between socket pairs, to a "daemon" on its own socket that
     /// `daemon` serves (one connection). Returns kiri-win's ends: what it
     /// writes to the bridge, and what it reads from it.
-    fn bridge(name: &str, daemon: impl FnOnce(UnixStream) + Send + 'static) -> (UnixStream, UnixStream) {
+    fn bridge(
+        name: &str,
+        daemon: impl FnOnce(UnixStream) + Send + 'static,
+    ) -> (UnixStream, UnixStream) {
         let dir = std::env::temp_dir().join(format!("kiri-bridge-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -399,7 +451,12 @@ mod tests {
                     // Handed on slowly, and acknowledged as kiri-win does.
                     std::thread::sleep(Duration::from_micros(200));
                     if got - acked >= ACK_EVERY {
-                        frame(&mut to_bridge, ACK, 1, &((got - acked) as u32).to_be_bytes());
+                        frame(
+                            &mut to_bridge,
+                            ACK,
+                            1,
+                            &((got - acked) as u32).to_be_bytes(),
+                        );
                         acked = got;
                     }
                 }

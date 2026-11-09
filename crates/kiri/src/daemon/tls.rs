@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rcgen::{
-    BasicConstraints, CertificateParams, CidrSubnet, DnType, ExtendedKeyUsagePurpose, GeneralSubtree, IsCa, Issuer, KeyPair, KeyUsagePurpose,
-    NameConstraints,
+    BasicConstraints, CertificateParams, CidrSubnet, DnType, ExtendedKeyUsagePurpose,
+    GeneralSubtree, IsCa, Issuer, KeyPair, KeyUsagePurpose, NameConstraints,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert};
@@ -28,7 +28,6 @@ const SUFFIXES: [&str; 2] = ["kiri.local", "kiri.localhost"];
 pub fn dir() -> Option<PathBuf> {
     super::state_dir().ok().map(|d| d.join("tls"))
 }
-
 
 #[cfg(target_os = "macos")]
 pub fn ca_path() -> Option<PathBuf> {
@@ -43,7 +42,10 @@ fn ca_params() -> Result<CertificateParams, rcgen::Error> {
     p.distinguished_name.push(DnType::CommonName, CA_NAME);
     p.distinguished_name.push(DnType::OrganizationName, "Kiri");
     p.name_constraints = Some(NameConstraints {
-        permitted_subtrees: SUFFIXES.iter().map(|s| GeneralSubtree::DnsName((*s).to_owned())).collect(),
+        permitted_subtrees: SUFFIXES
+            .iter()
+            .map(|s| GeneralSubtree::DnsName((*s).to_owned()))
+            .collect(),
         // Exclude every IP address: with only the DNS subtrees permitted, an
         // IP SAN would otherwise be unconstrained, so a leaked CA key could
         // vouch for https://<any IP>. Kiri only ever issues for its own names.
@@ -52,7 +54,11 @@ fn ca_params() -> Result<CertificateParams, rcgen::Error> {
             GeneralSubtree::IpAddress(CidrSubnet::V6([0; 16], [0; 16])),
         ],
     });
-    p.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign, KeyUsagePurpose::DigitalSignature];
+    p.key_usages = vec![
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::CrlSign,
+        KeyUsagePurpose::DigitalSignature,
+    ];
     p.not_before = rcgen::date_time_ymd(2026, 1, 1);
     p.not_after = rcgen::date_time_ymd(2046, 1, 1);
     Ok(p)
@@ -72,7 +78,11 @@ fn authority() -> io::Result<(Issuer<'static, KeyPair>, CertificateDer<'static>)
     // that already had one.
     const CA_VERSION: &str = "2";
     let version_path = dir.join("ca.version");
-    if key_path.is_file() && std::fs::read_to_string(&version_path).is_ok_and(|v| v.trim() == CA_VERSION).not() {
+    if key_path.is_file()
+        && std::fs::read_to_string(&version_path)
+            .is_ok_and(|v| v.trim() == CA_VERSION)
+            .not()
+    {
         let _ = std::fs::remove_file(&key_path);
         let _ = std::fs::remove_file(&cert_path);
     }
@@ -118,7 +128,8 @@ fn civil(days: i64) -> (i32, u8, u8) {
 /// Whether `host` is a name this authority may vouch for.
 pub fn ours(host: &str) -> bool {
     let h = host.trim_end_matches('.').to_ascii_lowercase();
-    SUFFIXES.iter().any(|s| h.ends_with(&format!(".{s}"))) && h.split('.').all(|l| !l.is_empty() && l.len() <= 63)
+    SUFFIXES.iter().any(|s| h.ends_with(&format!(".{s}")))
+        && h.split('.').all(|l| !l.is_empty() && l.len() <= 63)
 }
 
 /// Certificates for container names, made on first use and kept while the
@@ -131,7 +142,9 @@ pub struct Certs {
 
 /// Days since the epoch, the unit certificate dates are made in.
 fn today() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() / 86_400) as i64
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() / 86_400) as i64
 }
 
 impl std::fmt::Debug for Certs {
@@ -142,7 +155,10 @@ impl std::fmt::Debug for Certs {
 
 impl Certs {
     pub fn new() -> Certs {
-        Certs { ca: Mutex::new(None), issued: Mutex::new(HashMap::new()) }
+        Certs {
+            ca: Mutex::new(None),
+            issued: Mutex::new(HashMap::new()),
+        }
     }
 
     /// A certificate for `host` and the day it expires.
@@ -170,8 +186,15 @@ impl Certs {
         let key = KeyPair::generate().map_err(err)?;
         let cert = p.signed_by(&key, issuer).map_err(err)?;
         let der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der()));
-        let signer = rustls::crypto::ring::sign::any_supported_type(&der).map_err(|e| io::Error::other(e.to_string()))?;
-        Ok((Arc::new(CertifiedKey::new(vec![cert.der().clone(), ca_der.clone()], signer)), not_after))
+        let signer = rustls::crypto::ring::sign::any_supported_type(&der)
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        Ok((
+            Arc::new(CertifiedKey::new(
+                vec![cert.der().clone(), ca_der.clone()],
+                signer,
+            )),
+            not_after,
+        ))
     }
 }
 
@@ -183,7 +206,12 @@ impl ResolvesServerCert for Certs {
         }
         // Reissue within 30 days of expiry: a daemon that runs for a year
         // would otherwise keep serving a certificate browsers reject.
-        if let Some((c, not_after)) = self.issued.lock().unwrap_or_else(|e| e.into_inner()).get(&host) {
+        if let Some((c, not_after)) = self
+            .issued
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&host)
+        {
             if today() + 30 < *not_after {
                 return Some(c.clone());
             }
@@ -233,12 +261,18 @@ pub fn trusted() -> bool {
 
 #[cfg(target_os = "macos")]
 fn current_ca_trusted() -> bool {
-    let Some(der) = ca_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|p| pem_to_der(&p)) else { return false };
+    let Some(der) = ca_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|p| pem_to_der(&p))
+    else {
+        return false;
+    };
     sec::with_cert(&der, |cert| {
         let mut settings: sec::Ref = std::ptr::null();
         // SAFETY: cert is a live SecCertificate; a returned array is ours to release.
         unsafe {
-            let status = sec::SecTrustSettingsCopyTrustSettings(cert, sec::DOMAIN_USER, &mut settings);
+            let status =
+                sec::SecTrustSettingsCopyTrustSettings(cert, sec::DOMAIN_USER, &mut settings);
             if !settings.is_null() {
                 sec::CFRelease(settings);
             }
@@ -270,10 +304,17 @@ pub fn untrust() -> io::Result<()> {
 pub fn trust() -> io::Result<()> {
     let (_, der) = authority()?;
     let ca = ca_path().ok_or_else(|| io::Error::other("HOME is not set"))?;
-    let keychain = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("Library/Keychains/login.keychain-db");
+    let keychain = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join("Library/Keychains/login.keychain-db");
     // Into the login keychain, so Keychain Access shows it; this asks nothing,
     // and fails harmlessly when it is already there.
-    let _ = std::process::Command::new("/usr/bin/security").args(["add-certificates", "-k"]).arg(&keychain).arg(&ca).output();
+    let _ = std::process::Command::new("/usr/bin/security")
+        .args(["add-certificates", "-k"])
+        .arg(&keychain)
+        .arg(&ca)
+        .output();
     let status = trust_for_websites(&der);
     forget_trust();
     trust_status(status)
@@ -290,9 +331,20 @@ mod sec {
         pub static kCFTypeDictionaryValueCallBacks: u8;
         pub static kCFTypeArrayCallBacks: u8;
         pub fn CFDataCreate(alloc: Ref, bytes: *const u8, len: isize) -> Ref;
-        pub fn CFStringCreateWithCString(alloc: Ref, s: *const std::ffi::c_char, encoding: u32) -> Ref;
+        pub fn CFStringCreateWithCString(
+            alloc: Ref,
+            s: *const std::ffi::c_char,
+            encoding: u32,
+        ) -> Ref;
         pub fn CFNumberCreate(alloc: Ref, kind: isize, value: *const c_void) -> Ref;
-        pub fn CFDictionaryCreate(alloc: Ref, keys: *const Ref, values: *const Ref, n: isize, kcb: *const u8, vcb: *const u8) -> Ref;
+        pub fn CFDictionaryCreate(
+            alloc: Ref,
+            keys: *const Ref,
+            values: *const Ref,
+            n: isize,
+            kcb: *const u8,
+            vcb: *const u8,
+        ) -> Ref;
         pub fn CFArrayCreate(alloc: Ref, values: *const Ref, n: isize, cb: *const u8) -> Ref;
         pub fn CFRelease(r: Ref);
     }
@@ -302,7 +354,8 @@ mod sec {
         pub fn SecPolicyCreateSSL(server: u8, hostname: Ref) -> Ref;
         pub fn SecTrustSettingsSetTrustSettings(cert: Ref, domain: u32, settings: Ref) -> i32;
         pub fn SecTrustSettingsRemoveTrustSettings(cert: Ref, domain: u32) -> i32;
-        pub fn SecTrustSettingsCopyTrustSettings(cert: Ref, domain: u32, settings: *mut Ref) -> i32;
+        pub fn SecTrustSettingsCopyTrustSettings(cert: Ref, domain: u32, settings: *mut Ref)
+        -> i32;
     }
     pub const DOMAIN_USER: u32 = 0;
 
@@ -339,15 +392,34 @@ fn trust_for_websites(der: &[u8]) -> i32 {
         // they hold, so everything made here is released here.
         unsafe {
             let policy = SecPolicyCreateSSL(1, std::ptr::null());
-            let k_policy = CFStringCreateWithCString(std::ptr::null(), c"kSecTrustSettingsPolicy".as_ptr(), UTF8);
-            let k_result = CFStringCreateWithCString(std::ptr::null(), c"kSecTrustSettingsResult".as_ptr(), UTF8);
-            let result = CFNumberCreate(std::ptr::null(), SINT32, (&RESULT_TRUST_ROOT as *const i32).cast());
+            let k_policy = CFStringCreateWithCString(
+                std::ptr::null(),
+                c"kSecTrustSettingsPolicy".as_ptr(),
+                UTF8,
+            );
+            let k_result = CFStringCreateWithCString(
+                std::ptr::null(),
+                c"kSecTrustSettingsResult".as_ptr(),
+                UTF8,
+            );
+            let result = CFNumberCreate(
+                std::ptr::null(),
+                SINT32,
+                (&RESULT_TRUST_ROOT as *const i32).cast(),
+            );
             let made = [policy, k_policy, k_result, result];
             let status = if made.iter().any(|r| r.is_null()) {
                 -1
             } else {
                 let (keys, values) = ([k_policy, k_result], [policy, result]);
-                let dict = CFDictionaryCreate(std::ptr::null(), keys.as_ptr(), values.as_ptr(), 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+                let dict = CFDictionaryCreate(
+                    std::ptr::null(),
+                    keys.as_ptr(),
+                    values.as_ptr(),
+                    2,
+                    &kCFTypeDictionaryKeyCallBacks,
+                    &kCFTypeDictionaryValueCallBacks,
+                );
                 let array = CFArrayCreate(std::ptr::null(), &dict, 1, &kCFTypeArrayCallBacks);
                 let status = SecTrustSettingsSetTrustSettings(cert, DOMAIN_USER, array);
                 CFRelease(array);
@@ -371,7 +443,9 @@ fn trust_status(status: i32) -> io::Result<()> {
         -60006 | -128 => Err(io::Error::other("canceled")),
         // errSecItemNotFound: there was no trust to take back.
         -25300 => Ok(()),
-        n => Err(io::Error::other(format!("macOS refused the trust setting (OSStatus {n})"))),
+        n => Err(io::Error::other(format!(
+            "macOS refused the trust setting (OSStatus {n})"
+        ))),
     }
 }
 
@@ -379,11 +453,19 @@ fn trust_status(status: i32) -> io::Result<()> {
 /// Takes the trust back and removes the authority from the keychain.
 pub fn untrust() -> io::Result<()> {
     let ca = ca_path().ok_or_else(|| io::Error::other("HOME is not set"))?;
-    let der = std::fs::read_to_string(&ca).ok().and_then(|p| pem_to_der(&p));
+    let der = std::fs::read_to_string(&ca)
+        .ok()
+        .and_then(|p| pem_to_der(&p));
     // SAFETY: cert is a live SecCertificate for the call.
-    let status = der.map_or(0, |der| sec::with_cert(&der, |cert| unsafe { sec::SecTrustSettingsRemoveTrustSettings(cert, sec::DOMAIN_USER) }));
+    let status = der.map_or(0, |der| {
+        sec::with_cert(&der, |cert| unsafe {
+            sec::SecTrustSettingsRemoveTrustSettings(cert, sec::DOMAIN_USER)
+        })
+    });
     if matches!(status, 0 | -25300) {
-        let _ = std::process::Command::new("/usr/bin/security").args(["delete-certificate", "-c", CA_NAME]).output();
+        let _ = std::process::Command::new("/usr/bin/security")
+            .args(["delete-certificate", "-c", CA_NAME])
+            .output();
     }
     forget_trust();
     trust_status(status)
@@ -403,13 +485,20 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn untrusted_certificate_is_not_trusted() {
         let mut p = super::ca_params().unwrap();
-        p.distinguished_name.push(rcgen::DnType::CommonName, super::CA_NAME);
+        p.distinguished_name
+            .push(rcgen::DnType::CommonName, super::CA_NAME);
         let key = rcgen::KeyPair::generate().unwrap();
         let cert = p.self_signed(&key).unwrap();
         let status = super::sec::with_cert(cert.der(), |c| {
             let mut settings: super::sec::Ref = std::ptr::null();
             // SAFETY: c is a live SecCertificate; nothing is returned to release.
-            unsafe { super::sec::SecTrustSettingsCopyTrustSettings(c, super::sec::DOMAIN_USER, &mut settings) }
+            unsafe {
+                super::sec::SecTrustSettingsCopyTrustSettings(
+                    c,
+                    super::sec::DOMAIN_USER,
+                    &mut settings,
+                )
+            }
         });
         assert_ne!(status, 0);
     }

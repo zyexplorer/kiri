@@ -10,14 +10,22 @@ use std::process::Command;
 /// menu has only the system's, without ~/.local/bin and the like.
 pub fn stale_kiri() -> Option<PathBuf> {
     let ours = std::fs::canonicalize(our_kiri()?).ok()?;
-    let shell = std::env::var("SHELL").ok().filter(|s| s.starts_with('/')).unwrap_or_else(|| "/bin/sh".into());
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| s.starts_with('/'))
+        .unwrap_or_else(|| "/bin/sh".into());
     let out = Command::new(&shell)
         .args(["-ilc", "command -v kiri"])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
         .ok()?;
-    let found = String::from_utf8_lossy(&out.stdout).lines().rev().map(str::trim).find(|l| l.starts_with('/'))?.to_owned();
+    let found = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| l.starts_with('/'))?
+        .to_owned();
     // The snap's own command: /snap/bin/kiri is a link to snapd's launcher,
     // which runs this snap's usr/bin/kiri.
     if found == "/snap/bin/kiri" && ours.starts_with("/snap/kiri/") {
@@ -37,5 +45,8 @@ fn our_kiri() -> Option<PathBuf> {
         return Some(exe);
     }
     let snap = std::env::var_os("SNAP").map(|s| PathBuf::from(s).join("usr/bin/kiri"));
-    [snap, Some(PathBuf::from("/usr/bin/kiri"))].into_iter().flatten().find(|p| p.is_file())
+    [snap, Some(PathBuf::from("/usr/bin/kiri"))]
+        .into_iter()
+        .flatten()
+        .find(|p| p.is_file())
 }

@@ -10,23 +10,45 @@ use super::{brand, brands};
 /// A Kubernetes name (namespace, pod, container): DNS labels and subdomains.
 pub(super) fn valid(name: &str) -> bool {
     name.len() <= 253
-        && name.bytes().next().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-        && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
 }
 
 /// What the page shows of `kubectl get pods,services -A -o json`.
 pub(super) fn summarize(list: &Value, starting: bool) -> Value {
-    let items = list["items"].as_array().map(Vec::as_slice).unwrap_or_default();
-    let pods: Vec<Value> = items.iter().filter(|i| i["kind"] == "Pod").map(pod).collect();
-    let services: Vec<Value> = items.iter().filter(|i| i["kind"] == "Service").map(service).collect();
-    let logo = brands::BRANDS.binary_search_by_key(&"kubernetes", |(s, _, _)| s).ok().map(|i| [brands::BRANDS[i].1, brands::BRANDS[i].2]);
+    let items = list["items"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let pods: Vec<Value> = items
+        .iter()
+        .filter(|i| i["kind"] == "Pod")
+        .map(pod)
+        .collect();
+    let services: Vec<Value> = items
+        .iter()
+        .filter(|i| i["kind"] == "Service")
+        .map(service)
+        .collect();
+    let logo = brands::BRANDS
+        .binary_search_by_key(&"kubernetes", |(s, _, _)| s)
+        .ok()
+        .map(|i| [brands::BRANDS[i].1, brands::BRANDS[i].2]);
     json!({"type": "k8s", "state": "running", "ready": true, "starting": starting, "icon": logo, "pods": pods, "services": services})
 }
 
 /// One pod, with the status `kubectl get pods` would print for it.
 fn pod(p: &Value) -> Value {
     let (meta, spec, st) = (&p["metadata"], &p["spec"], &p["status"]);
-    let statuses = st["containerStatuses"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let statuses = st["containerStatuses"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
     let containers: Vec<Value> = spec["containers"]
         .as_array()
         .into_iter()
@@ -47,7 +69,10 @@ fn pod(p: &Value) -> Value {
         })
         .collect();
     let ready = statuses.iter().filter(|s| s["ready"] == true).count();
-    let restarts: u64 = statuses.iter().filter_map(|s| s["restartCount"].as_u64()).sum();
+    let restarts: u64 = statuses
+        .iter()
+        .filter_map(|s| s["restartCount"].as_u64())
+        .sum();
     let image = spec["containers"][0]["image"].as_str().unwrap_or_default();
     json!({
         "ns": meta["namespace"], "name": meta["name"], "uid": meta["uid"],
@@ -63,8 +88,15 @@ fn pod(p: &Value) -> Value {
 /// (an init container, a waiting or failed container, a deletion).
 fn status_of(p: &Value) -> String {
     let st = &p["status"];
-    let mut reason = st["reason"].as_str().or(st["phase"].as_str()).unwrap_or("Unknown").to_owned();
-    let inits = st["initContainerStatuses"].as_array().map(Vec::as_slice).unwrap_or_default();
+    let mut reason = st["reason"]
+        .as_str()
+        .or(st["phase"].as_str())
+        .unwrap_or("Unknown")
+        .to_owned();
+    let inits = st["initContainerStatuses"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
     let total = p["spec"]["initContainers"].as_array().map_or(0, Vec::len);
     for (i, c) in inits.iter().enumerate() {
         let s = &c["state"];
@@ -75,7 +107,10 @@ fn status_of(p: &Value) -> String {
             format!("Init:{r}")
         } else if s["terminated"].is_object() {
             format!("Init:ExitCode:{}", s["terminated"]["exitCode"])
-        } else if let Some(r) = s["waiting"]["reason"].as_str().filter(|r| *r != "PodInitializing") {
+        } else if let Some(r) = s["waiting"]["reason"]
+            .as_str()
+            .filter(|r| *r != "PodInitializing")
+        {
             format!("Init:{r}")
         } else {
             format!("Init:{i}/{total}")
@@ -83,7 +118,12 @@ fn status_of(p: &Value) -> String {
         return deleting(p, reason);
     }
     let mut running = false;
-    for c in st["containerStatuses"].as_array().into_iter().flatten().rev() {
+    for c in st["containerStatuses"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .rev()
+    {
         let s = &c["state"];
         if let Some(r) = s["waiting"]["reason"].as_str() {
             reason = r.to_owned();
@@ -102,12 +142,21 @@ fn status_of(p: &Value) -> String {
 }
 
 fn deleting(p: &Value, reason: String) -> String {
-    if p["metadata"]["deletionTimestamp"].is_string() { "Terminating".into() } else { reason }
+    if p["metadata"]["deletionTimestamp"].is_string() {
+        "Terminating".into()
+    } else {
+        reason
+    }
 }
 
 fn service(s: &Value) -> Value {
     let (meta, spec) = (&s["metadata"], &s["spec"]);
-    let ingress: Vec<&str> = s["status"]["loadBalancer"]["ingress"].as_array().into_iter().flatten().filter_map(|i| i["ip"].as_str().or(i["hostname"].as_str())).collect();
+    let ingress: Vec<&str> = s["status"]["loadBalancer"]["ingress"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|i| i["ip"].as_str().or(i["hostname"].as_str()))
+        .collect();
     json!({
         "ns": meta["namespace"], "name": meta["name"], "type": spec["type"], "clusterIP": spec["clusterIP"],
         "ports": spec["ports"], "ingress": ingress, "selector": spec["selector"], "created": meta["creationTimestamp"],
@@ -152,17 +201,44 @@ mod tests {
         ]});
         let v = super::summarize(&list, false);
         let p = &v["pods"][0];
-        assert_eq!((p["ready"].as_str(), p["restarts"].as_u64(), p["status"].as_str()), (Some("1/2"), Some(3), Some("CrashLoopBackOff")));
-        assert_eq!((p["owner"].as_str(), p["containers"][1]["reason"].as_str()), (Some("ReplicaSet"), Some("CrashLoopBackOff")));
+        assert_eq!(
+            (
+                p["ready"].as_str(),
+                p["restarts"].as_u64(),
+                p["status"].as_str()
+            ),
+            (Some("1/2"), Some(3), Some("CrashLoopBackOff"))
+        );
+        assert_eq!(
+            (p["owner"].as_str(), p["containers"][1]["reason"].as_str()),
+            (Some("ReplicaSet"), Some("CrashLoopBackOff"))
+        );
         assert!(p["icon"].is_array(), "nginx has a logo");
         let s = &v["services"][0];
-        assert_eq!((s["type"].as_str(), s["ports"][0]["port"].as_u64(), s["ingress"][0].as_str()), (Some("LoadBalancer"), Some(8080), Some("172.17.0.2")));
+        assert_eq!(
+            (
+                s["type"].as_str(),
+                s["ports"][0]["port"].as_u64(),
+                s["ingress"][0].as_str()
+            ),
+            (Some("LoadBalancer"), Some(8080), Some("172.17.0.2"))
+        );
         assert!(v["icon"].is_array(), "the Kubernetes logo");
     }
 
     #[test]
     fn only_kubernetes_names_reach_kubectl() {
-        assert!(super::valid("web-5fc9f4bf66-cdl9f") && super::valid("kube-system") && super::valid("a.b"));
-        assert!(!super::valid("") && !super::valid("--all") && !super::valid("Web") && !super::valid("a b") && !super::valid("a/b"));
+        assert!(
+            super::valid("web-5fc9f4bf66-cdl9f")
+                && super::valid("kube-system")
+                && super::valid("a.b")
+        );
+        assert!(
+            !super::valid("")
+                && !super::valid("--all")
+                && !super::valid("Web")
+                && !super::valid("a b")
+                && !super::valid("a/b")
+        );
     }
 }

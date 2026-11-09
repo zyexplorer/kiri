@@ -30,7 +30,11 @@ fn parse(args: &[String]) -> io::Result<Options> {
     let mut o = Options::default();
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        let mut value = |flag: &str| it.next().cloned().ok_or_else(|| bad(format!("{flag} needs a value")));
+        let mut value = |flag: &str| {
+            it.next()
+                .cloned()
+                .ok_or_else(|| bad(format!("{flag} needs a value")))
+        };
         match a.as_str() {
             "--rm" => o.remove = true,
             "--timings" => o.timings = true,
@@ -40,7 +44,9 @@ fn parse(args: &[String]) -> io::Result<Options> {
             "--network" | "--net" => {
                 let v = value(a)?;
                 if v != "none" {
-                    return Err(bad(format!("--network {v} is not supported yet; only none")));
+                    return Err(bad(format!(
+                        "--network {v} is not supported yet; only none"
+                    )));
                 }
             }
             "-h" | "--help" => return Err(bad(String::new())),
@@ -60,12 +66,18 @@ fn parse(args: &[String]) -> io::Result<Options> {
 
 /// Finds the image locally, pulling it first if needed.
 pub fn image(store: &Store, name: &str) -> io::Result<Image> {
-    let reference = Reference::parse(name).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+    let reference = Reference::parse(name)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
     if let Some(i) = store.find(&reference.short())? {
         return Ok(i);
     }
-    eprintln!("Unable to find image '{}' locally; pulling", reference.short());
-    Client::new().pull(store, &reference, &Platform::host_linux(), &|_| {}).map_err(io::Error::other)
+    eprintln!(
+        "Unable to find image '{}' locally; pulling",
+        reference.short()
+    );
+    Client::new()
+        .pull(store, &reference, &Platform::host_linux(), &|_| {})
+        .map_err(io::Error::other)
 }
 
 /// Makes sure every layer of `image` is unpacked in the guest. Returns how
@@ -74,7 +86,11 @@ pub fn ensure_layers(guest: &mut Guest, store: &Store, image: &Image) -> io::Res
     let mut sent = 0;
     for layer in &image.layers {
         if !guest.has_layer(&layer.digest)? {
-            guest.send_layer(&layer.digest, &layer.media_type, &store.blob_path(&layer.digest)?)?;
+            guest.send_layer(
+                &layer.digest,
+                &layer.media_type,
+                &store.blob_path(&layer.digest)?,
+            )?;
             sent += 1;
         }
     }
@@ -83,19 +99,29 @@ pub fn ensure_layers(guest: &mut Guest, store: &Store, image: &Image) -> io::Res
 
 /// Docker's rule: the command replaces the image's Cmd; the entrypoint stays.
 pub fn argv(image: &Image, command: &[String]) -> Vec<String> {
-    let cmd = if command.is_empty() { &image.config.cmd } else { command };
+    let cmd = if command.is_empty() {
+        &image.config.cmd
+    } else {
+        command
+    };
     image.config.entrypoint.iter().chain(cmd).cloned().collect()
 }
 
 /// Top layer first, as overlayfs lists lower directories.
 pub fn layers_top_down(image: &Image) -> Vec<String> {
-    image.layers.iter().rev().map(|l| l.digest.clone()).collect()
+    image
+        .layers
+        .iter()
+        .rev()
+        .map(|l| l.digest.clone())
+        .collect()
 }
 
 /// A fresh 12-hex-digit container id.
 pub fn new_id() -> String {
     let mut b = [0u8; 6];
-    let filled = std::fs::File::open("/dev/urandom").and_then(|mut f| io::Read::read_exact(&mut f, &mut b));
+    let filled =
+        std::fs::File::open("/dev/urandom").and_then(|mut f| io::Read::read_exact(&mut f, &mut b));
     if filled.is_err() {
         let t = Instant::now().elapsed().as_nanos() as u64 ^ std::process::id() as u64;
         b.copy_from_slice(&t.to_le_bytes()[..6]);
@@ -110,10 +136,16 @@ pub fn run(args: &[String]) -> io::Result<()> {
     let image = image(&store, &o.image)?;
     let argv = argv(&image, &o.command);
     if argv.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{} has no default command; give one", image.name)));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} has no default command; give one", image.name),
+        ));
     }
 
-    let mut guest = Guest::boot(&BootOptions { data_disk: true, ..Default::default() })?;
+    let mut guest = Guest::boot(&BootOptions {
+        data_disk: true,
+        ..Default::default()
+    })?;
     let booted = t0.elapsed();
     let sent = ensure_layers(&mut guest, &store, &image)?;
     let layers_ready = t0.elapsed();
@@ -148,9 +180,16 @@ pub fn run(args: &[String]) -> io::Result<()> {
         let ms = |d: Duration| d.as_secs_f64() * 1e3;
         eprintln!("kiri raw run timings");
         eprintln!("  VM boot                  {:7.1} ms", ms(booted));
-        eprintln!("  layers ready ({sent} sent)    {:7.1} ms", ms(layers_ready - booted));
-        eprintln!("  container start → exit   {:7.2} ms  (guest: setup {:.2} ms, process {:.2} ms)",
-            ms(r.total), ms(r.guest_setup), ms(r.guest_run));
+        eprintln!(
+            "  layers ready ({sent} sent)    {:7.1} ms",
+            ms(layers_ready - booted)
+        );
+        eprintln!(
+            "  container start → exit   {:7.2} ms  (guest: setup {:.2} ms, process {:.2} ms)",
+            ms(r.total),
+            ms(r.guest_setup),
+            ms(r.guest_run)
+        );
         eprintln!("  total                    {:7.1} ms", ms(t0.elapsed()));
     }
     if let Err(e) = shutdown {

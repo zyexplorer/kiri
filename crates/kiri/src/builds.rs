@@ -18,15 +18,29 @@ use crate::flavor::{CONTEXT, Name};
 pub const BUILDER: Name = Name("kiri-build", "kiri-dev-build");
 
 fn buildx(args: &[&str]) -> io::Result<(String, String)> {
-    let docker = crate::client::docker_cli().ok_or_else(|| io::Error::other("no docker CLI found (Kiri.app bundles one)"))?;
+    let docker = crate::client::docker_cli()
+        .ok_or_else(|| io::Error::other("no docker CLI found (Kiri.app bundles one)"))?;
     let mut cmd = Command::new(docker);
     // No console window flashing up from Kiri's window on Windows.
     #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
-    let out = cmd.args(["--context", CONTEXT.get(), "buildx"]).args(args).stdin(Stdio::null()).output()?;
-    let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned());
+    let out = cmd
+        .args(["--context", CONTEXT.get(), "buildx"])
+        .args(args)
+        .stdin(Stdio::null())
+        .output()?;
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    );
     if !out.status.success() {
-        let msg = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("buildx failed").trim_start_matches("ERROR: ").to_owned();
+        let msg = stderr
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("buildx failed")
+            .trim_start_matches("ERROR: ")
+            .to_owned();
         return Err(io::Error::other(msg));
     }
     Ok((stdout, stderr))
@@ -34,7 +48,10 @@ fn buildx(args: &[&str]) -> io::Result<(String, String)> {
 
 /// Every JSON value in `s`, whether one per line or run together.
 fn values(s: &str) -> Vec<Value> {
-    serde_json::Deserializer::from_str(s).into_iter::<Value>().map_while(Result::ok).collect()
+    serde_json::Deserializer::from_str(s)
+        .into_iter::<Value>()
+        .map_while(Result::ok)
+        .collect()
 }
 
 /// The docker-container builders on Kiri's context whose BuildKit container exists.
@@ -49,14 +66,23 @@ fn builders() -> io::Result<Vec<String>> {
         .as_array()
         .into_iter()
         .flatten()
-        .flat_map(|c| c["Names"].as_array().into_iter().flatten().filter_map(|n| n.as_str().map(|n| n.trim_start_matches('/').to_owned())))
+        .flat_map(|c| {
+            c["Names"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|n| n.as_str().map(|n| n.trim_start_matches('/').to_owned()))
+        })
         .collect();
     Ok(values(&out)
         .into_iter()
         .filter(|b| b["Driver"] == "docker-container")
         .filter(|b| {
             b["Nodes"].as_array().into_iter().flatten().any(|n| {
-                n["Endpoint"] == CONTEXT.get() && n["Name"].as_str().is_some_and(|name| have.iter().any(|c| *c == format!("buildx_buildkit_{name}")))
+                n["Endpoint"] == CONTEXT.get()
+                    && n["Name"].as_str().is_some_and(|name| {
+                        have.iter().any(|c| *c == format!("buildx_buildkit_{name}"))
+                    })
             })
         })
         .filter_map(|b| b["Name"].as_str().map(str::to_owned))
@@ -68,9 +94,17 @@ fn builders() -> io::Result<Vec<String>> {
 pub fn list() -> io::Result<Vec<Value>> {
     let mut all = Vec::new();
     for b in builders()? {
-        let Ok((out, _)) = buildx(&["history", "ls", "--builder", &b, "--format", "json"]) else { continue };
+        let Ok((out, _)) = buildx(&["history", "ls", "--builder", &b, "--format", "json"]) else {
+            continue;
+        };
         for r in values(&out) {
-            let id = r["ref"].as_str().unwrap_or_default().rsplit('/').next().unwrap_or_default().to_owned();
+            let id = r["ref"]
+                .as_str()
+                .unwrap_or_default()
+                .rsplit('/')
+                .next()
+                .unwrap_or_default()
+                .to_owned();
             all.push(json!({
                 "builder": b, "id": id, "name": r["name"], "status": r["status"],
                 "started": r["created_at"], "completed": r["completed_at"],
@@ -89,10 +123,27 @@ pub fn detail(builder: &str, id: &str) -> io::Result<Value> {
     if !id.bytes().all(|b| b.is_ascii_alphanumeric()) || builder.starts_with('-') {
         return Err(io::Error::other("not a build"));
     }
-    let (info, _) = buildx(&["history", "inspect", "--builder", builder, id, "--format", "json"])?;
+    let (info, _) = buildx(&[
+        "history",
+        "inspect",
+        "--builder",
+        builder,
+        id,
+        "--format",
+        "json",
+    ])?;
     let info: Value = serde_json::from_str(&info).map_err(io::Error::other)?;
     // The raw progress stream goes to stderr.
-    let (_, raw) = buildx(&["history", "logs", "--builder", builder, "--progress", "rawjson", id]).unwrap_or_default();
+    let (_, raw) = buildx(&[
+        "history",
+        "logs",
+        "--builder",
+        builder,
+        "--progress",
+        "rawjson",
+        id,
+    ])
+    .unwrap_or_default();
 
     let mut order: Vec<String> = Vec::new();
     let mut steps: HashMap<String, Value> = HashMap::new();
@@ -100,7 +151,9 @@ pub fn detail(builder: &str, id: &str) -> io::Result<Value> {
     let mut warnings = Vec::new();
     for ev in values(&raw) {
         for v in ev["vertexes"].as_array().into_iter().flatten() {
-            let Some(d) = v["digest"].as_str() else { continue };
+            let Some(d) = v["digest"].as_str() else {
+                continue;
+            };
             let s = steps.entry(d.to_owned()).or_insert_with(|| json!({"name": v["name"], "started": null, "completed": null, "cached": false, "error": null}));
             if let Some(t) = v["started"].as_str()
                 && (s["started"].is_null() || s["started"].as_str() > Some(t))
@@ -131,7 +184,9 @@ pub fn detail(builder: &str, id: &str) -> io::Result<Value> {
             }
         }
         for w in ev["warnings"].as_array().into_iter().flatten() {
-            let text = |v: &Value| String::from_utf8_lossy(&unbase64(v.as_str().unwrap_or_default())).into_owned();
+            let text = |v: &Value| {
+                String::from_utf8_lossy(&unbase64(v.as_str().unwrap_or_default())).into_owned()
+            };
             warnings.push(json!({
                 "text": text(&w["short"]),
                 "detail": w["detail"].as_array().into_iter().flatten().map(text).collect::<Vec<_>>().join(" "),
@@ -175,24 +230,51 @@ pub fn layers(builder: &str, id: &str) -> io::Result<Value> {
     if !id.bytes().all(|b| b.is_ascii_alphanumeric()) || builder.starts_with('-') {
         return Err(io::Error::other("not a build"));
     }
-    let (info, _) = buildx(&["history", "inspect", "--builder", builder, id, "--format", "json"])?;
+    let (info, _) = buildx(&[
+        "history",
+        "inspect",
+        "--builder",
+        builder,
+        id,
+        "--format",
+        "json",
+    ])?;
     let info: Value = serde_json::from_str(&info).map_err(io::Error::other)?;
     let attachment = |digest: &str| -> io::Result<Value> {
-        let ok = digest.strip_prefix("sha256:").is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()));
+        let ok = digest
+            .strip_prefix("sha256:")
+            .is_some_and(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()));
         if !ok {
             return Err(io::Error::other("not a digest"));
         }
-        let (out, _) = buildx(&["history", "inspect", "attachment", "--builder", builder, id, digest])?;
+        let (out, _) = buildx(&[
+            "history",
+            "inspect",
+            "attachment",
+            "--builder",
+            builder,
+            id,
+            digest,
+        ])?;
         serde_json::from_str(&out).map_err(io::Error::other)
     };
     let mut images = Vec::new();
     for a in info["Attachments"].as_array().into_iter().flatten() {
-        if a["Type"] != "application/vnd.oci.image.manifest.v1+json" && a["Type"] != "application/vnd.docker.distribution.manifest.v2+json" {
+        if a["Type"] != "application/vnd.oci.image.manifest.v1+json"
+            && a["Type"] != "application/vnd.docker.distribution.manifest.v2+json"
+        {
             continue;
         }
-        let Some(digest) = a["Digest"].as_str() else { continue };
-        let Ok(manifest) = attachment(digest) else { continue };
-        let config = manifest["config"]["digest"].as_str().and_then(|d| attachment(d).ok()).unwrap_or(Value::Null);
+        let Some(digest) = a["Digest"].as_str() else {
+            continue;
+        };
+        let Ok(manifest) = attachment(digest) else {
+            continue;
+        };
+        let config = manifest["config"]["digest"]
+            .as_str()
+            .and_then(|d| attachment(d).ok())
+            .unwrap_or(Value::Null);
         images.push(image(&manifest, &config, a["Platform"].as_str()));
     }
     Ok(json!({"builder": builder, "id": id, "images": images, "materials": info["Materials"]}))
@@ -205,24 +287,35 @@ pub fn layers(builder: &str, id: &str) -> io::Result<Value> {
 pub fn image_layers(name: &str) -> io::Result<Value> {
     let store = kiri_image::Store::open(kiri_image::Store::default_root()?)?;
     let (i, manifest, config) = stored(&store, name)?;
-    Ok(json!({"name": name, "images": [image(&manifest, &config, Some(&i.platform))], "materials": []}))
+    Ok(
+        json!({"name": name, "images": [image(&manifest, &config, Some(&i.platform))], "materials": []}),
+    )
 }
 
 /// An image in the store by name or ID, with a manifest made from its layers
 /// and its config.
 #[cfg(not(windows))]
-pub(crate) fn stored(store: &kiri_image::Store, name: &str) -> io::Result<(kiri_image::Image, Value, Value)> {
+pub(crate) fn stored(
+    store: &kiri_image::Store,
+    name: &str,
+) -> io::Result<(kiri_image::Image, Value, Value)> {
     let found = match store.find(name)? {
         Some(i) => Some(i),
         // An untagged image goes by its ID, whole or the window's short form.
         None => {
             let id = name.trim_start_matches("sha256:");
-            store.images()?.into_iter().find(|i| !id.is_empty() && i.config_digest.trim_start_matches("sha256:").starts_with(id))
+            store.images()?.into_iter().find(|i| {
+                !id.is_empty()
+                    && i.config_digest
+                        .trim_start_matches("sha256:")
+                        .starts_with(id)
+            })
         }
     };
     let i = found.ok_or_else(|| io::Error::other(format!("no image {name} in Kiri")))?;
     let manifest = json!({"config": {"digest": i.config_digest}, "layers": i.layers.iter().map(|l| json!({"size": l.size, "digest": l.digest})).collect::<Vec<_>>()});
-    let config: Value = serde_json::from_slice(&store.read_config(&i.config_digest)?).map_err(io::Error::other)?;
+    let config: Value =
+        serde_json::from_slice(&store.read_config(&i.config_digest)?).map_err(io::Error::other)?;
     Ok((i, manifest, config))
 }
 
@@ -235,12 +328,20 @@ pub(crate) fn image(manifest: &Value, config: &Value, platform: Option<&str>) ->
     // lines come first, so the first newer line ends them: a COPY whose cache
     // dates from an older build is still this image's own.
     let made = crate::daemon::time::parse_unix(config["created"].as_str().unwrap_or_default());
-    let mut sizes = manifest["layers"].as_array().into_iter().flatten().map(|l| (l["size"].as_u64().unwrap_or(0), l["digest"].clone()));
+    let mut sizes = manifest["layers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|l| (l["size"].as_u64().unwrap_or(0), l["digest"].clone()));
     let mut rows = Vec::new();
     let mut in_base = made > 0;
     for h in config["history"].as_array().into_iter().flatten() {
         let empty = h["empty_layer"] == true;
-        let (size, digest) = if empty { (0, Value::Null) } else { sizes.next().unwrap_or((0, Value::Null)) };
+        let (size, digest) = if empty {
+            (0, Value::Null)
+        } else {
+            sizes.next().unwrap_or((0, Value::Null))
+        };
         let created = h["created"].as_str().unwrap_or_default();
         in_base = in_base && crate::daemon::time::parse_unix(created) < made - 3600;
         rows.push(json!({
@@ -313,7 +414,9 @@ pub fn ensure_builder() {
 }
 
 pub fn builder() -> io::Result<bool> {
-    let Some(docker) = crate::client::docker_cli() else { return Ok(false) };
+    let Some(docker) = crate::client::docker_cli() else {
+        return Ok(false);
+    };
     // buildx talks to the daemon, and can wait on it for good: give the
     // daemon (just started by the LaunchAgent or systemd) a few seconds, else skip.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -324,18 +427,34 @@ pub fn builder() -> io::Result<bool> {
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     let quiet = || std::process::Stdio::null();
-    if !Command::new(&docker).args(["buildx", "version"]).stdout(quiet()).stderr(quiet()).status()?.success() {
-        println!("docker build: no buildx plugin here, so docker builds with Kiri's classic builder API (the same BuildKit, run by the daemon)");
+    if !Command::new(&docker)
+        .args(["buildx", "version"])
+        .stdout(quiet())
+        .stderr(quiet())
+        .status()?
+        .success()
+    {
+        println!(
+            "docker build: no buildx plugin here, so docker builds with Kiri's classic builder API (the same BuildKit, run by the daemon)"
+        );
         return Ok(false);
     }
-    let inspect = Command::new(&docker).args(["buildx", "inspect", BUILDER.get()]).stderr(quiet()).output()?;
+    let inspect = Command::new(&docker)
+        .args(["buildx", "inspect", BUILDER.get()])
+        .stderr(quiet())
+        .output()?;
     let mut exists = inspect.status.success();
     // Without default-load a docker-container builder keeps what it builds
     // to itself: `docker build -t x .` builds and `docker run x` finds
     // nothing. One made without it is made again; --keep-state keeps its
     // cache volume, which the daemon's builder container reuses.
     if exists && !String::from_utf8_lossy(&inspect.stdout).contains("default-load") {
-        exists = !Command::new(&docker).args(["buildx", "rm", "--keep-state", BUILDER.get()]).stdout(quiet()).stderr(quiet()).status()?.success();
+        exists = !Command::new(&docker)
+            .args(["buildx", "rm", "--keep-state", BUILDER.get()])
+            .stdout(quiet())
+            .stderr(quiet())
+            .status()?
+            .success();
     }
     if !exists {
         // buildx create takes the Kiri context's name; without that context
@@ -343,11 +462,24 @@ pub fn builder() -> io::Result<bool> {
         // reads the name as a host and fails on tcp://kiri:2375.
         ensure_context(&docker)?;
         let made = Command::new(&docker)
-            .args(["buildx", "create", "--name", BUILDER.get(), "--driver", "docker-container", "--driver-opt", "default-load=true", CONTEXT.get()])
+            .args([
+                "buildx",
+                "create",
+                "--name",
+                BUILDER.get(),
+                "--driver",
+                "docker-container",
+                "--driver-opt",
+                "default-load=true",
+                CONTEXT.get(),
+            ])
             .stdout(quiet())
             .output()?;
         if !made.status.success() {
-            return Err(io::Error::other(failure("docker buildx create failed", &made.stderr)));
+            return Err(io::Error::other(failure(
+                "docker buildx create failed",
+                &made.stderr,
+            )));
         }
     }
     // Which builder plain `docker build` uses, Docker's or Kiri's, as
@@ -371,12 +503,36 @@ fn ensure_context(_docker: impl AsRef<std::ffi::OsStr>) -> io::Result<()> {
 fn ensure_context(docker: impl AsRef<std::ffi::OsStr>) -> io::Result<()> {
     let docker = docker.as_ref();
     let quiet = || std::process::Stdio::null();
-    if Command::new(docker).args(["context", "inspect", CONTEXT.get()]).stdout(quiet()).stderr(quiet()).status()?.success() {
+    if Command::new(docker)
+        .args(["context", "inspect", CONTEXT.get()])
+        .stdout(quiet())
+        .stderr(quiet())
+        .status()?
+        .success()
+    {
         return Ok(());
     }
     let host = format!("host=unix://{}", crate::client::socket()?.display());
-    let out = Command::new(docker).args(["context", "create", CONTEXT.get(), "--description", "Kiri", "--docker", &host]).stdout(quiet()).output()?;
-    if out.status.success() { Ok(()) } else { Err(io::Error::other(failure("docker context create failed", &out.stderr))) }
+    let out = Command::new(docker)
+        .args([
+            "context",
+            "create",
+            CONTEXT.get(),
+            "--description",
+            "Kiri",
+            "--docker",
+            &host,
+        ])
+        .stdout(quiet())
+        .output()?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(failure(
+            "docker context create failed",
+            &out.stderr,
+        )))
+    }
 }
 
 /// What failed, with the tool's own last error line when it gave one.
@@ -394,7 +550,10 @@ mod tests {
 
     #[test]
     fn a_failure_carries_the_tools_last_error_line() {
-        assert_eq!(failure("docker buildx create failed", b""), "docker buildx create failed");
+        assert_eq!(
+            failure("docker buildx create failed", b""),
+            "docker buildx create failed"
+        );
         assert_eq!(
             failure("docker buildx create failed", b"Warning: x\nERROR: failed to initialize builder kiri-build (kiri-build0): permission denied\n\n"),
             "docker buildx create failed: failed to initialize builder kiri-build (kiri-build0): permission denied"
@@ -414,9 +573,22 @@ mod tests {
         assert_eq!(i["platform"], "linux/arm64");
         assert_eq!(i["size"], 4107);
         let l = i["layers"].as_array().unwrap();
-        assert_eq!((l[0]["size"].as_u64(), l[0]["base"].as_bool(), l[0]["by"].as_str()), (Some(4000), Some(true), Some("ADD rootfs.tar.gz /")));
-        assert_eq!((l[1]["empty"].as_bool(), l[1]["size"].as_u64()), (Some(true), Some(0)));
-        assert_eq!((l[2]["size"].as_u64(), l[2]["base"].as_bool()), (Some(100), Some(false)));
+        assert_eq!(
+            (
+                l[0]["size"].as_u64(),
+                l[0]["base"].as_bool(),
+                l[0]["by"].as_str()
+            ),
+            (Some(4000), Some(true), Some("ADD rootfs.tar.gz /"))
+        );
+        assert_eq!(
+            (l[1]["empty"].as_bool(), l[1]["size"].as_u64()),
+            (Some(true), Some(0))
+        );
+        assert_eq!(
+            (l[2]["size"].as_u64(), l[2]["base"].as_bool()),
+            (Some(100), Some(false))
+        );
         // Old, but after this image's own lines: still its own.
         assert_eq!(l[3]["base"].as_bool(), Some(false));
     }
@@ -443,5 +615,8 @@ mod tests {
 #[ignore]
 fn image_layers_live() {
     let name = std::env::var("KIRI_LIVE_IMAGE").unwrap();
-    println!("{}", serde_json::to_string_pretty(&image_layers(&name).unwrap()).unwrap());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&image_layers(&name).unwrap()).unwrap()
+    );
 }

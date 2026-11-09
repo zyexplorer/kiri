@@ -33,10 +33,14 @@ pub fn path() -> Option<PathBuf> {
 }
 
 fn pick(kubeconfig: Option<std::ffi::OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
-    if let Some(first) = kubeconfig.as_deref().and_then(|l| std::env::split_paths(l).find(|p| !p.as_os_str().is_empty())) {
+    if let Some(first) = kubeconfig
+        .as_deref()
+        .and_then(|l| std::env::split_paths(l).find(|p| !p.as_os_str().is_empty()))
+    {
         return Some(first);
     }
-    home.filter(|h| !h.as_os_str().is_empty()).map(|h| h.join(".kube").join("config"))
+    home.filter(|h| !h.as_os_str().is_empty())
+        .map(|h| h.join(".kube").join("config"))
 }
 
 /// k3s' own kubeconfig (`/etc/rancher/k3s/k3s.yaml`), its `default`
@@ -48,10 +52,14 @@ pub fn from_k3s(raw: &str, name: &str, port: u16) -> String {
             let indent = &l[..l.len() - t.len()];
             match t {
                 "name: default" | "- name: default" => l.replace("default", name),
-                "cluster: default" | "user: default" => format!("{indent}{}", t.replace("default", name)),
+                "cluster: default" | "user: default" => {
+                    format!("{indent}{}", t.replace("default", name))
+                }
                 "current-context: default" => format!("current-context: {name}"),
                 // The node's own port, published on the host's `port`.
-                t if t.starts_with("server: https://127.0.0.1:") => format!("{indent}server: https://127.0.0.1:{port}"),
+                t if t.starts_with("server: https://127.0.0.1:") => {
+                    format!("{indent}server: https://127.0.0.1:{port}")
+                }
                 _ => l.to_owned(),
             }
         })
@@ -65,7 +73,8 @@ pub fn from_k3s(raw: &str, name: &str, port: u16) -> String {
 pub fn install(path: &Path, ours: &str, name: &str, use_context: bool) -> io::Result<bool> {
     let path = real(path);
     let before = read(&path)?;
-    let after = merge(before.as_deref().unwrap_or(""), ours, name, use_context).map_err(|e| io::Error::other(format!("{}: {e}", path.display())))?;
+    let after = merge(before.as_deref().unwrap_or(""), ours, name, use_context)
+        .map_err(|e| io::Error::other(format!("{}: {e}", path.display())))?;
     if before.as_deref() == Some(after.as_str()) {
         return Ok(false);
     }
@@ -77,8 +86,11 @@ pub fn install(path: &Path, ours: &str, name: &str, use_context: bool) -> io::Re
 /// `path`. Whether the file changed.
 pub fn uninstall(path: &Path, name: &str) -> io::Result<bool> {
     let path = real(path);
-    let Some(before) = read(&path)? else { return Ok(false) };
-    let after = remove(&before, name).map_err(|e| io::Error::other(format!("{}: {e}", path.display())))?;
+    let Some(before) = read(&path)? else {
+        return Ok(false);
+    };
+    let after =
+        remove(&before, name).map_err(|e| io::Error::other(format!("{}: {e}", path.display())))?;
     if after == before {
         return Ok(false);
     }
@@ -90,7 +102,9 @@ pub fn uninstall(path: &Path, name: &str) -> io::Result<bool> {
 /// its target rather than the link.
 fn real(path: &Path) -> PathBuf {
     match std::fs::symlink_metadata(path) {
-        Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned()),
+        Ok(m) if m.file_type().is_symlink() => {
+            std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned())
+        }
         _ => path.to_owned(),
     }
 }
@@ -106,16 +120,24 @@ fn read(path: &Path) -> io::Result<Option<String>> {
 /// The new text by a temporary file and a rename, 0600; the one before it
 /// kept as `config.bak.kiri`.
 fn write(path: &Path, before: Option<&str>, text: &str) -> io::Result<()> {
-    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
-    let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("config");
+    let file = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("config");
     if let Some(before) = before {
         let backup = dir.join(format!("{file}.bak.kiri"));
         std::fs::write(&backup, before)?;
         private(&backup)?;
     }
     let tmp = dir.join(format!(".{file}.kiri-{}", std::process::id()));
-    let done = std::fs::write(&tmp, text).and_then(|()| private(&tmp)).and_then(|()| std::fs::rename(&tmp, path));
+    let done = std::fs::write(&tmp, text)
+        .and_then(|()| private(&tmp))
+        .and_then(|()| std::fs::rename(&tmp, path));
     if done.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
@@ -150,11 +172,17 @@ fn blank(l: &str) -> bool {
 }
 
 fn tops(text: &str) -> Vec<Top<'_>> {
-    let mut tops = vec![Top { key: "", lines: Vec::new() }];
+    let mut tops = vec![Top {
+        key: "",
+        lines: Vec::new(),
+    }];
     for l in text.lines() {
         let top = !l.starts_with([' ', '\t', '-', '#']) && !l.trim().is_empty();
         match l.split_once(':').filter(|_| top) {
-            Some((key, _)) => tops.push(Top { key: key.trim(), lines: vec![l] }),
+            Some((key, _)) => tops.push(Top {
+                key: key.trim(),
+                lines: vec![l],
+            }),
             None => tops.last_mut().expect("there is one").lines.push(l),
         }
     }
@@ -166,13 +194,26 @@ type Items<'a> = (Vec<&'a str>, Vec<Vec<&'a str>>, usize);
 
 /// A list's items; an error for a list that isn't a block list.
 fn items<'a>(top: &Top<'a>) -> Result<Items<'a>, String> {
-    let value = top.lines[0].split_once(':').map_or("", |(_, v)| v).split(" #").next().unwrap_or("").trim();
+    let value = top.lines[0]
+        .split_once(':')
+        .map_or("", |(_, v)| v)
+        .split(" #")
+        .next()
+        .unwrap_or("")
+        .trim();
     if !matches!(value, "" | "[]" | "null" | "~") {
-        return Err(format!("`{}` is not a list kubectl writes; not changing it", top.key));
+        return Err(format!(
+            "`{}` is not a list kubectl writes; not changing it",
+            top.key
+        ));
     }
     let body = &top.lines[1..];
-    let at = body.iter().position(|l| !blank(l) && l.trim_start().starts_with('-'));
-    let Some(at) = at else { return Ok((body.to_vec(), Vec::new(), 0)) };
+    let at = body
+        .iter()
+        .position(|l| !blank(l) && l.trim_start().starts_with('-'));
+    let Some(at) = at else {
+        return Ok((body.to_vec(), Vec::new(), 0));
+    };
     let dash = indent(body[at]);
     let mut items: Vec<Vec<&str>> = Vec::new();
     for &l in &body[at..] {
@@ -190,7 +231,14 @@ fn item_name<'a>(item: &[&'a str], dash: usize) -> Option<&'a str> {
     let rest = &item[0][dash + 1..];
     let col = dash + 1 + indent(rest);
     let first = rest.trim_start();
-    let line = if first.starts_with("name:") { Some(first) } else { item[1..].iter().find(|l| indent(l) == col && l.trim_start().starts_with("name:")).map(|l| l.trim_start()) };
+    let line = if first.starts_with("name:") {
+        Some(first)
+    } else {
+        item[1..]
+            .iter()
+            .find(|l| indent(l) == col && l.trim_start().starts_with("name:"))
+            .map(|l| l.trim_start())
+    };
     line.map(|l| scalar(&l["name:".len()..]))
 }
 
@@ -235,10 +283,17 @@ pub fn merge(existing: &str, ours: &str, name: &str, use_context: bool) -> Resul
     let theirs = tops(ours);
     let mut new: Vec<(&str, Vec<String>)> = Vec::new();
     for list in LISTS {
-        let Some(top) = theirs.iter().find(|t| t.key == list) else { continue };
+        let Some(top) = theirs.iter().find(|t| t.key == list) else {
+            continue;
+        };
         let (_, items, dash) = items(top)?;
         if let Some(item) = items.iter().find(|i| item_name(i, dash) == Some(name)) {
-            new.push((list, item.iter().map(|l| l.get(dash..).unwrap_or("").trim_end().to_owned()).collect()));
+            new.push((
+                list,
+                item.iter()
+                    .map(|l| l.get(dash..).unwrap_or("").trim_end().to_owned())
+                    .collect(),
+            ));
         }
     }
     let nl = newline(existing);
@@ -261,12 +316,27 @@ pub fn merge(existing: &str, ours: &str, name: &str, use_context: bool) -> Resul
         let dash = if items.is_empty() { 0 } else { dash };
         out.push(format!("{}:", top.key));
         out.extend(before.iter().map(|l| l.to_string()));
-        let kept: Vec<&Vec<&str>> = items.iter().filter(|i| item_name(i, dash) != Some(name)).collect();
-        let mut body: Vec<String> = kept.iter().flat_map(|i| i.iter().map(|l| l.to_string())).collect();
+        let kept: Vec<&Vec<&str>> = items
+            .iter()
+            .filter(|i| item_name(i, dash) != Some(name))
+            .collect();
+        let mut body: Vec<String> = kept
+            .iter()
+            .flat_map(|i| i.iter().map(|l| l.to_string()))
+            .collect();
         // Ours after the list's last line, before blank lines and comments that close it.
         let at = body.iter().rposition(|l| !blank(l)).map_or(0, |i| i + 1);
         let pad = " ".repeat(dash);
-        body.splice(at..at, lines.iter().map(|l| if l.is_empty() { String::new() } else { format!("{pad}{l}") }));
+        body.splice(
+            at..at,
+            lines.iter().map(|l| {
+                if l.is_empty() {
+                    String::new()
+                } else {
+                    format!("{pad}{l}")
+                }
+            }),
+        );
         out.extend(body);
     }
     // Lists the file didn't have, and the current context if asked for.
@@ -292,7 +362,9 @@ pub fn remove(existing: &str, name: &str) -> Result<String, String> {
     let mut out: Vec<String> = Vec::new();
     let mut changed = false;
     for top in tops(existing) {
-        if top.key == "current-context" && scalar(top.lines[0].split_once(':').map_or("", |(_, v)| v)) == name {
+        if top.key == "current-context"
+            && scalar(top.lines[0].split_once(':').map_or("", |(_, v)| v)) == name
+        {
             out.push("current-context: \"\"".into());
             out.extend(top.lines[1..].iter().map(|l| l.to_string()));
             changed = true;
@@ -303,14 +375,21 @@ pub fn remove(existing: &str, name: &str) -> Result<String, String> {
             continue;
         }
         let (before, items, dash) = items(&top)?;
-        let kept: Vec<&Vec<&str>> = items.iter().filter(|i| item_name(i, dash) != Some(name)).collect();
+        let kept: Vec<&Vec<&str>> = items
+            .iter()
+            .filter(|i| item_name(i, dash) != Some(name))
+            .collect();
         if kept.len() == items.len() {
             out.extend(top.lines.iter().map(|l| l.to_string()));
             continue;
         }
         changed = true;
         // A list left empty is `null`, as kubectl writes one.
-        out.push(if kept.is_empty() { format!("{}: null", top.key) } else { top.lines[0].to_owned() });
+        out.push(if kept.is_empty() {
+            format!("{}: null", top.key)
+        } else {
+            top.lines[0].to_owned()
+        });
         out.extend(before.iter().map(|l| l.to_string()));
         out.extend(kept.iter().flat_map(|i| i.iter().map(|l| l.to_string())));
     }
@@ -386,7 +465,10 @@ users:
         let tops = tops(text);
         let top = tops.iter().find(|t| t.key == list).unwrap();
         let (_, items, dash) = items(top).unwrap();
-        items.iter().map(|i| item_name(i, dash).unwrap().to_owned()).collect()
+        items
+            .iter()
+            .map(|i| item_name(i, dash).unwrap().to_owned())
+            .collect()
     }
 
     #[test]
@@ -403,7 +485,15 @@ users:
         let ours = from_k3s(K3S, "kiri", 6445);
         let merged = merge(MINE, &ours, "kiri", false).unwrap();
         for list in LISTS {
-            let want = if list == "contexts" { vec!["prod", "kiri-dev", "kiri"] } else { vec!["arn:aws:eks:eu-central-1:1:cluster/prod", "kiri-dev", "kiri"] };
+            let want = if list == "contexts" {
+                vec!["prod", "kiri-dev", "kiri"]
+            } else {
+                vec![
+                    "arn:aws:eks:eu-central-1:1:cluster/prod",
+                    "kiri-dev",
+                    "kiri",
+                ]
+            };
             assert_eq!(names(&merged, list), want, "{list}");
         }
         // Taking ours out again gives the file back exactly.
@@ -414,13 +504,23 @@ users:
         // Nothing changes when merged again.
         assert_eq!(merge(&merged, &ours, "kiri", false).unwrap(), merged);
         // --use makes it current.
-        assert!(merge(MINE, &ours, "kiri", true).unwrap().contains("current-context: kiri\n"));
+        assert!(
+            merge(MINE, &ours, "kiri", true)
+                .unwrap()
+                .contains("current-context: kiri\n")
+        );
     }
 
     #[test]
     fn a_new_port_replaces_the_old_entry() {
         let merged = merge(MINE, &from_k3s(K3S, "kiri", 6444), "kiri", false).unwrap();
-        let moved = merge(&merged, &from_k3s(K3S, "kiri", 6445).replace("Q0E=", "TkVXQ0E="), "kiri", false).unwrap();
+        let moved = merge(
+            &merged,
+            &from_k3s(K3S, "kiri", 6445).replace("Q0E=", "TkVXQ0E="),
+            "kiri",
+            false,
+        )
+        .unwrap();
         assert!(moved.contains("https://127.0.0.1:6445") && moved.contains("TkVXQ0E="));
         assert_eq!(moved.matches("name: kiri\n").count(), 3);
         // kiri-dev's own port is untouched.
@@ -449,9 +549,17 @@ users:
         assert_eq!(names(&merged, "users"), ["kiri"]);
         // It had no current context, and still has none: a plain `kubectl` stays pointed at nothing.
         assert!(!merged.contains("current-context"));
-        assert!(merge(bare, &ours, "kiri", true).unwrap().ends_with("current-context: kiri\n"));
+        assert!(
+            merge(bare, &ours, "kiri", true)
+                .unwrap()
+                .ends_with("current-context: kiri\n")
+        );
         let removed = remove(&merge(bare, &ours, "kiri", true).unwrap(), "kiri").unwrap();
-        assert!(removed.contains("clusters: null\n") && removed.contains("users: null\n") && removed.contains("current-context: \"\"\n"));
+        assert!(
+            removed.contains("clusters: null\n")
+                && removed.contains("users: null\n")
+                && removed.contains("current-context: \"\"\n")
+        );
         assert!(merge("{\"apiVersion\": \"v1\"}", &ours, "kiri", false).is_err());
         assert!(merge("clusters: [{name: a}]\n", &ours, "kiri", false).is_err());
     }
@@ -468,10 +576,19 @@ users:
     #[test]
     fn the_file_is_kubeconfigs_first_else_home() {
         let home = Some(PathBuf::from("/home/me"));
-        assert_eq!(pick(None, home.clone()), Some(PathBuf::from("/home/me/.kube/config")));
+        assert_eq!(
+            pick(None, home.clone()),
+            Some(PathBuf::from("/home/me/.kube/config"))
+        );
         let sep = if cfg!(windows) { ";" } else { ":" };
-        assert_eq!(pick(Some(format!("/a/one{sep}/b/two").into()), home.clone()), Some(PathBuf::from("/a/one")));
-        assert_eq!(pick(Some("".into()), home), Some(PathBuf::from("/home/me/.kube/config")));
+        assert_eq!(
+            pick(Some(format!("/a/one{sep}/b/two").into()), home.clone()),
+            Some(PathBuf::from("/a/one"))
+        );
+        assert_eq!(
+            pick(Some("".into()), home),
+            Some(PathBuf::from("/home/me/.kube/config"))
+        );
         assert_eq!(pick(None, None), None);
     }
 
@@ -485,9 +602,17 @@ users:
         assert!(!install(&path, &ours, "kiri", false).unwrap());
         std::fs::write(&path, MINE).unwrap();
         assert!(install(&path, &ours, "kiri", false).unwrap());
-        assert_eq!(std::fs::read_to_string(dir.join(".kube").join("config.bak.kiri")).unwrap(), MINE);
+        assert_eq!(
+            std::fs::read_to_string(dir.join(".kube").join("config.bak.kiri")).unwrap(),
+            MINE
+        );
         #[cfg(unix)]
-        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&path).unwrap().permissions()) & 0o777, 0o600);
+        assert_eq!(
+            std::os::unix::fs::PermissionsExt::mode(
+                &std::fs::metadata(&path).unwrap().permissions()
+            ) & 0o777,
+            0o600
+        );
         assert!(uninstall(&path, "kiri").unwrap());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), MINE);
         assert!(!uninstall(&path, "kiri").unwrap());

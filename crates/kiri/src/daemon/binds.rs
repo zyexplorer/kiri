@@ -36,10 +36,17 @@ fn detect() -> Option<Wsl> {
     let root = automount_root(&std::fs::read_to_string("/etc/wsl.conf").unwrap_or_default());
     // The boot command that starts the daemon has no WSL_DISTRO_NAME;
     // wslpath knows the name all the same.
-    let distro = std::env::var("WSL_DISTRO_NAME").ok().filter(|d| !d.is_empty()).or_else(|| {
-        let out = std::process::Command::new("wslpath").args(["-w", "/"]).stderr(std::process::Stdio::null()).output().ok()?;
-        distro_of(String::from_utf8_lossy(&out.stdout).trim())
-    });
+    let distro = std::env::var("WSL_DISTRO_NAME")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .or_else(|| {
+            let out = std::process::Command::new("wslpath")
+                .args(["-w", "/"])
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()?;
+            distro_of(String::from_utf8_lossy(&out.stdout).trim())
+        });
     Some(Wsl { root, distro })
 }
 
@@ -53,7 +60,9 @@ pub fn automount_root(conf: &str) -> String {
             section = s.trim().to_ascii_lowercase();
             continue;
         }
-        let Some((key, value)) = line.split_once('=') else { continue };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         if section == "automount" && key.trim().eq_ignore_ascii_case("root") {
             let value = value.trim().trim_matches('"').trim();
             if value.starts_with('/') {
@@ -88,10 +97,19 @@ pub fn split(spec: &str, wsl: Option<&Wsl>) -> Result<(String, String, String), 
     // `c:/app` is the volume `c` at /app, as in moby's Windows parser: a
     // drive is the source only when an absolute target follows it.
     let skip = match wsl {
-        Some(_) if spec[drive_prefix(spec)..].split(':').nth(1).is_some_and(|d| d.starts_with('/')) => drive_prefix(spec),
+        Some(_)
+            if spec[drive_prefix(spec)..]
+                .split(':')
+                .nth(1)
+                .is_some_and(|d| d.starts_with('/')) =>
+        {
+            drive_prefix(spec)
+        }
         _ => 0,
     };
-    let Some(i) = spec[skip..].find(':').map(|i| skip + i) else { return Err(bad()) };
+    let Some(i) = spec[skip..].find(':').map(|i| skip + i) else {
+        return Err(bad());
+    };
     let (src, rest) = (&spec[..i], &spec[i + 1..]);
     let (dst, opts) = match rest.split(':').collect::<Vec<_>>().as_slice() {
         [d] => (*d, ""),
@@ -109,9 +127,17 @@ pub fn split(spec: &str, wsl: Option<&Wsl>) -> Result<(String, String, String), 
 /// How many leading bytes hold a colon that is not a separator: `C:` and
 /// `\\?\C:` (moby's Windows parser allows both).
 fn drive_prefix(spec: &str) -> usize {
-    let long = [r"\\?\", "//?/"].iter().find(|p| spec.starts_with(**p)).map_or(0, |p| p.len());
+    let long = [r"\\?\", "//?/"]
+        .iter()
+        .find(|p| spec.starts_with(**p))
+        .map_or(0, |p| p.len());
     let b = &spec.as_bytes()[long..];
-    if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/') { long + 2 } else { 0 }
+    if b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/')
+    {
+        long + 2
+    } else {
+        0
+    }
 }
 
 /// A source in one of Windows' spellings, rather than a Linux path or a
@@ -134,7 +160,10 @@ pub fn source(src: &str, wsl: &Wsl) -> Result<String, Error> {
     if !looks_windows(src) {
         return Ok(src.to_owned());
     }
-    let long = src.strip_prefix(r"\\?\").or_else(|| src.strip_prefix("//?/")).unwrap_or(src);
+    let long = src
+        .strip_prefix(r"\\?\")
+        .or_else(|| src.strip_prefix("//?/"))
+        .unwrap_or(src);
     if drive_prefix(long) == 2 {
         return Ok(drive(wsl, long.as_bytes()[0], &long[3..]));
     }
@@ -151,8 +180,14 @@ pub fn source(src: &str, wsl: &Wsl) -> Result<String, Error> {
         if distro.is_empty() {
             return Err(bad("no WSL distro named"));
         }
-        if let Some(ours) = wsl.distro.as_deref().filter(|d| !d.eq_ignore_ascii_case(distro)) {
-            return Err(bad(&format!("it is in the WSL distro {distro}, and Kiri runs in {ours}; use a path on a Windows drive or in {ours}")));
+        if let Some(ours) = wsl
+            .distro
+            .as_deref()
+            .filter(|d| !d.eq_ignore_ascii_case(distro))
+        {
+            return Err(bad(&format!(
+                "it is in the WSL distro {distro}, and Kiri runs in {ours}; use a path on a Windows drive or in {ours}"
+            )));
         }
         return Ok(clean(&format!("/{inner}")));
     }
@@ -163,12 +198,19 @@ pub fn source(src: &str, wsl: &Wsl) -> Result<String, Error> {
     if !src.contains('\\') && host != "." && host != "?" && !host.is_empty() && !path.is_empty() {
         return Ok(clean(&format!("/{rest}")));
     }
-    Err(bad("Kiri's WSL can reach the Windows drives (C:\\…) and its own files, not network shares or devices"))
+    Err(bad(
+        "Kiri's WSL can reach the Windows drives (C:\\…) and its own files, not network shares or devices",
+    ))
 }
 
 /// A path on drive `letter`, under WSL's automount root.
 fn drive(wsl: &Wsl, letter: u8, rest: &str) -> String {
-    clean(&format!("{}{}/{}", wsl.root, letter.to_ascii_lowercase() as char, rest.replace('\\', "/")))
+    clean(&format!(
+        "{}{}/{}",
+        wsl.root,
+        letter.to_ascii_lowercase() as char,
+        rest.replace('\\', "/")
+    ))
 }
 
 /// Single slashes, none at the end.
@@ -195,7 +237,11 @@ const VM_ENGINE_SOCK: &str = "/run/host-services/docker.sock";
 /// container: Docker's own, and on the Mac the socket the client was given
 /// (`DOCKER_HOST=unix://~/.kiri/run/docker.sock`, which Testcontainers
 /// mounts into Ryuk).
-const ENGINE_SOCKS: &[&str] = &["/var/run/docker.sock", "/run/docker.sock", "/private/var/run/docker.sock"];
+const ENGINE_SOCKS: &[&str] = &[
+    "/var/run/docker.sock",
+    "/run/docker.sock",
+    "/private/var/run/docker.sock",
+];
 
 /// What to mount for a bind of `src`, when it is the engine's socket. On a
 /// Mac the VM's relay to this daemon, as Docker Desktop and OrbStack give
@@ -227,7 +273,10 @@ mod tests {
     use super::*;
 
     fn wsl() -> Wsl {
-        Wsl { root: "/mnt/".into(), distro: Some("kiri".into()) }
+        Wsl {
+            root: "/mnt/".into(),
+            distro: Some("kiri".into()),
+        }
     }
 
     fn ok(spec: &str) -> (String, String, String) {
@@ -242,14 +291,20 @@ mod tests {
     fn windows_drive_binds() {
         assert_eq!(ok(r"C:\src:/app"), t("/mnt/c/src", "/app", ""));
         assert_eq!(ok("C:/src:/app:ro"), t("/mnt/c/src", "/app", "ro"));
-        assert_eq!(ok(r"c:\Users\Me\My Project\src:/app:rw"), t("/mnt/c/Users/Me/My Project/src", "/app", "rw"));
+        assert_eq!(
+            ok(r"c:\Users\Me\My Project\src:/app:rw"),
+            t("/mnt/c/Users/Me/My Project/src", "/app", "rw")
+        );
         assert_eq!(ok(r"D:\:/data"), t("/mnt/d", "/data", ""));
         assert_eq!(ok(r"C:\src\:/app"), t("/mnt/c/src", "/app", ""));
         assert_eq!(ok(r"\\?\C:\src:/app"), t("/mnt/c/src", "/app", ""));
         assert_eq!(ok("//c/src:/app"), t("/mnt/c/src", "/app", ""));
         assert_eq!(ok("//C/src/:/app:ro,z"), t("/mnt/c/src", "/app", "ro,z"));
         // Compose resolves `./src` against a Windows project directory.
-        assert_eq!(ok(r"C:\Users\me\proj\src:/usr/src/app:rw"), t("/mnt/c/Users/me/proj/src", "/usr/src/app", "rw"));
+        assert_eq!(
+            ok(r"C:\Users\me\proj\src:/usr/src/app:rw"),
+            t("/mnt/c/Users/me/proj/src", "/usr/src/app", "rw")
+        );
     }
 
     #[test]
@@ -257,7 +312,10 @@ mod tests {
         assert_eq!(ok("/home/me/src:/app"), t("/home/me/src", "/app", ""));
         assert_eq!(ok("/mnt/c/src:/app:ro"), t("/mnt/c/src", "/app", "ro"));
         assert_eq!(ok("data:/var/lib/data"), t("data", "/var/lib/data", ""));
-        assert_eq!(ok("data:/var/lib/data:ro,nocopy"), t("data", "/var/lib/data", "ro,nocopy"));
+        assert_eq!(
+            ok("data:/var/lib/data:ro,nocopy"),
+            t("data", "/var/lib/data", "ro,nocopy")
+        );
         // A drive with no target after it: the one-letter volume `c` at /app.
         assert_eq!(ok("c:/app"), t("c", "/app", ""));
         assert_eq!(ok("C:/src:ro"), t("C", "/src", "ro"));
@@ -266,13 +324,28 @@ mod tests {
     #[test]
     fn wsl_and_pipe_sources() {
         assert_eq!(ok(r"\\wsl$\kiri\home\me:/app"), t("/home/me", "/app", ""));
-        assert_eq!(ok(r"\\wsl.localhost\Kiri\home\me\:/app:ro"), t("/home/me", "/app", "ro"));
+        assert_eq!(
+            ok(r"\\wsl.localhost\Kiri\home\me\:/app:ro"),
+            t("/home/me", "/app", "ro")
+        );
         assert_eq!(ok("//wsl.localhost/kiri/srv:/srv"), t("/srv", "/srv", ""));
-        assert_eq!(ok(r"\\.\pipe\docker_engine:/var/run/docker.sock"), t("/var/run/docker.sock", "/var/run/docker.sock", ""));
-        assert_eq!(ok("//var/run/docker.sock:/var/run/docker.sock:rw"), t("/var/run/docker.sock", "/var/run/docker.sock", "rw"));
+        assert_eq!(
+            ok(r"\\.\pipe\docker_engine:/var/run/docker.sock"),
+            t("/var/run/docker.sock", "/var/run/docker.sock", "")
+        );
+        assert_eq!(
+            ok("//var/run/docker.sock:/var/run/docker.sock:rw"),
+            t("/var/run/docker.sock", "/var/run/docker.sock", "rw")
+        );
         // Distro unknown: taken as Kiri's own.
-        let any = Wsl { root: "/mnt/".into(), distro: None };
-        assert_eq!(split(r"\\wsl$\Ubuntu\home:/h", Some(&any)).unwrap(), t("/home", "/h", ""));
+        let any = Wsl {
+            root: "/mnt/".into(),
+            distro: None,
+        };
+        assert_eq!(
+            split(r"\\wsl$\Ubuntu\home:/h", Some(&any)).unwrap(),
+            t("/home", "/h", "")
+        );
     }
 
     #[test]
@@ -287,19 +360,42 @@ mod tests {
             r"C:\src:/app:ro:extra",
             "nocolon",
         ] {
-            assert!(split(spec, Some(&wsl())).is_err(), "{spec} should be refused");
+            assert!(
+                split(spec, Some(&wsl())).is_err(),
+                "{spec} should be refused"
+            );
         }
     }
 
     #[test]
     fn automount_root_follows_wsl_conf() {
-        let w = Wsl { root: automount_root("[automount]\nroot = /windows/\noptions = \"metadata\"\n"), distro: None };
+        let w = Wsl {
+            root: automount_root("[automount]\nroot = /windows/\noptions = \"metadata\"\n"),
+            distro: None,
+        };
         assert_eq!(w.root, "/windows/");
         assert_eq!(split(r"C:\src:/app", Some(&w)).unwrap().0, "/windows/c/src");
-        assert_eq!(automount_root("[Automount]\n  Root=\"/\"  # all drives at /c, /d\n"), "/");
-        assert_eq!(split(r"E:\x:/x", Some(&Wsl { root: "/".into(), distro: None })).unwrap().0, "/e/x");
+        assert_eq!(
+            automount_root("[Automount]\n  Root=\"/\"  # all drives at /c, /d\n"),
+            "/"
+        );
+        assert_eq!(
+            split(
+                r"E:\x:/x",
+                Some(&Wsl {
+                    root: "/".into(),
+                    distro: None
+                })
+            )
+            .unwrap()
+            .0,
+            "/e/x"
+        );
         assert_eq!(automount_root("[automount]\nroot = /win"), "/win/");
-        assert_eq!(automount_root("[boot]\nroot = /nope/\ncommand = kiri daemon\n"), "/mnt/");
+        assert_eq!(
+            automount_root("[boot]\nroot = /nope/\ncommand = kiri daemon\n"),
+            "/mnt/"
+        );
         assert_eq!(automount_root(""), "/mnt/");
         assert_eq!(automount_root("[automount]\nroot = relative\n"), "/mnt/");
     }
@@ -307,13 +403,19 @@ mod tests {
     #[test]
     fn distro_from_wslpath() {
         assert_eq!(distro_of(r"\\wsl.localhost\kiri\"), Some("kiri".into()));
-        assert_eq!(distro_of(r"\\wsl$\Ubuntu-24.04\"), Some("Ubuntu-24.04".into()));
+        assert_eq!(
+            distro_of(r"\\wsl$\Ubuntu-24.04\"),
+            Some("Ubuntu-24.04".into())
+        );
         assert_eq!(distro_of(r"C:\"), None);
     }
 
     #[test]
     fn outside_wsl_specs_split_on_every_colon() {
-        assert_eq!(split("/src:/app:ro", None).unwrap(), t("/src", "/app", "ro"));
+        assert_eq!(
+            split("/src:/app:ro", None).unwrap(),
+            t("/src", "/app", "ro")
+        );
         assert_eq!(split("C:/app", None).unwrap(), t("C", "/app", ""));
     }
 
@@ -333,20 +435,42 @@ mod tests {
         #[cfg(target_os = "macos")]
         {
             let own = "/Users/me/.kiri/run/docker.sock";
-            for s in ["/var/run/docker.sock", "/private/var/run/docker.sock", "/run/docker.sock", own, "/Users/me/.kiri/run//docker.sock"] {
-                assert_eq!(engine_socket_for(s, own, all).as_deref(), Some(VM_ENGINE_SOCK), "{s}");
+            for s in [
+                "/var/run/docker.sock",
+                "/private/var/run/docker.sock",
+                "/run/docker.sock",
+                own,
+                "/Users/me/.kiri/run//docker.sock",
+            ] {
+                assert_eq!(
+                    engine_socket_for(s, own, all).as_deref(),
+                    Some(VM_ENGINE_SOCK),
+                    "{s}"
+                );
             }
-            assert_eq!(engine_socket_for("/Users/me/.orbstack/run/docker.sock", own, none), None);
+            assert_eq!(
+                engine_socket_for("/Users/me/.orbstack/run/docker.sock", own, none),
+                None
+            );
         }
         #[cfg(not(target_os = "macos"))]
         {
             let own = "/run/kiri/docker.sock";
-            assert_eq!(engine_socket_for("/var/run/docker.sock", own, none).as_deref(), Some(own));
-            assert_eq!(engine_socket_for("/run/docker.sock", own, none).as_deref(), Some(own));
+            assert_eq!(
+                engine_socket_for("/var/run/docker.sock", own, none).as_deref(),
+                Some(own)
+            );
+            assert_eq!(
+                engine_socket_for("/run/docker.sock", own, none).as_deref(),
+                Some(own)
+            );
             // Docker's socket, or the package's link to Kiri's: mounted as it is.
             assert_eq!(engine_socket_for("/var/run/docker.sock", own, all), None);
             assert_eq!(engine_socket_for(own, own, all), None);
         }
-        assert_eq!(engine_socket_for("/srv/app.sock", "/x/docker.sock", none), None);
+        assert_eq!(
+            engine_socket_for("/srv/app.sock", "/x/docker.sock", none),
+            None
+        );
     }
 }

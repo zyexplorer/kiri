@@ -69,7 +69,10 @@ pub struct LogConfig {
 
 impl Default for LogConfig {
     fn default() -> Self {
-        LogConfig { kind: "json-file".into(), config: BTreeMap::new() }
+        LogConfig {
+            kind: "json-file".into(),
+            config: BTreeMap::new(),
+        }
     }
 }
 
@@ -118,7 +121,9 @@ impl LogConfig {
         let files = match self.config.get("max-file").map(String::as_str) {
             None | Some("") => DEFAULT_MAX_FILE,
             Some(s) => {
-                let n: i64 = s.parse().map_err(|_| format!("strconv.Atoi: parsing \"{s}\": invalid syntax"))?;
+                let n: i64 = s
+                    .parse()
+                    .map_err(|_| format!("strconv.Atoi: parsing \"{s}\": invalid syntax"))?;
                 if n < 1 {
                     return Err("max-file cannot be less than 1".into());
                 }
@@ -133,7 +138,9 @@ impl LogConfig {
 /// `units.RAMInBytes` reads them.
 pub fn parse_size(s: &str) -> Option<u64> {
     let s = s.trim();
-    let end = s.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(s.len());
+    let end = s
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(s.len());
     let (num, unit) = s.split_at(end);
     let n: f64 = num.parse().ok()?;
     let unit = unit.trim_start().to_ascii_lowercase();
@@ -164,7 +171,11 @@ pub fn split(data: &[u8]) -> impl Iterator<Item = &[u8]> {
         if rest.is_empty() {
             return None;
         }
-        let end = rest.iter().position(|&b| b == b'\n').map_or(rest.len(), |i| i + 1).min(MAX_LINE);
+        let end = rest
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(rest.len(), |i| i + 1)
+            .min(MAX_LINE);
         let (line, more) = rest.split_at(end);
         rest = more;
         Some(line)
@@ -222,7 +233,11 @@ impl Ring {
         encode(&mut self.buf, stream, time, line);
         // Drop whole records from the front until it fits again.
         while self.buf.len() - self.start > RING {
-            let n = u32::from_be_bytes(self.buf[self.start..self.start + 4].try_into().expect("4 bytes")) as usize;
+            let n = u32::from_be_bytes(
+                self.buf[self.start..self.start + 4]
+                    .try_into()
+                    .expect("4 bytes"),
+            ) as usize;
             self.start += 8 + n;
         }
         if self.start >= RING {
@@ -238,7 +253,9 @@ impl Ring {
 
 impl Log {
     pub fn new(dir: PathBuf, config: &LogConfig) -> Log {
-        let (max_size, max_file) = config.limits().unwrap_or((DEFAULT_MAX_SIZE, DEFAULT_MAX_FILE));
+        let (max_size, max_file) = config
+            .limits()
+            .unwrap_or((DEFAULT_MAX_SIZE, DEFAULT_MAX_FILE));
         Log {
             dir,
             max_size,
@@ -265,7 +282,11 @@ impl Log {
 
     /// The file inspect calls `LogPath`; empty with `none`.
     pub fn path(&self) -> String {
-        if self.off { String::new() } else { self.dir.join(FILE).display().to_string() }
+        if self.off {
+            String::new()
+        } else {
+            self.dir.join(FILE).display().to_string()
+        }
     }
 
     /// Keeps a chunk of output, a record per line, and passes them to followers.
@@ -275,7 +296,11 @@ impl Log {
         }
         for line in split(data) {
             if !self.followers.is_empty() {
-                let rec = Record { stream, time, data: line.to_vec() };
+                let rec = Record {
+                    stream,
+                    time,
+                    data: line.to_vec(),
+                };
                 self.followers.retain(|tx| tx.send(rec.clone()).is_ok());
             }
             if self.off {
@@ -314,7 +339,11 @@ impl Log {
             return;
         };
         if let Err(e) = f.write_all(&self.buf) {
-            crate::diag::warn!("writing container log failed", dir = self.dir.display(), error = e);
+            crate::diag::warn!(
+                "writing container log failed",
+                dir = self.dir.display(),
+                error = e
+            );
             // Start again from what is on disk.
             self.file = None;
         }
@@ -335,9 +364,14 @@ impl Log {
         self.ring = None;
         self.file = None;
         if let Err(e) = fs::remove_dir_all(&self.dir)
-            && e.kind() != io::ErrorKind::NotFound {
-                crate::diag::warn!("removing container log failed", dir = self.dir.display(), error = e);
-            }
+            && e.kind() != io::ErrorKind::NotFound
+        {
+            crate::diag::warn!(
+                "removing container log failed",
+                dir = self.dir.display(),
+                error = e
+            );
+        }
     }
 
     /// Everything kept so far, and (if `follow`) a subscription to what
@@ -357,17 +391,26 @@ impl Log {
             // Read as a file like any other: one that is already unlinked.
             match self.memory_file(ring.records()) {
                 Ok(f) => files.push((f, ring.records().len() as u64)),
-                Err(e) => crate::diag::warn!("reading container log failed", dir = self.dir.display(), error = e),
+                Err(e) => crate::diag::warn!(
+                    "reading container log failed",
+                    dir = self.dir.display(),
+                    error = e
+                ),
             }
             return Snapshot { files };
         }
         for i in (0..self.max_file).rev() {
             let p = self.file_path(i);
             if let Ok(f) = File::open(&p)
-                && let Ok(m) = f.metadata() {
-                    let len = if i == 0 && self.file.is_some() { self.size.min(m.len()) } else { m.len() };
-                    files.push((f, len));
-                }
+                && let Ok(m) = f.metadata()
+            {
+                let len = if i == 0 && self.file.is_some() {
+                    self.size.min(m.len())
+                } else {
+                    m.len()
+                };
+                files.push((f, len));
+            }
         }
         Snapshot { files }
     }
@@ -376,7 +419,12 @@ impl Log {
     fn memory_file(&self, records: &[u8]) -> io::Result<File> {
         fs::create_dir_all(&self.dir)?;
         let p = self.dir.join(format!("{FILE}.memory"));
-        let mut f = OpenOptions::new().create(true).truncate(true).write(true).read(true).open(&p)?;
+        let mut f = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .read(true)
+            .open(&p)?;
         let _ = fs::remove_file(&p);
         f.write_all(records)?;
         io::Seek::seek(&mut f, io::SeekFrom::Start(0))?;
@@ -384,13 +432,21 @@ impl Log {
     }
 
     fn file_path(&self, i: u32) -> PathBuf {
-        if i == 0 { self.dir.join(FILE) } else { self.dir.join(format!("{FILE}.{i}")) }
+        if i == 0 {
+            self.dir.join(FILE)
+        } else {
+            self.dir.join(format!("{FILE}.{i}"))
+        }
     }
 
     fn open(&mut self) -> io::Result<()> {
         let open = || -> io::Result<File> {
             fs::create_dir_all(&self.dir)?;
-            let f = OpenOptions::new().create(true).append(true).read(true).open(self.dir.join(FILE))?;
+            let f = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .read(true)
+                .open(self.dir.join(FILE))?;
             // A crash can leave half a record at the end: cut it off, so
             // what is appended next can be read.
             let len = f.metadata()?.len();
@@ -407,7 +463,11 @@ impl Log {
                 Ok(())
             }
             Err(e) => {
-                crate::diag::warn!("opening container log failed", dir = self.dir.display(), error = e.to_string());
+                crate::diag::warn!(
+                    "opening container log failed",
+                    dir = self.dir.display(),
+                    error = e.to_string()
+                );
                 Err(e)
             }
         }
@@ -449,7 +509,11 @@ fn valid_end(f: &File, len: u64) -> u64 {
         }
     }
     let Ok(f) = f.try_clone() else { return len };
-    let mut r = Reader { files: vec![(f, len, 0)], cur: None, pos: 0 };
+    let mut r = Reader {
+        files: vec![(f, len, 0)],
+        cur: None,
+        pos: 0,
+    };
     while r.next().is_some() {}
     r.pos
 }
@@ -487,7 +551,17 @@ impl Snapshot {
             }
         }
         let (i, off) = start;
-        Reader { files: self.files.into_iter().skip(i).enumerate().map(|(j, (f, l))| (f, l, if j == 0 { off } else { 0 })).collect(), cur: None, pos: 0 }
+        Reader {
+            files: self
+                .files
+                .into_iter()
+                .skip(i)
+                .enumerate()
+                .map(|(j, (f, l))| (f, l, if j == 0 { off } else { 0 }))
+                .collect(),
+            cur: None,
+            pos: 0,
+        }
     }
 }
 
@@ -531,8 +605,14 @@ fn back_starts(f: &File, len: u64, want: usize) -> Option<Vec<u64>> {
 }
 
 fn forward_starts(f: &File, len: u64) -> Vec<u64> {
-    let Ok(f) = f.try_clone() else { return Vec::new() };
-    let mut r = Reader { files: vec![(f, len, 0)], cur: None, pos: 0 };
+    let Ok(f) = f.try_clone() else {
+        return Vec::new();
+    };
+    let mut r = Reader {
+        files: vec![(f, len, 0)],
+        cur: None,
+        pos: 0,
+    };
     let mut starts = Vec::new();
     loop {
         let at = r.pos;
@@ -608,19 +688,28 @@ pub fn parse_time(s: &str) -> Option<u64> {
     }
     let (secs, frac) = s.split_once('.').unwrap_or((s, ""));
     let secs: i64 = secs.parse().ok()?;
-    let mut digits: String = frac.chars().take_while(char::is_ascii_digit).take(9).collect();
+    let mut digits: String = frac
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .take(9)
+        .collect();
     while digits.len() < 9 {
         digits.push('0');
     }
     let nanos: u64 = digits.parse().ok()?;
-    let t = u64::try_from(secs).ok()?.checked_mul(1_000_000_000)?.checked_add(nanos)?;
+    let t = u64::try_from(secs)
+        .ok()?
+        .checked_mul(1_000_000_000)?
+        .checked_add(nanos)?;
     (t > 0).then_some(t)
 }
 
 /// `tail`: a number of lines, or everything (`all`, empty, or anything
 /// that is not a number, as Docker reads it).
 pub fn parse_tail(s: Option<&str>) -> Option<usize> {
-    s.and_then(|s| s.trim().parse::<i64>().ok()).filter(|&n| n >= 0).map(|n| n as usize)
+    s.and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|&n| n >= 0)
+        .map(|n| n as usize)
 }
 
 #[cfg(test)]
@@ -653,20 +742,36 @@ mod tests {
         assert_eq!(parse_size("2048"), Some(2048));
         assert_eq!(parse_size("1g"), Some(1 << 30));
         assert_eq!(parse_size("10x"), None);
-        assert_eq!(LogConfig::default().limits(), Ok((DEFAULT_MAX_SIZE, DEFAULT_MAX_FILE)));
+        assert_eq!(
+            LogConfig::default().limits(),
+            Ok((DEFAULT_MAX_SIZE, DEFAULT_MAX_FILE))
+        );
         assert_eq!(config("1m", "5").limits(), Ok((1 << 20, 5)));
         assert!(config("1m", "0").limits().is_err());
         assert!(config("big", "2").limits().is_err());
-        let c = LogConfig::from_host(&serde_json::json!({"Type": "syslog", "Config": {"syslog-address": "udp://x:514"}})).unwrap();
+        let c = LogConfig::from_host(
+            &serde_json::json!({"Type": "syslog", "Config": {"syslog-address": "udp://x:514"}}),
+        )
+        .unwrap();
         assert_eq!((c.kind.as_str(), c.readable()), ("syslog", true));
-        assert_eq!(LogConfig::from_host(&serde_json::Value::Null).unwrap(), LogConfig::default());
-        assert!(!LogConfig::from_host(&serde_json::json!({"Type": "none"})).unwrap().readable());
+        assert_eq!(
+            LogConfig::from_host(&serde_json::Value::Null).unwrap(),
+            LogConfig::default()
+        );
+        assert!(
+            !LogConfig::from_host(&serde_json::json!({"Type": "none"}))
+                .unwrap()
+                .readable()
+        );
     }
 
     #[test]
     fn times_and_tails() {
         assert_eq!(parse_time("1700000000.5"), Some(1_700_000_000_500_000_000));
-        assert_eq!(parse_time("1700000000.000000001"), Some(1_700_000_000_000_000_001));
+        assert_eq!(
+            parse_time("1700000000.000000001"),
+            Some(1_700_000_000_000_000_001)
+        );
         assert_eq!(parse_time("1700000000"), Some(1_700_000_000_000_000_000));
         assert_eq!(parse_time("0"), None);
         assert_eq!(parse_time(""), None);
@@ -681,7 +786,10 @@ mod tests {
         let parts: Vec<&[u8]> = split(b"a\nbb\nccc").collect();
         assert_eq!(parts, [&b"a\n"[..], b"bb\n", b"ccc"]);
         let long = vec![b'x'; MAX_LINE + 10];
-        assert_eq!(split(&long).map(<[u8]>::len).collect::<Vec<_>>(), [MAX_LINE, 10]);
+        assert_eq!(
+            split(&long).map(<[u8]>::len).collect::<Vec<_>>(),
+            [MAX_LINE, 10]
+        );
     }
 
     #[test]
@@ -689,16 +797,31 @@ mod tests {
         let d = tmp("rotate");
         let mut log = Log::new(d.clone(), &config("1k", "3"));
         for i in 0..200 {
-            log.append(if i % 2 == 0 { Stream::Stdout } else { Stream::Stderr }, i, format!("line {i}\n").as_bytes());
+            log.append(
+                if i % 2 == 0 {
+                    Stream::Stdout
+                } else {
+                    Stream::Stderr
+                },
+                i,
+                format!("line {i}\n").as_bytes(),
+            );
         }
         log.flush();
-        assert!(d.join("container.log.1").exists() && d.join("container.log.2").exists() && !d.join("container.log.3").exists());
+        assert!(
+            d.join("container.log.1").exists()
+                && d.join("container.log.2").exists()
+                && !d.join("container.log.3").exists()
+        );
         let all: Vec<Record> = log.snapshot(None).tail(None).collect();
         // The oldest were rotated away; what is left runs to the end in order.
         assert!(all.len() > 50 && all.len() < 200, "{}", all.len());
         assert_eq!(all.last().unwrap().data, b"line 199\n");
         assert!(all.windows(2).all(|w| w[0].time + 1 == w[1].time));
-        assert_eq!(text(log.snapshot(None).tail(Some(3))), "line 197\nline 198\nline 199\n");
+        assert_eq!(
+            text(log.snapshot(None).tail(Some(3))),
+            "line 197\nline 198\nline 199\n"
+        );
         assert_eq!(log.snapshot(None).tail(Some(0)).count(), 0);
         // A tail reaching into the rotated files.
         let n = all.len() - 2;
@@ -722,7 +845,11 @@ mod tests {
         let _ = log.snapshot(Some(tx));
         let n = 3 * RING / 20;
         for i in 0..n {
-            log.append(Stream::Stdout, i as u64, format!("line {i:09}\n").as_bytes());
+            log.append(
+                Stream::Stdout,
+                i as u64,
+                format!("line {i:09}\n").as_bytes(),
+            );
         }
         log.flush();
         // Nothing on disk, followers still fed.
@@ -731,13 +858,22 @@ mod tests {
         let all: Vec<Record> = log.snapshot(None).tail(None).collect();
         let kept: usize = all.iter().map(|r| 17 + r.data.len()).sum();
         assert!(kept <= RING && kept > RING - 64, "{kept}");
-        assert_eq!(all.last().unwrap().data, format!("line {:09}\n", n - 1).as_bytes());
+        assert_eq!(
+            all.last().unwrap().data,
+            format!("line {:09}\n", n - 1).as_bytes()
+        );
         assert!(all.windows(2).all(|w| w[0].time + 1 == w[1].time));
-        assert_eq!(text(log.snapshot(None).tail(Some(2))), format!("line {:09}\nline {:09}\n", n - 2, n - 1));
+        assert_eq!(
+            text(log.snapshot(None).tail(Some(2))),
+            format!("line {:09}\nline {:09}\n", n - 2, n - 1)
+        );
         // Long lines are split and dropped whole, as on disk.
         log.append(Stream::Stderr, 1 << 40, &vec![b'x'; 3 * MAX_LINE]);
         let last: Vec<Record> = log.snapshot(None).tail(Some(3)).collect();
-        assert!(last.iter().all(|r| r.stream == Stream::Stderr && r.data.len() == MAX_LINE));
+        assert!(
+            last.iter()
+                .all(|r| r.stream == Stream::Stderr && r.data.len() == MAX_LINE)
+        );
         assert!(!d.join(format!("{FILE}.memory")).exists());
         log.remove();
         assert!(log.snapshot(None).tail(None).next().is_none());
@@ -751,7 +887,10 @@ mod tests {
         log.keep_in_memory();
         log.append(Stream::Stdout, 2, b"still on disk\n");
         log.flush();
-        assert_eq!(text(log.snapshot(None).tail(None)), "on disk\nstill on disk\n");
+        assert_eq!(
+            text(log.snapshot(None).tail(None)),
+            "on disk\nstill on disk\n"
+        );
         assert!(d.join(FILE).exists());
         log.remove();
     }
@@ -777,7 +916,12 @@ mod tests {
         log.append(Stream::Stdout, 1, b"whole\n");
         log.flush();
         drop(log);
-        OpenOptions::new().append(true).open(d.join(FILE)).unwrap().write_all(&[0, 0, 0, 20, 1, 2]).unwrap();
+        OpenOptions::new()
+            .append(true)
+            .open(d.join(FILE))
+            .unwrap()
+            .write_all(&[0, 0, 0, 20, 1, 2])
+            .unwrap();
         let mut log = Log::new(d.clone(), &LogConfig::default());
         log.append(Stream::Stderr, 2, b"next\n");
         assert_eq!(text(log.snapshot(None).tail(None)), "whole\nnext\n");
@@ -787,7 +931,13 @@ mod tests {
     #[test]
     fn none_keeps_nothing() {
         let d = tmp("none");
-        let mut log = Log::new(d.clone(), &LogConfig { kind: "none".into(), config: BTreeMap::new() });
+        let mut log = Log::new(
+            d.clone(),
+            &LogConfig {
+                kind: "none".into(),
+                config: BTreeMap::new(),
+            },
+        );
         log.append(Stream::Stdout, 1, b"x\n");
         log.flush();
         assert!(!d.exists());

@@ -14,23 +14,41 @@ use serde_json::{Value, json};
 use crate::client;
 
 /// The engines Kiri can import from: docker context name, label.
-pub const SOURCES: [(&str, &str); 2] = [("orbstack", "OrbStack"), ("desktop-linux", "Docker Desktop")];
+pub const SOURCES: [(&str, &str); 2] = [
+    ("orbstack", "OrbStack"),
+    ("desktop-linux", "Docker Desktop"),
+];
 
 fn docker() -> io::Result<PathBuf> {
-    client::docker_cli().ok_or_else(|| io::Error::other("no docker CLI found (Kiri.app bundles one)"))
+    client::docker_cli()
+        .ok_or_else(|| io::Error::other("no docker CLI found (Kiri.app bundles one)"))
 }
 
 fn known(source: &str) -> io::Result<&'static str> {
-    SOURCES.iter().find(|(c, _)| *c == source).map(|(c, _)| *c).ok_or_else(|| io::Error::other(format!("unknown source {source}")))
+    SOURCES
+        .iter()
+        .find(|(c, _)| *c == source)
+        .map(|(c, _)| *c)
+        .ok_or_else(|| io::Error::other(format!("unknown source {source}")))
 }
 
 /// `docker --context ctx <args>`, its output as JSON lines.
 fn json_lines(ctx: &str, args: &[&str]) -> io::Result<Vec<Value>> {
-    let out = Command::new(docker()?).arg("--context").arg(ctx).args(args).stderr(Stdio::piped()).output()?;
+    let out = Command::new(docker()?)
+        .arg("--context")
+        .arg(ctx)
+        .args(args)
+        .stderr(Stdio::piped())
+        .output()?;
     if !out.status.success() {
-        return Err(io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned()));
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+        ));
     }
-    Ok(String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect())
 }
 
 /// Which sources are installed and answering.
@@ -39,7 +57,18 @@ pub fn sources() -> Vec<Value> {
         .iter()
         .map(|(ctx, label)| {
             let running = docker().is_ok_and(|d| {
-                Command::new(d).args(["--context", ctx, "version", "--format", "{{.Server.Version}}"]).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+                Command::new(d)
+                    .args([
+                        "--context",
+                        ctx,
+                        "version",
+                        "--format",
+                        "{{.Server.Version}}",
+                    ])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success())
             });
             json!({"id": ctx, "label": label, "running": running})
         })
@@ -55,20 +84,37 @@ fn anonymous(name: &str) -> bool {
 pub fn inventory(source: &str) -> io::Result<Value> {
     let ctx = known(source)?;
     let mine = |args: &[&str], key: &str| -> Vec<String> {
-        json_lines(crate::flavor::CONTEXT.get(), args).unwrap_or_default().iter().filter_map(|v| v[key].as_str().map(str::to_owned)).collect()
+        json_lines(crate::flavor::CONTEXT.get(), args)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|v| v[key].as_str().map(str::to_owned))
+            .collect()
     };
-    let kiri_images: Vec<String> = json_lines(crate::flavor::CONTEXT.get(), &["image", "ls", "--format", "{{json .}}"])
-        .unwrap_or_default()
-        .iter()
-        .map(|v| format!("{}:{}", v["Repository"].as_str().unwrap_or(""), v["Tag"].as_str().unwrap_or("")))
-        .collect();
+    let kiri_images: Vec<String> = json_lines(
+        crate::flavor::CONTEXT.get(),
+        &["image", "ls", "--format", "{{json .}}"],
+    )
+    .unwrap_or_default()
+    .iter()
+    .map(|v| {
+        format!(
+            "{}:{}",
+            v["Repository"].as_str().unwrap_or(""),
+            v["Tag"].as_str().unwrap_or("")
+        )
+    })
+    .collect();
     let kiri_volumes = mine(&["volume", "ls", "--format", "{{json .}}"], "Name");
     let kiri_containers = mine(&["ps", "-a", "--format", "{{json .}}"], "Names");
     let images: Vec<Value> = json_lines(ctx, &["image", "ls", "--format", "{{json .}}"])?
         .into_iter()
         .filter(|v| v["Repository"] != "<none>" && v["Tag"] != "<none>")
         .map(|v| {
-            let name = format!("{}:{}", v["Repository"].as_str().unwrap_or(""), v["Tag"].as_str().unwrap_or(""));
+            let name = format!(
+                "{}:{}",
+                v["Repository"].as_str().unwrap_or(""),
+                v["Tag"].as_str().unwrap_or("")
+            );
             json!({"name": name, "size": v["Size"], "have": kiri_images.contains(&name)})
         })
         .collect();
@@ -91,23 +137,55 @@ pub fn inventory(source: &str) -> io::Result<Value> {
 pub fn image(source: &str, name: &str) -> io::Result<()> {
     let ctx = known(source)?;
     let d = docker()?;
-    let mut save = Command::new(&d).args(["--context", ctx, "save", name]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
-    let out = save.stdout.take().ok_or_else(|| io::Error::other("no output from docker save"))?;
-    let load = Command::new(&d).args(["--context", crate::flavor::CONTEXT.get(), "load", "-q"]).stdin(out).stdout(Stdio::null()).stderr(Stdio::piped()).output()?;
+    let mut save = Command::new(&d)
+        .args(["--context", ctx, "save", name])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let out = save
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("no output from docker save"))?;
+    let load = Command::new(&d)
+        .args(["--context", crate::flavor::CONTEXT.get(), "load", "-q"])
+        .stdin(out)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()?;
     let saved = save.wait_with_output()?;
     if !saved.status.success() {
-        return Err(io::Error::other(format!("{ctx}: {}", String::from_utf8_lossy(&saved.stderr).trim())));
+        return Err(io::Error::other(format!(
+            "{ctx}: {}",
+            String::from_utf8_lossy(&saved.stderr).trim()
+        )));
     }
     if !load.status.success() {
-        return Err(io::Error::other(format!("kiri: {}", String::from_utf8_lossy(&load.stderr).trim())));
+        return Err(io::Error::other(format!(
+            "kiri: {}",
+            String::from_utf8_lossy(&load.stderr).trim()
+        )));
     }
     Ok(())
 }
 
 /// An image with `tar` that both engines have, for the volume helpers.
 fn helper_image(ctx: &str) -> io::Result<&'static str> {
-    let has = |c: &str, img: &str| Command::new(docker().ok()?).args(["--context", c, "image", "inspect", img]).stdout(Stdio::null()).stderr(Stdio::null()).status().ok().map(|s| s.success());
-    for img in ["alpine:latest", "busybox:latest", "alpine:3.22", "debian:trixie", "ubuntu:24.04"] {
+    let has = |c: &str, img: &str| {
+        Command::new(docker().ok()?)
+            .args(["--context", c, "image", "inspect", img])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .ok()
+            .map(|s| s.success())
+    };
+    for img in [
+        "alpine:latest",
+        "busybox:latest",
+        "alpine:3.22",
+        "debian:trixie",
+        "ubuntu:24.04",
+    ] {
         if has(ctx, img) == Some(true) {
             if has(crate::flavor::CONTEXT.get(), img) != Some(true) {
                 image(ctx, img)?;
@@ -115,7 +193,9 @@ fn helper_image(ctx: &str) -> io::Result<&'static str> {
             return Ok(img);
         }
     }
-    Err(io::Error::other(format!("{ctx} has no alpine or busybox image to read volumes with; pull alpine there, or import the volume by hand")))
+    Err(io::Error::other(format!(
+        "{ctx} has no alpine or busybox image to read volumes with; pull alpine there, or import the volume by hand"
+    )))
 }
 
 /// A volume's files, owners kept: tar in a read-only helper on the source,
@@ -124,27 +204,80 @@ pub fn volume(source: &str, name: &str) -> io::Result<()> {
     let ctx = known(source)?;
     let d = docker()?;
     let img = helper_image(ctx)?;
-    let _ = Command::new(&d).args(["--context", crate::flavor::CONTEXT.get(), "volume", "create", name]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let _ = Command::new(&d)
+        .args([
+            "--context",
+            crate::flavor::CONTEXT.get(),
+            "volume",
+            "create",
+            name,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     let src_mount = format!("{name}:/from:ro");
     let dst_mount = format!("{name}:/to");
     let mut read = Command::new(&d)
-        .args(["--context", ctx, "run", "--rm", "--network", "none", "--label", "dev.kiri.import-helper=1", "-v", &src_mount, img, "tar", "-C", "/from", "-cf", "-", "."])
+        .args([
+            "--context",
+            ctx,
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--label",
+            "dev.kiri.import-helper=1",
+            "-v",
+            &src_mount,
+            img,
+            "tar",
+            "-C",
+            "/from",
+            "-cf",
+            "-",
+            ".",
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    let out = read.stdout.take().ok_or_else(|| io::Error::other("no output from the source helper"))?;
+    let out = read
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("no output from the source helper"))?;
     let write = Command::new(&d)
-        .args(["--context", crate::flavor::CONTEXT.get(), "run", "--rm", "-i", "--network", "none", "-v", &dst_mount, img, "tar", "-C", "/to", "-xpf", "-"])
+        .args([
+            "--context",
+            crate::flavor::CONTEXT.get(),
+            "run",
+            "--rm",
+            "-i",
+            "--network",
+            "none",
+            "-v",
+            &dst_mount,
+            img,
+            "tar",
+            "-C",
+            "/to",
+            "-xpf",
+            "-",
+        ])
         .stdin(out)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .output()?;
     let r = read.wait_with_output()?;
     if !r.status.success() {
-        return Err(io::Error::other(format!("{ctx}: {}", String::from_utf8_lossy(&r.stderr).trim())));
+        return Err(io::Error::other(format!(
+            "{ctx}: {}",
+            String::from_utf8_lossy(&r.stderr).trim()
+        )));
     }
     if !write.status.success() {
-        return Err(io::Error::other(format!("kiri: {}", String::from_utf8_lossy(&write.stderr).trim())));
+        return Err(io::Error::other(format!(
+            "kiri: {}",
+            String::from_utf8_lossy(&write.stderr).trim()
+        )));
     }
     Ok(())
 }
@@ -154,21 +287,66 @@ pub fn volume(source: &str, name: &str) -> io::Result<()> {
 /// networks (made in Kiri first if missing). Its image must be in Kiri.
 pub fn container(source: &str, name: &str) -> io::Result<()> {
     let ctx = known(source)?;
-    let info = json_lines(ctx, &["inspect", "--type", "container", "--format", "{{json .}}", name])?.into_iter().next().ok_or_else(|| io::Error::other(format!("{name}: not found in {ctx}")))?;
+    let info = json_lines(
+        ctx,
+        &[
+            "inspect",
+            "--type",
+            "container",
+            "--format",
+            "{{json .}}",
+            name,
+        ],
+    )?
+    .into_iter()
+    .next()
+    .ok_or_else(|| io::Error::other(format!("{name}: not found in {ctx}")))?;
     let cfg = &info["Config"];
     let image = cfg["Image"].as_str().unwrap_or("").to_owned();
-    if json_lines(crate::flavor::CONTEXT.get(), &["image", "inspect", "--format", "{{json .Id}}", &image]).map_or(true, |v| v.is_empty()) {
+    if json_lines(
+        crate::flavor::CONTEXT.get(),
+        &["image", "inspect", "--format", "{{json .Id}}", &image],
+    )
+    .map_or(true, |v| v.is_empty())
+    {
         self::image(source, &image)?;
     }
     let mut networks = serde_json::Map::new();
-    let mode = info["HostConfig"]["NetworkMode"].as_str().unwrap_or("default").to_owned();
-    for (net, ep) in info["NetworkSettings"]["Networks"].as_object().into_iter().flatten() {
+    let mode = info["HostConfig"]["NetworkMode"]
+        .as_str()
+        .unwrap_or("default")
+        .to_owned();
+    for (net, ep) in info["NetworkSettings"]["Networks"]
+        .as_object()
+        .into_iter()
+        .flatten()
+    {
         if !["bridge", "host", "none", "default"].contains(&net.as_str()) {
-            let _ = Command::new(docker()?).args(["--context", crate::flavor::CONTEXT.get(), "network", "create", net]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+            let _ = Command::new(docker()?)
+                .args([
+                    "--context",
+                    crate::flavor::CONTEXT.get(),
+                    "network",
+                    "create",
+                    net,
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
         }
         // The source's own short ID is no name in Kiri.
-        let short = info["Id"].as_str().unwrap_or("").get(..12).unwrap_or("").to_owned();
-        let aliases: Vec<&Value> = ep["Aliases"].as_array().into_iter().flatten().filter(|a| a.as_str() != Some(short.as_str())).collect();
+        let short = info["Id"]
+            .as_str()
+            .unwrap_or("")
+            .get(..12)
+            .unwrap_or("")
+            .to_owned();
+        let aliases: Vec<&Value> = ep["Aliases"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|a| a.as_str() != Some(short.as_str()))
+            .collect();
         networks.insert(net.clone(), json!({"Aliases": aliases}));
     }
     let hc = &info["HostConfig"];
@@ -187,7 +365,11 @@ pub fn container(source: &str, name: &str) -> io::Result<()> {
         "OpenStdin": cfg["OpenStdin"], "StopSignal": cfg["StopSignal"], "Hostname": cfg["Hostname"],
         "HostConfig": host, "NetworkingConfig": {"EndpointsConfig": networks},
     });
-    let r = client::request("POST", &format!("/containers/create?name={name}"), Some(&body))?;
+    let r = client::request(
+        "POST",
+        &format!("/containers/create?name={name}"),
+        Some(&body),
+    )?;
     if !r.ok() {
         return Err(io::Error::other(r.error()));
     }
@@ -197,7 +379,11 @@ pub fn container(source: &str, name: &str) -> io::Result<()> {
 /// `kiri import [orbstack|desktop-linux] [--list | image|volume|container NAME]`:
 /// one item, or every image, named volume and container Kiri lacks.
 pub fn run(args: &[String]) -> io::Result<()> {
-    let words: Vec<&str> = args.iter().filter(|a| !a.starts_with('-')).map(String::as_str).collect();
+    let words: Vec<&str> = args
+        .iter()
+        .filter(|a| !a.starts_with('-'))
+        .map(String::as_str)
+        .collect();
     let source = words.first().copied().unwrap_or("orbstack");
     if let [_, kind, name] = words[..] {
         let r = match kind {
@@ -214,7 +400,15 @@ pub fn run(args: &[String]) -> io::Result<()> {
         for k in ["images", "volumes", "containers"] {
             println!("{k}:");
             for v in list(k) {
-                println!("  {}{}", v["name"].as_str().unwrap_or(""), if v["have"] == true { "  (already in Kiri)" } else { "" });
+                println!(
+                    "  {}{}",
+                    v["name"].as_str().unwrap_or(""),
+                    if v["have"] == true {
+                        "  (already in Kiri)"
+                    } else {
+                        ""
+                    }
+                );
             }
         }
         return Ok(());
@@ -231,7 +425,10 @@ pub fn run(args: &[String]) -> io::Result<()> {
         let n = v["name"].as_str().unwrap_or("");
         step("image", n, image(source, n));
     }
-    for v in list("volumes").iter().filter(|v| v["have"] != true && v["anonymous"] != true) {
+    for v in list("volumes")
+        .iter()
+        .filter(|v| v["have"] != true && v["anonymous"] != true)
+    {
         let n = v["name"].as_str().unwrap_or("");
         step("volume", n, volume(source, n));
     }
@@ -239,7 +436,13 @@ pub fn run(args: &[String]) -> io::Result<()> {
         let n = v["name"].as_str().unwrap_or("");
         step("container", n, container(source, n));
     }
-    if failed > 0 { Err(io::Error::other(format!("{failed} items could not be imported"))) } else { Ok(()) }
+    if failed > 0 {
+        Err(io::Error::other(format!(
+            "{failed} items could not be imported"
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]

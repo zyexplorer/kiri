@@ -7,8 +7,8 @@
 //! here: container traffic leaves through macOS's own networking.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -27,7 +27,10 @@ pub fn path() -> Option<PathBuf> {
 }
 
 pub fn settings() -> Value {
-    let saved = path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice::<Value>(&b).ok()).unwrap_or(Value::Null);
+    let saved = path()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .unwrap_or(Value::Null);
     json!({
         "mode": saved["mode"].as_str().filter(|m| ["system", "custom", "none"].contains(m)).unwrap_or("system"),
         "http": saved["http"].as_str().unwrap_or(""),
@@ -58,10 +61,29 @@ pub fn effective() -> Effective {
             return e.clone();
         }
     }
-    let list = |v: &str| v.split([',', ' ']).map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned).collect::<Vec<_>>();
-    let url = |v: &str| (!v.trim().is_empty()).then(|| if v.contains("://") { v.trim().to_owned() } else { format!("http://{}", v.trim()) });
+    let list = |v: &str| {
+        v.split([',', ' '])
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let url = |v: &str| {
+        (!v.trim().is_empty()).then(|| {
+            if v.contains("://") {
+                v.trim().to_owned()
+            } else {
+                format!("http://{}", v.trim())
+            }
+        })
+    };
     let e = match s["mode"].as_str() {
-        Some("custom") => Effective { http: url(s["http"].as_str().unwrap_or("")), https: url(s["https"].as_str().unwrap_or("")), no_proxy: list(s["no_proxy"].as_str().unwrap_or("")), pac: false },
+        Some("custom") => Effective {
+            http: url(s["http"].as_str().unwrap_or("")),
+            https: url(s["https"].as_str().unwrap_or("")),
+            no_proxy: list(s["no_proxy"].as_str().unwrap_or("")),
+            pac: false,
+        },
         Some("none") => Effective::default(),
         _ => system(),
     };
@@ -85,15 +107,38 @@ fn system() -> Effective {
     if let Some(e) = HOST.lock().unwrap_or_else(|e| e.into_inner()).clone() {
         return e;
     }
-    let var = |k: &str| std::env::var(k).or_else(|_| std::env::var(k.to_ascii_lowercase())).ok().filter(|v| !v.trim().is_empty());
-    let no_proxy = var("NO_PROXY").map(|v| v.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned).collect()).unwrap_or_default();
-    Effective { http: var("HTTP_PROXY"), https: var("HTTPS_PROXY"), no_proxy, pac: false }
+    let var = |k: &str| {
+        std::env::var(k)
+            .or_else(|_| std::env::var(k.to_ascii_lowercase()))
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+    };
+    let no_proxy = var("NO_PROXY")
+        .map(|v| {
+            v.split(',')
+                .map(str::trim)
+                .filter(|x| !x.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    Effective {
+        http: var("HTTP_PROXY"),
+        https: var("HTTPS_PROXY"),
+        no_proxy,
+        pac: false,
+    }
 }
 
 /// macOS's proxy settings for the current network, from `scutil --proxy`.
 #[cfg(target_os = "macos")]
 fn system() -> Effective {
-    let Ok(out) = std::process::Command::new("/usr/sbin/scutil").arg("--proxy").output() else { return Effective::default() };
+    let Ok(out) = std::process::Command::new("/usr/sbin/scutil")
+        .arg("--proxy")
+        .output()
+    else {
+        return Effective::default();
+    };
     parse_scutil(&String::from_utf8_lossy(&out.stdout))
 }
 
@@ -125,7 +170,12 @@ fn parse_scutil(text: &str) -> Effective {
             }
         }
     }
-    Effective { http: proxy("HTTP"), https: proxy("HTTPS"), no_proxy, pac: field("ProxyAutoConfigEnable").as_deref() == Some("1") }
+    Effective {
+        http: proxy("HTTP"),
+        https: proxy("HTTPS"),
+        no_proxy,
+        pac: field("ProxyAutoConfigEnable").as_deref() == Some("1"),
+    }
 }
 
 /// For kiri-image: the proxy registry requests use. Registries are https.
@@ -141,9 +191,15 @@ pub fn container_env() -> Vec<String> {
         return Vec::new();
     }
     let e = effective();
-    let inside = |u: &str| u.replace("://127.0.0.1", "://host.docker.internal").replace("://localhost", "://host.docker.internal");
+    let inside = |u: &str| {
+        u.replace("://127.0.0.1", "://host.docker.internal")
+            .replace("://localhost", "://host.docker.internal")
+    };
     let mut env = Vec::new();
-    for (k, v) in [("HTTP_PROXY", e.http.as_deref()), ("HTTPS_PROXY", e.https.as_deref().or(e.http.as_deref()))] {
+    for (k, v) in [
+        ("HTTP_PROXY", e.http.as_deref()),
+        ("HTTPS_PROXY", e.https.as_deref().or(e.http.as_deref())),
+    ] {
         if let Some(v) = v {
             env.push(format!("{k}={}", inside(v)));
             env.push(format!("{}={}", k.to_ascii_lowercase(), inside(v)));
@@ -151,7 +207,16 @@ pub fn container_env() -> Vec<String> {
     }
     if !env.is_empty() {
         let mut skip = e.no_proxy.clone();
-        skip.extend(["localhost", "127.0.0.1", ".kiri.local", ".kiri.localhost", "host.docker.internal"].map(str::to_owned));
+        skip.extend(
+            [
+                "localhost",
+                "127.0.0.1",
+                ".kiri.local",
+                ".kiri.localhost",
+                "host.docker.internal",
+            ]
+            .map(str::to_owned),
+        );
         let skip = skip.join(",");
         env.push(format!("NO_PROXY={skip}"));
         env.push(format!("no_proxy={skip}"));
@@ -164,7 +229,6 @@ pub fn report() -> Value {
     json!({"settings": settings(), "effective": {"http": e.http, "https": e.https, "no_proxy": e.no_proxy, "pac": e.pac}})
 }
 
-
 /// Writes a file only this user can read: proxy settings may carry a
 /// `http://user:pass@host` credential.
 fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -172,7 +236,12 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
         f.write_all(bytes)
     }
     #[cfg(not(unix))]
@@ -191,7 +260,9 @@ mod tests {
         assert_eq!(e.https.as_deref(), Some("http://proxy.corp:3129"));
         assert_eq!(e.no_proxy, ["*.local", "169.254/16"]);
         assert!(!e.pac);
-        let none = super::parse_scutil("<dictionary> {\n  ExceptionsList : <array> {\n    0 : *.local\n  }\n  FTPPassive : 1\n}\n");
+        let none = super::parse_scutil(
+            "<dictionary> {\n  ExceptionsList : <array> {\n    0 : *.local\n  }\n  FTPPassive : 1\n}\n",
+        );
         assert_eq!((none.http, none.https), (None, None));
     }
 }

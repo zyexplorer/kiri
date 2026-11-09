@@ -19,7 +19,10 @@ pub fn path() -> Option<PathBuf> {
 }
 
 fn load() -> Value {
-    path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null)
+    path()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or(Value::Null)
 }
 
 /// The configured Hub mirrors, normalized the way `docker pull` expects.
@@ -47,7 +50,10 @@ pub fn insecure() -> Vec<String> {
 
 fn concurrent(key: &str, default: u64) -> u64 {
     match load().get(key) {
-        Some(Value::Number(n)) => n.as_u64().filter(|v| (1..=MAX_CONCURRENT).contains(v)).unwrap_or(default),
+        Some(Value::Number(n)) => n
+            .as_u64()
+            .filter(|v| (1..=MAX_CONCURRENT).contains(v))
+            .unwrap_or(default),
         _ => default,
     }
 }
@@ -99,14 +105,23 @@ pub fn save(v: &Value) -> std::io::Result<()> {
     if out.get("insecure-registries").is_some() || !insecure.is_empty() {
         out["insecure-registries"] = json!(insecure);
     }
-    for (key, default) in [("max-concurrent-downloads", DEFAULT_DOWNLOADS), ("max-concurrent-uploads", DEFAULT_UPLOADS)] {
+    for (key, default) in [
+        ("max-concurrent-downloads", DEFAULT_DOWNLOADS),
+        ("max-concurrent-uploads", DEFAULT_UPLOADS),
+    ] {
         if let Some(raw) = out.get(key) {
-            let n = raw.as_u64().filter(|v| (1..=MAX_CONCURRENT).contains(v)).unwrap_or(default);
+            let n = raw
+                .as_u64()
+                .filter(|v| (1..=MAX_CONCURRENT).contains(v))
+                .unwrap_or(default);
             out[key] = json!(n);
         }
     }
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&out).unwrap_or_else(|_| out.to_string()) + "\n")?;
+    std::fs::write(
+        &tmp,
+        serde_json::to_string_pretty(&out).unwrap_or_else(|_| out.to_string()) + "\n",
+    )?;
     std::fs::rename(&tmp, &path)?;
     Ok(())
 }
@@ -173,7 +188,11 @@ mod tests {
     fn empty_file_means_no_mirrors() {
         assert!(mirrors().is_empty() || path().is_some());
         let cfg = registry_config();
-        assert!(cfg["IndexConfigs"]["docker.io"]["Official"].as_bool().unwrap());
+        assert!(
+            cfg["IndexConfigs"]["docker.io"]["Official"]
+                .as_bool()
+                .unwrap()
+        );
         assert_eq!(cfg["IndexConfigs"]["docker.io"]["Name"], "docker.io");
     }
 }

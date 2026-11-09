@@ -21,8 +21,12 @@ pub fn socket() -> io::Result<PathBuf> {
     if std::path::Path::new(SERVICE_SOCKET).exists() {
         return Ok(PathBuf::from(SERVICE_SOCKET));
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| io::Error::other("HOME is not set"))?;
-    Ok(home.join(crate::flavor::STATE.get()).join("run/docker.sock"))
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("HOME is not set"))?;
+    Ok(home
+        .join(crate::flavor::STATE.get())
+        .join("run/docker.sock"))
 }
 
 /// Where the Linux service's engine listens, for members of the `kiri` group.
@@ -42,7 +46,10 @@ impl Response {
 
     /// The daemon's `{"message": …}` on failure, or the body as text.
     pub fn error(&self) -> String {
-        self.json()["message"].as_str().map(str::to_owned).unwrap_or_else(|| String::from_utf8_lossy(&self.body).into_owned())
+        self.json()["message"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| String::from_utf8_lossy(&self.body).into_owned())
     }
 
     pub fn ok(&self) -> bool {
@@ -59,7 +66,11 @@ fn connect(timeout: Option<Duration>) -> io::Result<UnixStream> {
 fn head(r: &mut impl BufRead) -> io::Result<(u16, Option<usize>, bool)> {
     let mut line = String::new();
     r.read_line(&mut line)?;
-    let status = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad status line"))?;
+    let status = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "bad status line"))?;
     let (mut len, mut chunked) = (None, false);
     loop {
         line.clear();
@@ -87,7 +98,8 @@ fn chunk(r: &mut impl BufRead) -> io::Result<Option<Vec<u8>>> {
     if r.read_line(&mut line)? == 0 {
         return Ok(None);
     }
-    let n = usize::from_str_radix(line.trim().split(';').next().unwrap_or(""), 16).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad chunk"))?;
+    let n = usize::from_str_radix(line.trim().split(';').next().unwrap_or(""), 16)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad chunk"))?;
     if n == 0 {
         return Ok(None);
     }
@@ -160,14 +172,28 @@ pub fn alive() -> bool {
 /// `auth` is a registry sign-in for a pull (`X-Registry-Auth`, base64url).
 /// `opened` gets the connection once it is made, so another thread can
 /// shut it down to stop the request (Cancel on a pull).
-pub fn post_lines_closable(path: &str, auth: Option<&str>, opened: impl FnOnce(&UnixStream), mut on_line: impl FnMut(Value)) -> io::Result<u16> {
+pub fn post_lines_closable(
+    path: &str,
+    auth: Option<&str>,
+    opened: impl FnOnce(&UnixStream),
+    mut on_line: impl FnMut(Value),
+) -> io::Result<u16> {
     if auth.is_some_and(|a| a.contains(['\r', '\n'])) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "header contains a line break"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "header contains a line break",
+        ));
     }
-    let auth = auth.map(|a| format!("X-Registry-Auth: {a}\r\n")).unwrap_or_default();
+    let auth = auth
+        .map(|a| format!("X-Registry-Auth: {a}\r\n"))
+        .unwrap_or_default();
     let mut s = connect(Some(Duration::from_secs(120)))?;
     opened(&s);
-    write!(s, "POST {path} HTTP/1.1\r\nHost: kiri\r\nConnection: close\r\n{auth}{}Content-Type: application/json\r\nContent-Length: 0\r\n\r\n", crate::diag::op_header())?;
+    write!(
+        s,
+        "POST {path} HTTP/1.1\r\nHost: kiri\r\nConnection: close\r\n{auth}{}Content-Type: application/json\r\nContent-Length: 0\r\n\r\n",
+        crate::diag::op_header()
+    )?;
     let mut r = BufReader::new(s);
     let (status, len, chunked) = head(&mut r)?;
     let mut pending = Vec::new();
@@ -199,7 +225,10 @@ pub fn post_lines_closable(path: &str, auth: Option<&str>, opened: impl FnOnce(&
 /// Calls `on_event` for each event until the connection ends or it returns false.
 pub fn events(mut on_event: impl FnMut(Value) -> bool) -> io::Result<()> {
     let mut s = connect(None)?;
-    write!(s, "GET /events HTTP/1.1\r\nHost: kiri\r\nX-Kiri-Background: 1\r\n\r\n")?;
+    write!(
+        s,
+        "GET /events HTTP/1.1\r\nHost: kiri\r\nX-Kiri-Background: 1\r\n\r\n"
+    )?;
     let mut r = BufReader::new(s);
     let (status, _, chunked) = head(&mut r)?;
     if status != 200 || !chunked {
@@ -251,7 +280,13 @@ impl Stream {
 /// Runs `cmd` in a running container and returns (exit code, output),
 /// through the exec API with a terminal, so output arrives unframed.
 pub fn exec(container: &str, cmd: &[&str]) -> io::Result<(i64, String)> {
-    let created = request("POST", &format!("/containers/{container}/exec"), Some(&serde_json::json!({"Cmd": cmd, "AttachStdout": true, "AttachStderr": true, "Tty": true})))?;
+    let created = request(
+        "POST",
+        &format!("/containers/{container}/exec"),
+        Some(
+            &serde_json::json!({"Cmd": cmd, "AttachStdout": true, "AttachStderr": true, "Tty": true}),
+        ),
+    )?;
     if !created.ok() {
         return Err(io::Error::other(created.error()));
     }
@@ -270,13 +305,19 @@ pub fn exec(container: &str, cmd: &[&str]) -> io::Result<(i64, String)> {
     }
     let mut out = Vec::new();
     r.read_to_end(&mut out)?;
-    let code = get(&format!("/exec/{id}/json"))?["ExitCode"].as_i64().unwrap_or(-1);
+    let code = get(&format!("/exec/{id}/json"))?["ExitCode"]
+        .as_i64()
+        .unwrap_or(-1);
     Ok((code, String::from_utf8_lossy(&out).replace("\r\n", "\n")))
 }
 
 /// A docker CLI: on PATH, else the one bundled in Kiri.app.
 pub fn docker_cli() -> Option<PathBuf> {
-    let on_path = std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join("docker")).find(|d| d.is_file()));
+    let on_path = std::env::var_os("PATH").and_then(|p| {
+        std::env::split_paths(&p)
+            .map(|d| d.join("docker"))
+            .find(|d| d.is_file())
+    });
     on_path
         .or_else(|| {
             let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
@@ -288,7 +329,10 @@ pub fn docker_cli() -> Option<PathBuf> {
 /// Kiri Lite's downloaded CLI.
 #[cfg(target_os = "macos")]
 fn lite_cli() -> Option<PathBuf> {
-    crate::tools::dir().ok().map(|d| d.join("docker")).filter(|d| d.is_file())
+    crate::tools::dir()
+        .ok()
+        .map(|d| d.join("docker"))
+        .filter(|d| d.is_file())
 }
 
 #[cfg(not(target_os = "macos"))]

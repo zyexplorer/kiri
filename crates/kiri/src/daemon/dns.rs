@@ -22,15 +22,19 @@ pub const SUFFIX: &str = "kiri.local";
 
 pub fn start() -> io::Result<()> {
     let sock = UdpSocket::bind(("127.0.0.1", PORT))?;
-    std::thread::Builder::new().name("kiri-dns".into()).spawn(move || {
-        let mut buf = [0u8; 512];
-        loop {
-            let Ok((n, from)) = sock.recv_from(&mut buf) else { continue };
-            if let Some(reply) = answer(&buf[..n]) {
-                let _ = sock.send_to(&reply, from);
+    std::thread::Builder::new()
+        .name("kiri-dns".into())
+        .spawn(move || {
+            let mut buf = [0u8; 512];
+            loop {
+                let Ok((n, from)) = sock.recv_from(&mut buf) else {
+                    continue;
+                };
+                if let Some(reply) = answer(&buf[..n]) {
+                    let _ = sock.send_to(&reply, from);
+                }
             }
-        }
-    })?;
+        })?;
     Ok(())
 }
 
@@ -101,17 +105,21 @@ pub fn serve_relay(stream: kiri_vmm::VsockStream) {
         RELAYS.fetch_sub(1, Ordering::Relaxed);
         return;
     }
-    let spawned = std::thread::Builder::new().name("kiri-dns-relay".into()).spawn(move || {
-        relay_one(&stream);
-        RELAYS.fetch_sub(1, Ordering::Relaxed);
-    });
+    let spawned = std::thread::Builder::new()
+        .name("kiri-dns-relay".into())
+        .spawn(move || {
+            relay_one(&stream);
+            RELAYS.fetch_sub(1, Ordering::Relaxed);
+        });
     if spawned.is_err() {
         RELAYS.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
 fn relay_one(stream: &kiri_vmm::VsockStream) {
-    let Ok(fd) = stream.fd.try_clone() else { return };
+    let Ok(fd) = stream.fd.try_clone() else {
+        return;
+    };
     // A peer that connects and then says nothing doesn't keep a thread.
     // Best effort: without the timeouts the lookup still works.
     if let Err(e) = set_timeouts(fd.as_raw_fd(), RELAY_IO) {
@@ -128,10 +136,16 @@ fn relay_one(stream: &kiri_vmm::VsockStream) {
     }
     static SAID: AtomicBool = AtomicBool::new(false);
     if !SAID.swap(true, Ordering::Relaxed) {
-        crate::diag::warn!("the VM's DNS at its gateway did not answer; container lookups go through the Mac");
+        crate::diag::warn!(
+            "the VM's DNS at its gateway did not answer; container lookups go through the Mac"
+        );
     }
     let name = question_name(&query).unwrap_or_default();
-    let servers = mac_resolvers(&name, Path::new("/etc/resolv.conf"), Path::new("/etc/resolver"));
+    let servers = mac_resolvers(
+        &name,
+        Path::new("/etc/resolv.conf"),
+        Path::new("/etc/resolver"),
+    );
     let reply = relay_query(&query, &servers).unwrap_or_else(|| servfail(&query));
     let mut out = Vec::with_capacity(2 + reply.len());
     out.extend_from_slice(&(reply.len().min(u16::MAX as usize) as u16).to_be_bytes());
@@ -152,11 +166,23 @@ fn is_query(q: &[u8]) -> bool {
 }
 
 fn set_timeouts(fd: std::os::fd::RawFd, t: Duration) -> io::Result<()> {
-    let tv = libc::timeval { tv_sec: t.as_secs() as _, tv_usec: t.subsec_micros() as _ };
+    let tv = libc::timeval {
+        tv_sec: t.as_secs() as _,
+        tv_usec: t.subsec_micros() as _,
+    };
     let len = std::mem::size_of::<libc::timeval>() as libc::socklen_t;
     for opt in [libc::SO_RCVTIMEO, libc::SO_SNDTIMEO] {
         // SAFETY: a valid timeval for a socket option on a descriptor we hold.
-        if unsafe { libc::setsockopt(fd, libc::SOL_SOCKET, opt, (&tv as *const libc::timeval).cast(), len) } != 0 {
+        if unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                opt,
+                (&tv as *const libc::timeval).cast(),
+                len,
+            )
+        } != 0
+        {
             return Err(io::Error::last_os_error());
         }
     }
@@ -169,14 +195,23 @@ fn relay_query(query: &[u8], servers: &[SocketAddr]) -> Option<Vec<u8>> {
     let mut buf = vec![0u8; 65_535];
     for server in servers {
         let left = RELAY_BUDGET.checked_sub(start.elapsed())?;
-        let bind: SocketAddr = if server.is_ipv4() { ([0, 0, 0, 0], 0).into() } else { (std::net::Ipv6Addr::UNSPECIFIED, 0).into() };
-        let Ok(sock) = UdpSocket::bind(bind) else { continue };
+        let bind: SocketAddr = if server.is_ipv4() {
+            ([0, 0, 0, 0], 0).into()
+        } else {
+            (std::net::Ipv6Addr::UNSPECIFIED, 0).into()
+        };
+        let Ok(sock) = UdpSocket::bind(bind) else {
+            continue;
+        };
         if sock.connect(server).is_err() || sock.send(query).is_err() {
             continue;
         }
         let until = Instant::now() + RELAY_TRY.min(left);
         // Read past stray datagrams until this query's answer or the deadline.
-        while let Some(wait) = until.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
+        while let Some(wait) = until
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+        {
             if sock.set_read_timeout(Some(wait)).is_err() {
                 break;
             }
@@ -251,12 +286,22 @@ fn question_name(q: &[u8]) -> Option<String> {
 /// nothing in a container.
 fn mac_resolvers(name: &str, resolv_conf: &Path, resolver_dir: &Path) -> Vec<SocketAddr> {
     let mut best: Option<(usize, Vec<SocketAddr>)> = None;
-    for entry in std::fs::read_dir(resolver_dir).into_iter().flatten().flatten() {
-        let Ok(text) = std::fs::read_to_string(entry.path()) else { continue };
+    for entry in std::fs::read_dir(resolver_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let Ok(text) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
         let file = entry.file_name().to_string_lossy().to_ascii_lowercase();
         let domain = text
             .lines()
-            .find_map(|l| l.trim().strip_prefix("domain").map(|d| d.trim().trim_end_matches('.').to_ascii_lowercase()))
+            .find_map(|l| {
+                l.trim()
+                    .strip_prefix("domain")
+                    .map(|d| d.trim().trim_end_matches('.').to_ascii_lowercase())
+            })
             .filter(|d| !d.is_empty())
             .unwrap_or(file);
         if domain == SUFFIX {
@@ -271,15 +316,28 @@ fn mac_resolvers(name: &str, resolv_conf: &Path, resolver_dir: &Path) -> Vec<Soc
             best = Some((domain.len(), servers));
         }
     }
-    best.map(|(_, s)| s).unwrap_or_else(|| parse_servers(&std::fs::read_to_string(resolv_conf).unwrap_or_default()))
+    best.map(|(_, s)| s)
+        .unwrap_or_else(|| parse_servers(&std::fs::read_to_string(resolv_conf).unwrap_or_default()))
 }
 
 /// `nameserver` lines (and a `port` line) of a resolv.conf-style file.
 /// Link-local IPv6 servers, which need an interface named, are skipped.
 fn parse_servers(text: &str) -> Vec<SocketAddr> {
-    let field = |key: &'static str| text.lines().filter_map(move |l| l.trim().strip_prefix(key).filter(|v| v.starts_with([' ', '\t'])).map(str::trim));
-    let port = field("port").find_map(|p| p.parse::<u16>().ok()).unwrap_or(53);
-    field("nameserver").filter_map(|ip| ip.parse::<IpAddr>().ok()).map(|ip| SocketAddr::new(ip, port)).collect()
+    let field = |key: &'static str| {
+        text.lines().filter_map(move |l| {
+            l.trim()
+                .strip_prefix(key)
+                .filter(|v| v.starts_with([' ', '\t']))
+                .map(str::trim)
+        })
+    };
+    let port = field("port")
+        .find_map(|p| p.parse::<u16>().ok())
+        .unwrap_or(53);
+    field("nameserver")
+        .filter_map(|ip| ip.parse::<IpAddr>().ok())
+        .map(|ip| SocketAddr::new(ip, port))
+        .collect()
 }
 
 #[cfg(test)]
@@ -319,15 +377,42 @@ mod tests {
         let conf = dir.join("resolv.conf");
         std::fs::write(&conf, "# macOS\nsearch home\nnameserver 192.168.1.1\nnameserver fe80::1%en0\nnameserver 2001:db8::53\n").unwrap();
         std::fs::write(resolvers.join("corp.example"), "nameserver 10.0.0.53\n").unwrap();
-        std::fs::write(resolvers.join("eu.corp.example"), "nameserver 10.1.0.53\nport 5353\n").unwrap();
-        std::fs::write(resolvers.join("kiri.local"), "nameserver 127.0.0.1\nport 53535\n").unwrap();
-        let r = |name: &str| super::mac_resolvers(name, &conf, &resolvers).iter().map(ToString::to_string).collect::<Vec<_>>();
-        assert_eq!(r("registry-1.docker.io"), ["192.168.1.1:53", "[2001:db8::53]:53"]);
+        std::fs::write(
+            resolvers.join("eu.corp.example"),
+            "nameserver 10.1.0.53\nport 5353\n",
+        )
+        .unwrap();
+        std::fs::write(
+            resolvers.join("kiri.local"),
+            "nameserver 127.0.0.1\nport 53535\n",
+        )
+        .unwrap();
+        let r = |name: &str| {
+            super::mac_resolvers(name, &conf, &resolvers)
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            r("registry-1.docker.io"),
+            ["192.168.1.1:53", "[2001:db8::53]:53"]
+        );
         assert_eq!(r("git.corp.example"), ["10.0.0.53:53"]);
         assert_eq!(r("corp.example"), ["10.0.0.53:53"]);
-        assert_eq!(r("db.eu.corp.example"), ["10.1.0.53:5353"], "the longest domain wins");
-        assert_eq!(r("notcorp.example"), ["192.168.1.1:53", "[2001:db8::53]:53"]);
-        assert_eq!(r("web.kiri.local"), ["192.168.1.1:53", "[2001:db8::53]:53"], "Kiri's own resolver is the Mac's loopback");
+        assert_eq!(
+            r("db.eu.corp.example"),
+            ["10.1.0.53:5353"],
+            "the longest domain wins"
+        );
+        assert_eq!(
+            r("notcorp.example"),
+            ["192.168.1.1:53", "[2001:db8::53]:53"]
+        );
+        assert_eq!(
+            r("web.kiri.local"),
+            ["192.168.1.1:53", "[2001:db8::53]:53"],
+            "Kiri's own resolver is the Mac's loopback"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -344,12 +429,18 @@ mod tests {
             up.send_to(&buf[..n], from).unwrap();
         });
         // A closed port first: refused, then the next one is asked.
-        let closed = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let closed = UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
         let q = query("registry-1.docker.io", 1);
         let r = super::relay_query(&q, &[closed, addr]).expect("answered");
         resolver.join().unwrap();
         assert_eq!((&r[..2], r[2] & 0x80, &r[12..]), (&q[..2], 0x80, &q[12..]));
-        assert_eq!(super::question_name(&q).as_deref(), Some("registry-1.docker.io"));
+        assert_eq!(
+            super::question_name(&q).as_deref(),
+            Some("registry-1.docker.io")
+        );
     }
 
     #[test]
@@ -366,8 +457,16 @@ mod tests {
         two[5] = 2;
         assert!(!super::is_query(&two), "two questions");
         assert!(!super::is_query(&q[..q.len() - 1]), "cut short");
-        assert!(!super::is_query(&[0x12, 0x34, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0xc0, 12, 0, 1, 0, 1]), "a compression pointer");
-        assert!(!super::is_query(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n"), "not DNS at all");
+        assert!(
+            !super::is_query(&[
+                0x12, 0x34, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0xc0, 12, 0, 1, 0, 1
+            ]),
+            "a compression pointer"
+        );
+        assert!(
+            !super::is_query(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n"),
+            "not DNS at all"
+        );
     }
 
     #[test]
@@ -375,7 +474,13 @@ mod tests {
         let q = query("example.com", 1);
         let r = super::servfail(&q);
         assert_eq!((&r[..2], r[2] & 0x80, r[3] & 0x0f), (&q[..2], 0x80, 2));
-        assert_eq!((&r[4..12], &r[12..]), (&[0, 1, 0, 0, 0, 0, 0, 0][..], &q[12..]));
-        assert_eq!(super::servfail(&[0x12, 0x34, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0])[3], 0x82);
+        assert_eq!(
+            (&r[4..12], &r[12..]),
+            (&[0, 1, 0, 0, 0, 0, 0, 0][..], &q[12..])
+        );
+        assert_eq!(
+            super::servfail(&[0x12, 0x34, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0])[3],
+            0x82
+        );
     }
 }

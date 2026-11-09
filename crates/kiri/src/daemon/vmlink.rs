@@ -50,15 +50,24 @@ pub struct FileInfo {
 
 impl From<kiri_proto::FsEntry<'_>> for FileInfo {
     fn from(e: kiri_proto::FsEntry<'_>) -> FileInfo {
-        FileInfo { name: e.name.to_owned(), mode: e.mode, size: e.size, mtime: e.mtime, mtime_nsec: e.mtime_nsec }
+        FileInfo {
+            name: e.name.to_owned(),
+            mode: e.mode,
+            size: e.size,
+            mtime: e.mtime,
+            mtime_nsec: e.mtime_nsec,
+        }
     }
 }
-
 
 /// Something a container did, routed to the engine.
 #[derive(Debug)]
 pub enum Event<'a> {
-    Output { id: &'a str, stream: Stream, data: &'a [u8] },
+    Output {
+        id: &'a str,
+        stream: Stream,
+        data: &'a [u8],
+    },
     /// `oom` when the kernel killed a process in it for memory.
     Exited { id: &'a str, code: i32, oom: bool },
     /// The guest is short of memory right now.
@@ -112,7 +121,9 @@ impl Windows {
         self.credit.lock().unwrap_or_else(|e| e.into_inner())
     }
     fn open(&self, id: &str) {
-        self.lock().by_id.insert(id.to_owned(), kiri_proto::INPUT_WINDOW);
+        self.lock()
+            .by_id
+            .insert(id.to_owned(), kiri_proto::INPUT_WINDOW);
     }
     fn close(&self, id: &str) {
         self.lock().by_id.remove(id);
@@ -139,7 +150,9 @@ impl Windows {
             if g.lost {
                 return Err(io::Error::other("the VM stopped"));
             }
-            let Some(c) = g.by_id.get_mut(id) else { return Ok(false) };
+            let Some(c) = g.by_id.get_mut(id) else {
+                return Ok(false);
+            };
             if *c >= n {
                 *c -= n;
                 return Ok(true);
@@ -152,68 +165,90 @@ impl Windows {
 impl VmLink {
     /// Starts the reader thread. `on_event` runs on that thread, so it must
     /// not block for long: it holds up every reply behind it.
-    pub fn new(vm: Vm, conn: File, on_event: impl Fn(Event<'_>) + Send + 'static) -> io::Result<VmLink> {
-        let pending: Arc<Mutex<VecDeque<SyncSender<Reply>>>> = Arc::new(Mutex::new(VecDeque::new()));
+    pub fn new(
+        vm: Vm,
+        conn: File,
+        on_event: impl Fn(Event<'_>) + Send + 'static,
+    ) -> io::Result<VmLink> {
+        let pending: Arc<Mutex<VecDeque<SyncSender<Reply>>>> =
+            Arc::new(Mutex::new(VecDeque::new()));
         let mut reader = conn.try_clone()?;
         let queue = pending.clone();
         let windows = Arc::new(Windows::default());
         let wins = windows.clone();
-        std::thread::Builder::new().name("kiri-vm-reader".into()).spawn(move || {
-            let mut frame = Vec::with_capacity(64 * 1024);
-            while read_frame(&mut reader, &mut frame).is_ok() {
-                let msg = kiri_proto::decode(&frame);
-                let reply = match msg {
-                    Ok(Msg::Output { id, stream, data }) => {
-                        on_event(Event::Output { id, stream, data });
-                        continue;
+        std::thread::Builder::new()
+            .name("kiri-vm-reader".into())
+            .spawn(move || {
+                let mut frame = Vec::with_capacity(64 * 1024);
+                while read_frame(&mut reader, &mut frame).is_ok() {
+                    let msg = kiri_proto::decode(&frame);
+                    let reply = match msg {
+                        Ok(Msg::Output { id, stream, data }) => {
+                            on_event(Event::Output { id, stream, data });
+                            continue;
+                        }
+                        Ok(Msg::Exited(e)) => {
+                            wins.close(e.id);
+                            on_event(Event::Exited {
+                                id: e.id,
+                                code: e.code,
+                                oom: e.oom_killed,
+                            });
+                            continue;
+                        }
+                        Ok(Msg::InputConsumed { id, bytes }) => {
+                            wins.add(id, bytes as usize);
+                            continue;
+                        }
+                        Ok(Msg::MemoryPressure) => {
+                            on_event(Event::Pressure);
+                            continue;
+                        }
+                        Ok(Msg::LayerStatus(have)) => Reply::LayerStatus(have),
+                        Ok(Msg::LayerStored(_)) => Reply::LayerStored,
+                        Ok(Msg::Started { pid, .. }) => Reply::Started(pid),
+                        Ok(Msg::Stats(s)) => Reply::Stats(s),
+                        Ok(Msg::Pong(_)) => Reply::Pong,
+                        Ok(Msg::FsStat(e)) => Reply::FsStat(FileInfo::from(e)),
+                        Ok(Msg::FsList { count, raw }) => Reply::FsList(
+                            kiri_proto::fs_entries(count, raw)
+                                .map(FileInfo::from)
+                                .collect(),
+                        ),
+                        Ok(Msg::FsData(d)) => Reply::FsData(d.to_vec()),
+                        Ok(Msg::Ack) => Reply::Ack,
+                        Ok(Msg::ContainerStats(s)) => Reply::ContainerStats(s),
+                        Ok(Msg::Top(lines)) => {
+                            Reply::Top(lines.iter().map(str::to_owned).collect())
+                        }
+                        Ok(Msg::Listening(lines)) => {
+                            Reply::Listening(lines.iter().map(str::to_owned).collect())
+                        }
+                        Ok(Msg::Uplink { ip, gateway }) => Reply::Uplink(ip, gateway),
+                        Ok(Msg::Error(e)) => Reply::Error(e.to_owned()),
+                        Ok(other) => {
+                            Reply::Error(format!("unexpected message from guest: {other:?}"))
+                        }
+                        Err(e) => Reply::Error(format!("bad frame from guest: {e:?}")),
+                    };
+                    if let Some(slot) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front()
+                    {
+                        let _ = slot.send(reply);
                     }
-                    Ok(Msg::Exited(e)) => {
-                        wins.close(e.id);
-                        on_event(Event::Exited { id: e.id, code: e.code, oom: e.oom_killed });
-                        continue;
-                    }
-                    Ok(Msg::InputConsumed { id, bytes }) => {
-                        wins.add(id, bytes as usize);
-                        continue;
-                    }
-                    Ok(Msg::MemoryPressure) => {
-                        on_event(Event::Pressure);
-                        continue;
-                    }
-                    Ok(Msg::LayerStatus(have)) => Reply::LayerStatus(have),
-                    Ok(Msg::LayerStored(_)) => Reply::LayerStored,
-                    Ok(Msg::Started { pid, .. }) => Reply::Started(pid),
-                    Ok(Msg::Stats(s)) => Reply::Stats(s),
-                    Ok(Msg::Pong(_)) => Reply::Pong,
-                    Ok(Msg::FsStat(e)) => Reply::FsStat(FileInfo::from(e)),
-                    Ok(Msg::FsList { count, raw }) => Reply::FsList(
-                        kiri_proto::fs_entries(count, raw)
-                            .map(FileInfo::from)
-                            .collect(),
-                    ),
-                    Ok(Msg::FsData(d)) => Reply::FsData(d.to_vec()),
-                    Ok(Msg::Ack) => Reply::Ack,
-                    Ok(Msg::ContainerStats(s)) => Reply::ContainerStats(s),
-                    Ok(Msg::Top(lines)) => Reply::Top(lines.iter().map(str::to_owned).collect()),
-                    Ok(Msg::Listening(lines)) => Reply::Listening(lines.iter().map(str::to_owned).collect()),
-                    Ok(Msg::Uplink { ip, gateway }) => Reply::Uplink(ip, gateway),
-                    Ok(Msg::Error(e)) => Reply::Error(e.to_owned()),
-                    Ok(other) => Reply::Error(format!("unexpected message from guest: {other:?}")),
-                    Err(e) => Reply::Error(format!("bad frame from guest: {e:?}")),
-                };
-                if let Some(slot) = queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front() {
-                    let _ = slot.send(reply);
                 }
-            }
-            // Wake everyone still waiting, then tell the engine.
-            for slot in queue.lock().unwrap_or_else(|e| e.into_inner()).drain(..) {
-                let _ = slot.send(Reply::Error("the VM stopped".into()));
-            }
-            wins.lose();
-            on_event(Event::Lost);
-        })?;
+                // Wake everyone still waiting, then tell the engine.
+                for slot in queue.lock().unwrap_or_else(|e| e.into_inner()).drain(..) {
+                    let _ = slot.send(Reply::Error("the VM stopped".into()));
+                }
+                wins.lose();
+                on_event(Event::Lost);
+            })?;
         Ok(VmLink {
-            writer: Mutex::new(Writer { conn, out: Vec::with_capacity(4096), blob: vec![0; 256 * 1024] }),
+            writer: Mutex::new(Writer {
+                conn,
+                out: Vec::with_capacity(4096),
+                blob: vec![0; 256 * 1024],
+            }),
             pending,
             windows,
             connector: vm.connector(),
@@ -222,7 +257,11 @@ impl VmLink {
     }
 
     /// Sends one request and waits for its reply.
-    fn call(&self, encode: impl FnOnce(&mut Vec<u8>), body: Option<(&Path, u64)>) -> io::Result<Reply> {
+    fn call(
+        &self,
+        encode: impl FnOnce(&mut Vec<u8>),
+        body: Option<(&Path, u64)>,
+    ) -> io::Result<Reply> {
         let (tx, rx) = mpsc::sync_channel(1);
         {
             let mut w = self.writer.lock().unwrap_or_else(|e| e.into_inner());
@@ -230,7 +269,10 @@ impl VmLink {
             out.clear();
             encode(out);
             // Queue the slot before writing, so the reply can never arrive first.
-            self.pending.lock().unwrap_or_else(|e| e.into_inner()).push_back(tx);
+            self.pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push_back(tx);
             conn.write_all(out)?;
             if let Some((path, size)) = body {
                 let mut file = File::open(path)?;
@@ -239,7 +281,10 @@ impl VmLink {
                     let want = left.min(blob.len() as u64) as usize;
                     let n = file.read(&mut blob[..want])?;
                     if n == 0 {
-                        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "layer blob shrank while sending"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "layer blob shrank while sending",
+                        ));
                     }
                     conn.write_all(&blob[..n])?;
                     left -= n as u64;
@@ -265,14 +310,26 @@ impl VmLink {
     pub fn has_layer(&self, digest: &str) -> io::Result<bool> {
         match self.call(|o| Msg::LayerQuery(digest).encode(o), None)? {
             Reply::LayerStatus(have) => Ok(have),
-            other => Err(io::Error::other(format!("expected LayerStatus, got {other:?}"))),
+            other => Err(io::Error::other(format!(
+                "expected LayerStatus, got {other:?}"
+            ))),
         }
     }
 
     pub fn send_layer(&self, digest: &str, media_type: &str, blob: &Path) -> io::Result<()> {
         let size = std::fs::metadata(blob)?.len();
-        self.call(|o| Msg::LayerBegin(LayerBegin { digest, media_type, size }).encode(o), Some((blob, size)))
-            .map(drop)
+        self.call(
+            |o| {
+                Msg::LayerBegin(LayerBegin {
+                    digest,
+                    media_type,
+                    size,
+                })
+                .encode(o)
+            },
+            Some((blob, size)),
+        )
+        .map(drop)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -293,7 +350,17 @@ impl VmLink {
         opts: &[String],
     ) -> io::Result<u32> {
         self.windows.open(id);
-        let r = self.call(|o| kiri_proto::encode_run(o, id, layers, argv, env, cwd, user, hostname, flags, net, mounts, limits, caps, opts), None).and_then(started);
+        let r = self
+            .call(
+                |o| {
+                    kiri_proto::encode_run(
+                        o, id, layers, argv, env, cwd, user, hostname, flags, net, mounts, limits,
+                        caps, opts,
+                    )
+                },
+                None,
+            )
+            .and_then(started);
         if r.is_err() {
             self.windows.close(id);
         }
@@ -318,7 +385,9 @@ impl VmLink {
     pub fn container_stats(&self, id: &str) -> io::Result<kiri_proto::ContainerStats> {
         match self.call(|o| Msg::StatsQuery { id }.encode(o), None)? {
             Reply::ContainerStats(s) => Ok(s),
-            other => Err(io::Error::other(format!("expected ContainerStats, got {other:?}"))),
+            other => Err(io::Error::other(format!(
+                "expected ContainerStats, got {other:?}"
+            ))),
         }
     }
 
@@ -333,31 +402,92 @@ impl VmLink {
     pub fn listening(&self, id: &str) -> io::Result<Vec<String>> {
         match self.call(|o| Msg::ListenQuery { id }.encode(o), None)? {
             Reply::Listening(lines) => Ok(lines),
-            other => Err(io::Error::other(format!("expected Listening, got {other:?}"))),
+            other => Err(io::Error::other(format!(
+                "expected Listening, got {other:?}"
+            ))),
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     /// Routes `dst/prefix` through `via` in the VM, or removes that route.
     pub fn route(&self, dst: [u8; 4], prefix: u8, via: [u8; 4], add: bool) -> io::Result<()> {
-        self.ack(|o| Msg::Route { dst, prefix, via, add }.encode(o))
+        self.ack(|o| {
+            Msg::Route {
+                dst,
+                prefix,
+                via,
+                add,
+            }
+            .encode(o)
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn net_attach(&self, id: &str, n: u32, bridge: &str, ip: [u8; 4], prefix: u8, gateway: [u8; 4], dns_names: &[String], opts: &[String]) -> io::Result<()> {
+    pub fn net_attach(
+        &self,
+        id: &str,
+        n: u32,
+        bridge: &str,
+        ip: [u8; 4],
+        prefix: u8,
+        gateway: [u8; 4],
+        dns_names: &[String],
+        opts: &[String],
+    ) -> io::Result<()> {
         let ifname = format!("eth{n}");
-        self.ack(|o| kiri_proto::encode_net_attach(o, id, &ifname, bridge, ip, prefix, gateway, dns_names, opts))
+        self.ack(|o| {
+            kiri_proto::encode_net_attach(
+                o, id, &ifname, bridge, ip, prefix, gateway, dns_names, opts,
+            )
+        })
     }
 
     pub fn net_detach(&self, id: &str, n: u32, bridge: &str, ip: [u8; 4]) -> io::Result<()> {
         let ifname = format!("eth{n}");
-        self.ack(|o| Msg::NetDetach { id, ifname: &ifname, bridge, ip }.encode(o))
+        self.ack(|o| {
+            Msg::NetDetach {
+                id,
+                ifname: &ifname,
+                bridge,
+                ip,
+            }
+            .encode(o)
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn exec(&self, container_id: &str, exec_id: &str, argv: &[String], env: &[String], cwd: &str, user: &str, flags: u32, caps: u64, opts: &[String]) -> io::Result<u32> {
+    pub fn exec(
+        &self,
+        container_id: &str,
+        exec_id: &str,
+        argv: &[String],
+        env: &[String],
+        cwd: &str,
+        user: &str,
+        flags: u32,
+        caps: u64,
+        opts: &[String],
+    ) -> io::Result<u32> {
         self.windows.open(exec_id);
-        let r = self.call(|o| kiri_proto::encode_exec(o, container_id, exec_id, argv, env, cwd, user, flags, caps, opts), None).and_then(started);
+        let r = self
+            .call(
+                |o| {
+                    kiri_proto::encode_exec(
+                        o,
+                        container_id,
+                        exec_id,
+                        argv,
+                        env,
+                        cwd,
+                        user,
+                        flags,
+                        caps,
+                        opts,
+                    )
+                },
+                None,
+            )
+            .and_then(started);
         if r.is_err() {
             self.windows.close(exec_id);
         }
@@ -441,12 +571,18 @@ impl VmLink {
 
     /// Sets the balloon so the guest runs in `bytes`; returns the old target.
     pub fn set_memory_target(&self, bytes: u64) -> Option<u64> {
-        self._vm.lock().unwrap_or_else(|e| e.into_inner()).set_memory_target(bytes)
+        self._vm
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .set_memory_target(bytes)
     }
 
     /// Accepts guest-initiated streams on `port`.
     pub fn listen(&self, port: u32, handler: kiri_vmm::Handler) -> io::Result<()> {
-        self._vm.lock().unwrap_or_else(|e| e.into_inner()).listen(port, handler)
+        self._vm
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .listen(port, handler)
     }
 
     /// A new stream to a port the guest agent listens on.
@@ -469,7 +605,18 @@ impl VmLink {
     }
 
     pub fn fs_read(&self, id: &str, path: &str, offset: u64, len: u32) -> io::Result<Vec<u8>> {
-        match self.call(|o| Msg::FsRead { id, path, offset, len }.encode(o), None)? {
+        match self.call(
+            |o| {
+                Msg::FsRead {
+                    id,
+                    path,
+                    offset,
+                    len,
+                }
+                .encode(o)
+            },
+            None,
+        )? {
             Reply::FsData(d) => Ok(d),
             other => Err(io::Error::other(format!("expected FsData, got {other:?}"))),
         }

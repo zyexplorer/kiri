@@ -35,9 +35,19 @@ pub fn route(req: &Request, engine: &Arc<Engine>, w: &mut UnixStream) -> Option<
                 return Some(match (m, action) {
                     ("GET", "stats") => stats(req, engine, id, w),
                     ("GET", "top") => reply(w, top(engine, id), 200),
-                    ("POST", "pause") => reply(w, engine.pause(id, true).map(|()| Value::Null), 204),
-                    ("POST", "unpause") => reply(w, engine.pause(id, false).map(|()| Value::Null), 204),
-                    ("POST", "rename") => reply(w, engine.rename(id, req.query("name").unwrap_or_default()).map(|()| Value::Null), 204),
+                    ("POST", "pause") => {
+                        reply(w, engine.pause(id, true).map(|()| Value::Null), 204)
+                    }
+                    ("POST", "unpause") => {
+                        reply(w, engine.pause(id, false).map(|()| Value::Null), 204)
+                    }
+                    ("POST", "rename") => reply(
+                        w,
+                        engine
+                            .rename(id, req.query("name").unwrap_or_default())
+                            .map(|()| Value::Null),
+                        204,
+                    ),
                     ("POST", "update") => reply(w, update(req, engine, id), 200),
                     ("GET", "changes") => reply(w, changes(engine, id), 200),
                     ("GET", "export") => export(engine, id, w),
@@ -71,7 +81,13 @@ fn body(req: &Request) -> Result<Value, Error> {
 }
 
 /// One sample as Docker's stats JSON; `pre` is the previous one.
-fn stats_json(id: &str, name: &str, s: &kiri_proto::ContainerStats, pre: Option<&kiri_proto::ContainerStats>, ceiling: u64) -> Value {
+fn stats_json(
+    id: &str,
+    name: &str,
+    s: &kiri_proto::ContainerStats,
+    pre: Option<&kiri_proto::ContainerStats>,
+    ceiling: u64,
+) -> Value {
     let cpu = |s: &kiri_proto::ContainerStats| {
         json!({
             "cpu_usage": {"total_usage": s.cpu_usage_usec * 1000, "usage_in_kernelmode": s.cpu_system_usec * 1000, "usage_in_usermode": s.cpu_user_usec * 1000},
@@ -125,12 +141,20 @@ fn stats(req: &Request, engine: &Engine, key: &str, w: &mut UnixStream) -> io::R
     }
     http::begin_stream(w, 200, "application/json")?;
     let (id, name, mut prev) = first;
-    http::chunk(w, format!("{}\n", stats_json(&id, &name, &prev, None, ceiling)).as_bytes())?;
+    http::chunk(
+        w,
+        format!("{}\n", stats_json(&id, &name, &prev, None, ceiling)).as_bytes(),
+    )?;
     loop {
         std::thread::sleep(Duration::from_secs(1));
         // A stopped container ends the stream; a gone client ends the write.
-        let Ok((_, _, now)) = engine.stats(&id) else { break };
-        http::chunk(w, format!("{}\n", stats_json(&id, &name, &now, Some(&prev), ceiling)).as_bytes())?;
+        let Ok((_, _, now)) = engine.stats(&id) else {
+            break;
+        };
+        http::chunk(
+            w,
+            format!("{}\n", stats_json(&id, &name, &now, Some(&prev), ceiling)).as_bytes(),
+        )?;
         prev = now;
     }
     http::end(w)?;
@@ -140,30 +164,43 @@ fn stats(req: &Request, engine: &Engine, key: &str, w: &mut UnixStream) -> io::R
 fn top(engine: &Engine, key: &str) -> Result<Value, Error> {
     let lines = engine.top(key)?;
     let procs: Vec<Vec<&str>> = lines.iter().map(|l| l.splitn(8, '\t').collect()).collect();
-    Ok(json!({"Titles": ["UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"], "Processes": procs}))
+    Ok(
+        json!({"Titles": ["UID", "PID", "PPID", "C", "STIME", "TTY", "TIME", "CMD"], "Processes": procs}),
+    )
 }
 
 fn update(req: &Request, engine: &Engine, key: &str) -> Result<Value, Error> {
     let b = body(req)?;
     let base = engine.with(key, |c| c.spec.limits)?;
     let limits = super::api::limits_from(&b, base);
-    let restart = b["RestartPolicy"]["Name"].as_str().filter(|n| !n.is_empty()).map(|n| super::engine::RestartPolicy {
-        name: n.to_owned(),
-        max_retries: b["RestartPolicy"]["MaximumRetryCount"].as_u64().unwrap_or(0) as u32,
-    });
+    let restart = b["RestartPolicy"]["Name"]
+        .as_str()
+        .filter(|n| !n.is_empty())
+        .map(|n| super::engine::RestartPolicy {
+            name: n.to_owned(),
+            max_retries: b["RestartPolicy"]["MaximumRetryCount"]
+                .as_u64()
+                .unwrap_or(0) as u32,
+        });
     engine.update(key, limits, restart)?;
     Ok(json!({"Warnings": []}))
 }
 
 /// Starts a copy-service job and checks it accepted: `CopyDone` first.
-fn layer_job(engine: &Engine, key: &str, op: u8) -> Result<(kiri_vmm::VsockStream, std::fs::File), Error> {
+fn layer_job(
+    engine: &Engine,
+    key: &str,
+    op: u8,
+) -> Result<(kiri_vmm::VsockStream, std::fs::File), Error> {
     let stream = engine.copy(key, op, "/", 0)?;
     let mut f = std::fs::File::from(stream.fd.try_clone()?);
     let frame = guest_frame(&mut f)?;
     match kiri_proto::decode(&frame) {
         Ok(kiri_proto::Msg::CopyDone) => Ok((stream, f)),
         Ok(kiri_proto::Msg::Error(m)) => Err(copy_error(m)),
-        other => Err(Error::Io(io::Error::other(format!("unexpected copy reply: {other:?}")))),
+        other => Err(Error::Io(io::Error::other(format!(
+            "unexpected copy reply: {other:?}"
+        )))),
     }
 }
 
@@ -185,7 +222,11 @@ fn changes(engine: &Engine, key: &str) -> Result<Value, Error> {
             Some(json!({"Path": path, "Kind": kind}))
         })
         .collect();
-    Ok(if list.is_empty() { Value::Null } else { Value::Array(list) })
+    Ok(if list.is_empty() {
+        Value::Null
+    } else {
+        Value::Array(list)
+    })
 }
 
 fn export(engine: &Engine, key: &str, w: &mut UnixStream) -> io::Result<Next> {
@@ -209,7 +250,10 @@ fn export(engine: &Engine, key: &str, w: &mut UnixStream) -> io::Result<Next> {
 
 /// Applies one `--change` line (a Dockerfile instruction) to a config.
 fn apply_change(cfg: &mut Value, line: &str) -> Result<(), Error> {
-    let (instr, arg) = line.trim().split_once(char::is_whitespace).unwrap_or((line.trim(), ""));
+    let (instr, arg) = line
+        .trim()
+        .split_once(char::is_whitespace)
+        .unwrap_or((line.trim(), ""));
     let arg = arg.trim();
     // JSON form, or shell form run by /bin/sh -c.
     let words = |a: &str| -> Value {
@@ -225,7 +269,10 @@ fn apply_change(cfg: &mut Value, line: &str) -> Result<(), Error> {
         "WORKDIR" => c["WorkingDir"] = arg.into(),
         "USER" => c["User"] = arg.into(),
         "ENV" => {
-            let (k, v) = arg.split_once('=').or_else(|| arg.split_once(' ')).unwrap_or((arg, ""));
+            let (k, v) = arg
+                .split_once('=')
+                .or_else(|| arg.split_once(' '))
+                .unwrap_or((arg, ""));
             let mut env: Vec<Value> = c["Env"].as_array().cloned().unwrap_or_default();
             env.retain(|e| e.as_str().and_then(|e| e.split('=').next()) != Some(k));
             env.push(format!("{k}={}", v.trim_matches('"')).into());
@@ -233,7 +280,11 @@ fn apply_change(cfg: &mut Value, line: &str) -> Result<(), Error> {
         }
         "EXPOSE" => {
             for port in arg.split_whitespace() {
-                let key = if port.contains('/') { port.to_owned() } else { format!("{port}/tcp") };
+                let key = if port.contains('/') {
+                    port.to_owned()
+                } else {
+                    format!("{port}/tcp")
+                };
                 if !c["ExposedPorts"].is_object() {
                     c["ExposedPorts"] = json!({});
                 }
@@ -251,11 +302,17 @@ fn apply_change(cfg: &mut Value, line: &str) -> Result<(), Error> {
             if !c["Volumes"].is_object() {
                 c["Volumes"] = json!({});
             }
-            for v in serde_json::from_str::<Vec<String>>(arg).unwrap_or_else(|_| arg.split_whitespace().map(str::to_owned).collect()) {
+            for v in serde_json::from_str::<Vec<String>>(arg)
+                .unwrap_or_else(|_| arg.split_whitespace().map(str::to_owned).collect())
+            {
                 c["Volumes"][v] = json!({});
             }
         }
-        other => return Err(Error::BadRequest(format!("{other} is not a valid change command"))),
+        other => {
+            return Err(Error::BadRequest(format!(
+                "{other} is not a valid change command"
+            )));
+        }
     }
     Ok(())
 }
@@ -263,17 +320,24 @@ fn apply_change(cfg: &mut Value, line: &str) -> Result<(), Error> {
 /// `docker commit`: the container's writable layer on top of its image.
 fn commit(req: &Request, engine: &Engine) -> Result<Value, Error> {
     let key = req.query("container").unwrap_or_default();
-    let (id, spec, running) = engine.with(key, |c| (c.id.clone(), c.spec.clone(), c.status == Status::Running))?;
+    let (id, spec, running) = engine.with(key, |c| {
+        (c.id.clone(), c.spec.clone(), c.status == Status::Running)
+    })?;
     let base = engine
         .store
         .images()?
         .into_iter()
         .find(|i| i.config_digest == spec.image_id)
         .ok_or_else(|| Error::NotFound(format!("the image of container {} is gone", &id[..12])))?;
-    let mut cfg: Value = serde_json::from_slice(&engine.store.read_config(&base.config_digest)?).map_err(|e| Error::Io(io::Error::other(e)))?;
+    let mut cfg: Value = serde_json::from_slice(&engine.store.read_config(&base.config_digest)?)
+        .map_err(|e| Error::Io(io::Error::other(e)))?;
     // What the container ran with becomes the image's config.
     cfg["config"]["Cmd"] = json!(spec.cmd);
-    cfg["config"]["Entrypoint"] = if spec.entrypoint.is_empty() { Value::Null } else { json!(spec.entrypoint) };
+    cfg["config"]["Entrypoint"] = if spec.entrypoint.is_empty() {
+        Value::Null
+    } else {
+        json!(spec.entrypoint)
+    };
     cfg["config"]["Env"] = json!(spec.env);
     cfg["config"]["WorkingDir"] = spec.cwd.clone().into();
     cfg["config"]["User"] = spec.user.clone().into();
@@ -293,7 +357,9 @@ fn commit(req: &Request, engine: &Engine) -> Result<Value, Error> {
         }
     }
     // Docker pauses a running container so the layer is consistent.
-    let pause = running && req.query("pause").is_none_or(|v| v != "0" && v != "false") && !engine.is_paused(&id);
+    let pause = running
+        && req.query("pause").is_none_or(|v| v != "0" && v != "false")
+        && !engine.is_paused(&id);
     if pause {
         engine.pause(&id, true)?;
     }
@@ -311,7 +377,10 @@ fn commit(req: &Request, engine: &Engine) -> Result<Value, Error> {
     if !cfg["rootfs"]["diff_ids"].is_array() {
         cfg["rootfs"] = json!({"type": "layers", "diff_ids": []});
     }
-    cfg["rootfs"]["diff_ids"].as_array_mut().expect("array").push(digest.clone().into());
+    cfg["rootfs"]["diff_ids"]
+        .as_array_mut()
+        .expect("array")
+        .push(digest.clone().into());
     let now = time::rfc3339(std::time::SystemTime::now());
     let comment = req.query("comment").unwrap_or_default();
     let mut hist = cfg["history"].as_array().cloned().unwrap_or_default();
@@ -326,13 +395,22 @@ fn commit(req: &Request, engine: &Engine) -> Result<Value, Error> {
     io::Write::write_all(&mut w, &bytes)?;
     let (config_digest, _) = w.finish()?;
     let mut layers = base.layers.clone();
-    layers.push(kiri_image::Layer { digest, size, media_type: "application/vnd.oci.image.layer.v1.tar".into() });
+    layers.push(kiri_image::Layer {
+        digest,
+        size,
+        media_type: "application/vnd.oci.image.layer.v1.tar".into(),
+    });
     let repo = req.query("repo").unwrap_or_default();
     let name = if repo.is_empty() {
         config_digest.clone()
     } else {
-        let tag = req.query("tag").filter(|t| !t.is_empty()).unwrap_or("latest");
-        kiri_image::Reference::parse(&format!("{repo}:{tag}")).map(|r| r.short()).map_err(|e| Error::BadRequest(format!("invalid reference format: {e}")))?
+        let tag = req
+            .query("tag")
+            .filter(|t| !t.is_empty())
+            .unwrap_or("latest");
+        kiri_image::Reference::parse(&format!("{repo}:{tag}"))
+            .map(|r| r.short())
+            .map_err(|e| Error::BadRequest(format!("invalid reference format: {e}")))?
     };
     let image = kiri_image::archive::from_config(name, &config_digest, &cfg, layers);
     engine.store.put_image(image)?;
@@ -365,8 +443,13 @@ fn parse_duration(s: &str) -> Option<Duration> {
 fn container_prune(req: &Request, engine: &Engine) -> Result<Value, Error> {
     let f = filters(req, &["until", "label", "label!"])?;
     let doomed = engine.each(|c| {
-        let labels = if c.spec.labels.is_object() { c.spec.labels.clone() } else { json!({}) };
-        (c.status != Status::Running && f.labels(&labels) && until_ok(&f, c.created)).then(|| c.id.clone())
+        let labels = if c.spec.labels.is_object() {
+            c.spec.labels.clone()
+        } else {
+            json!({})
+        };
+        (c.status != Status::Running && f.labels(&labels) && until_ok(&f, c.created))
+            .then(|| c.id.clone())
     });
     let mut deleted = Vec::new();
     for id in doomed {
@@ -392,13 +475,20 @@ fn image_prune(req: &Request, engine: &Engine) -> Result<Value, Error> {
             reclaimed += i.size;
             deleted.push(json!({"Untagged": i.name}));
             engine.emit_image("untag", &i.config_digest, &i.name);
-            if !engine.store.images()?.iter().any(|o| o.config_digest == i.config_digest) {
+            if !engine
+                .store
+                .images()?
+                .iter()
+                .any(|o| o.config_digest == i.config_digest)
+            {
                 deleted.push(json!({"Deleted": i.config_digest}));
                 engine.emit_image("delete", &i.config_digest, &i.name);
             }
         }
     }
-    Ok(json!({"ImagesDeleted": if deleted.is_empty() { Value::Null } else { Value::Array(deleted) }, "SpaceReclaimed": reclaimed}))
+    Ok(
+        json!({"ImagesDeleted": if deleted.is_empty() { Value::Null } else { Value::Array(deleted) }, "SpaceReclaimed": reclaimed}),
+    )
 }
 
 fn system_df(engine: &Engine) -> Result<Value, Error> {
@@ -464,14 +554,19 @@ fn system_df(engine: &Engine) -> Result<Value, Error> {
             })
         })
         .collect();
-    Ok(json!({"LayersSize": layers_size, "Images": image_rows, "Containers": containers, "Volumes": volumes, "BuildCache": super::builder::cache(engine)}))
+    Ok(
+        json!({"LayersSize": layers_size, "Images": image_rows, "Containers": containers, "Volumes": volumes, "BuildCache": super::builder::cache(engine)}),
+    )
 }
 
 /// `docker history`: the config's history, newest first, with each
 /// layer-making step's size.
 fn history(engine: &Engine, name: &str) -> Result<Value, Error> {
-    let i = engine.image(name)?.ok_or_else(|| Error::NotFound(format!("No such image: {name}")))?;
-    let cfg: Value = serde_json::from_slice(&engine.store.read_config(&i.config_digest)?).unwrap_or(Value::Null);
+    let i = engine
+        .image(name)?
+        .ok_or_else(|| Error::NotFound(format!("No such image: {name}")))?;
+    let cfg: Value =
+        serde_json::from_slice(&engine.store.read_config(&i.config_digest)?).unwrap_or(Value::Null);
     let mut layers = i.layers.iter();
     let mut rows: Vec<Value> = cfg["history"]
         .as_array()
@@ -479,7 +574,11 @@ fn history(engine: &Engine, name: &str) -> Result<Value, Error> {
         .flatten()
         .map(|h| {
             let empty = h["empty_layer"].as_bool().unwrap_or(false);
-            let size = if empty { 0 } else { layers.next().map_or(0, |l| l.size) };
+            let size = if empty {
+                0
+            } else {
+                layers.next().map_or(0, |l| l.size)
+            };
             json!({
                 "Id": "<missing>",
                 "Created": time::parse_unix(h["created"].as_str().unwrap_or_default()),
@@ -500,14 +599,22 @@ fn history(engine: &Engine, name: &str) -> Result<Value, Error> {
 
 fn search(req: &Request) -> Result<Value, Error> {
     let term = req.query("term").unwrap_or_default();
-    let limit = req.query("limit").and_then(|l| l.parse().ok()).unwrap_or(25);
-    let results = kiri_image::Client::new().search(term, limit).map_err(|e| Error::BadRequest(format!("search failed: {e}")))?;
+    let limit = req
+        .query("limit")
+        .and_then(|l| l.parse().ok())
+        .unwrap_or(25);
+    let results = kiri_image::Client::new()
+        .search(term, limit)
+        .map_err(|e| Error::BadRequest(format!("search failed: {e}")))?;
     let f = filters(req, &["is-official", "is-automated", "stars"])?;
     let rows: Vec<Value> = results
         .into_iter()
         .filter(|r| {
-            f.bool("is-official").is_none_or(|o| r["is_official"].as_bool().unwrap_or(false) == o)
-                && f.any("stars", |s| r["star_count"].as_u64().unwrap_or(0) >= s.parse().unwrap_or(0))
+            f.bool("is-official")
+                .is_none_or(|o| r["is_official"].as_bool().unwrap_or(false) == o)
+                && f.any("stars", |s| {
+                    r["star_count"].as_u64().unwrap_or(0) >= s.parse().unwrap_or(0)
+                })
         })
         .map(|r| {
             json!({
@@ -525,7 +632,15 @@ fn search(req: &Request) -> Result<Value, Error> {
 fn connect(req: &Request, engine: &Engine, network: &str) -> Result<Value, Error> {
     let b = body(req)?;
     let container = b["Container"].as_str().unwrap_or_default();
-    let aliases = b["EndpointConfig"]["Aliases"].as_array().map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_default();
+    let aliases = b["EndpointConfig"]["Aliases"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
     let (ip, ip6, mac) = super::api::endpoint_address(&b["EndpointConfig"])?;
     engine.connect(network, container, aliases, ip, ip6, mac)?;
     Ok(Value::Null)
@@ -550,17 +665,29 @@ fn event_matches(f: &super::filters::Filters, ev: &Value) -> bool {
     let attrs = &ev["Actor"]["Attributes"];
     let name = attrs["name"].as_str().unwrap_or_default();
     f.any("type", |v| v == typ)
-        && f.any("event", |v| action == v || action.split(':').next() == Some(v))
-        && f.any("container", |v| typ == "container" && (actor.starts_with(v) || name == v))
-        && f.any("image", |v| attrs["image"].as_str() == Some(v) || (typ == "image" && actor == v))
-        && f.any("network", |v| typ == "network" && (actor.starts_with(v) || name == v))
+        && f.any("event", |v| {
+            action == v || action.split(':').next() == Some(v)
+        })
+        && f.any("container", |v| {
+            typ == "container" && (actor.starts_with(v) || name == v)
+        })
+        && f.any("image", |v| {
+            attrs["image"].as_str() == Some(v) || (typ == "image" && actor == v)
+        })
+        && f.any("network", |v| {
+            typ == "network" && (actor.starts_with(v) || name == v)
+        })
         && f.any("volume", |v| typ == "volume" && actor == v)
         && f.labels(attrs)
 }
 
 /// The client hung up: a readable socket that reads nothing.
 pub(super) fn gone(w: &UnixStream) -> bool {
-    let mut pfd = libc::pollfd { fd: w.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    let mut pfd = libc::pollfd {
+        fd: w.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
     // SAFETY: one valid pollfd, no wait.
     let n = unsafe { libc::poll(&mut pfd, 1, 0) };
     if n <= 0 {
@@ -568,13 +695,34 @@ pub(super) fn gone(w: &UnixStream) -> bool {
     }
     let mut b = [0u8; 1];
     // SAFETY: peeking one byte into a local buffer.
-    let r = unsafe { libc::recv(w.as_raw_fd(), b.as_mut_ptr().cast(), 1, libc::MSG_PEEK | libc::MSG_DONTWAIT) };
+    let r = unsafe {
+        libc::recv(
+            w.as_raw_fd(),
+            b.as_mut_ptr().cast(),
+            1,
+            libc::MSG_PEEK | libc::MSG_DONTWAIT,
+        )
+    };
     r == 0 || pfd.revents & (libc::POLLHUP | libc::POLLERR) != 0
 }
 
 /// `docker events`: kept events since `since`, then live ones until `until`.
 fn events(req: &Request, engine: &Engine, w: &mut UnixStream) -> io::Result<Next> {
-    let f = match filters(req, &["type", "event", "container", "image", "network", "volume", "label", "label!", "daemon", "scope"]) {
+    let f = match filters(
+        req,
+        &[
+            "type",
+            "event",
+            "container",
+            "image",
+            "network",
+            "volume",
+            "label",
+            "label!",
+            "daemon",
+            "scope",
+        ],
+    ) {
         Ok(f) => f,
         Err(e) => {
             error(w, e)?;
@@ -583,13 +731,23 @@ fn events(req: &Request, engine: &Engine, w: &mut UnixStream) -> io::Result<Next
     };
     let since = epoch(req.query("since"));
     let until = epoch(req.query("until"));
-    let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    let now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0)
+    };
     let (recent, rx) = engine.subscribe();
     http::begin_stream(w, 200, "application/json")?;
-    let send = |w: &mut UnixStream, ev: &Value| -> io::Result<()> { http::chunk(w, format!("{ev}\n").as_bytes()) };
+    let send = |w: &mut UnixStream, ev: &Value| -> io::Result<()> {
+        http::chunk(w, format!("{ev}\n").as_bytes())
+    };
     let at = |ev: &Value| ev["timeNano"].as_u64().map_or(0.0, |n| n as f64 / 1e9);
     if let Some(s) = since {
-        for ev in recent.iter().filter(|ev| at(ev) >= s && until.is_none_or(|u| at(ev) <= u) && event_matches(&f, ev)) {
+        for ev in recent
+            .iter()
+            .filter(|ev| at(ev) >= s && until.is_none_or(|u| at(ev) <= u) && event_matches(&f, ev))
+        {
             send(w, ev)?;
         }
     }

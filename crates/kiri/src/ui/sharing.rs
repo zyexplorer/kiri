@@ -8,8 +8,8 @@
 //! `crate::client` (the engine's API) and `crate::share`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
 use serde_json::{Value, json};
@@ -49,13 +49,19 @@ fn with_links<R>(f: impl FnOnce(&mut HashMap<u64, Link>) -> R) -> R {
 /// it says which session without giving the token away.
 fn session_id(token: &str) -> String {
     use sha2::{Digest, Sha256};
-    let hex: String = Sha256::digest(token.as_bytes()).iter().take(6).map(|b| format!("{b:02x}")).collect();
+    let hex: String = Sha256::digest(token.as_bytes())
+        .iter()
+        .take(6)
+        .map(|b| format!("{b:02x}"))
+        .collect();
     format!("ks_{hex}")
 }
 
 fn account() -> Value {
     match share::load() {
-        Ok(c) => json!({"type": "shareaccount", "signedIn": c.token.is_some(), "login": c.login, "server": c.server, "session": c.token.as_deref().map(session_id)}),
+        Ok(c) => {
+            json!({"type": "shareaccount", "signedIn": c.token.is_some(), "login": c.login, "server": c.server, "session": c.token.as_deref().map(session_id)})
+        }
         Err(e) => json!({"type": "shareaccount", "signedIn": false, "error": e.to_string()}),
     }
 }
@@ -94,13 +100,23 @@ fn event(id: u64, ev: share::Event) -> Value {
     use share::Event::*;
     let mut v = match ev {
         Connecting { server } => json!({"state": "connecting", "server": server}),
-        Live { url, rate, remaining, warning, domains } => json!({"state": "live", "url": url, "rate": rate, "remaining": remaining, "warning": warning, "domains": domains}),
+        Live {
+            url,
+            rate,
+            remaining,
+            warning,
+            domains,
+        } => {
+            json!({"state": "live", "url": url, "rate": rate, "remaining": remaining, "warning": warning, "domains": domains})
+        }
         Request(r) => json!({"request": {
             "method": r.method, "path": r.path, "status": r.status, "ms": r.ms, "in": r.bytes_in, "out": r.bytes_out,
             "at": r.at.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
         }}),
         Notice(text) => json!({"notice": text}),
-        Reconnecting { reason, delay } => json!({"state": "reconnecting", "reason": reason, "delay_ms": delay.as_millis() as u64}),
+        Reconnecting { reason, delay } => {
+            json!({"state": "reconnecting", "reason": reason, "delay_ms": delay.as_millis() as u64})
+        }
         Ended { reason, error } => json!({"state": "ended", "reason": reason, "error": error}),
     };
     v["type"] = "share".into();
@@ -112,7 +128,9 @@ fn event(id: u64, ev: share::Event) -> Value {
 /// optionally asking for `name` as the first label of its hostname.
 pub fn open(target: String, name: String) {
     let source = target.trim().to_owned();
-    start(source.clone(), name, move || resolve(&source).map(|t| (t, None)));
+    start(source.clone(), name, move || {
+        resolve(&source).map(|t| (t, None))
+    });
 }
 
 /// A port, `host:port` or a container name, the container looked up
@@ -120,7 +138,9 @@ pub fn open(target: String, name: String) {
 fn resolve(arg: &str) -> std::io::Result<share::Target> {
     share::resolve_via(arg, |name| {
         if !crate::client::alive() {
-            return Err(std::io::Error::other(format!("`{name}` isn't a port, and Kiri isn't running to look up a container by that name")));
+            return Err(std::io::Error::other(format!(
+                "`{name}` isn't a port, and Kiri isn't running to look up a container by that name"
+            )));
         }
         let r = crate::client::request("GET", &format!("/containers/{name}/json"), None)?;
         if r.status == 404 {
@@ -148,15 +168,31 @@ fn browser(url: &str) {
 pub fn open_k8s(source: String, ip: String, port: u16, label: String, name: String) {
     let shown = source.clone();
     start(source, name, move || {
-        let r = crate::client::request("POST", "/kiri/k8s/forward", Some(&json!({"ip": ip, "port": port})))?;
+        let r = crate::client::request(
+            "POST",
+            "/kiri/k8s/forward",
+            Some(&json!({"ip": ip, "port": port})),
+        )?;
         if r.status == 404 {
-            return Err(std::io::Error::other("this Kiri engine can't reach Kubernetes services yet; restart Kiri"));
+            return Err(std::io::Error::other(
+                "this Kiri engine can't reach Kubernetes services yet; restart Kiri",
+            ));
         }
         if !r.ok() {
             return Err(std::io::Error::other(r.error()));
         }
-        let mac = r.json()["port"].as_u64().and_then(|p| u16::try_from(p).ok()).ok_or_else(|| std::io::Error::other("the engine gave no port"))?;
-        Ok((share::Target { addr: format!("127.0.0.1:{mac}"), label, display: shown }, Some(mac)))
+        let mac = r.json()["port"]
+            .as_u64()
+            .and_then(|p| u16::try_from(p).ok())
+            .ok_or_else(|| std::io::Error::other("the engine gave no port"))?;
+        Ok((
+            share::Target {
+                addr: format!("127.0.0.1:{mac}"),
+                label,
+                display: shown,
+            },
+            Some(mac),
+        ))
     });
 }
 
@@ -169,7 +205,11 @@ fn unforward(port: Option<u16>) {
     }
 }
 
-fn start(source: String, name: String, resolve: impl FnOnce() -> std::io::Result<(share::Target, Option<u16>)> + Send + 'static) {
+fn start(
+    source: String,
+    name: String,
+    resolve: impl FnOnce() -> std::io::Result<(share::Target, Option<u16>)> + Send + 'static,
+) {
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
     let name = Some(name.trim().to_owned()).filter(|n| !n.is_empty());
     std::thread::spawn(move || {
@@ -178,42 +218,65 @@ fn start(source: String, name: String, resolve: impl FnOnce() -> std::io::Result
             Err(e) => return emit(json!({"type": "share", "id": id, "source": source, "target": source, "state": "ended", "reason": e.to_string(), "error": true}).to_string()),
         };
         let shown = resolved.display.clone();
-        with_links(|m| m.insert(id, Link { source: source.clone(), target: shown.clone(), name: name.clone(), url: None, state: "connecting", requests: 0, bytes_in: 0, bytes_out: 0, handle: None, forward }));
+        with_links(|m| {
+            m.insert(
+                id,
+                Link {
+                    source: source.clone(),
+                    target: shown.clone(),
+                    name: name.clone(),
+                    url: None,
+                    state: "connecting",
+                    requests: 0,
+                    bytes_in: 0,
+                    bytes_out: 0,
+                    handle: None,
+                    forward,
+                },
+            )
+        });
         emit(json!({"type": "share", "id": id, "source": source, "target": shown, "name": name, "state": "connecting"}).to_string());
-        let started = share::start(share::Options { target: resolved, name, app: true }, move |ev| {
-            if let share::Event::Request(r) = &ev {
-                for (n, add) in SERVED.iter().zip([1, r.bytes_in, r.bytes_out]) {
-                    n.fetch_add(add, Ordering::Relaxed);
-                }
-                with_links(|m| {
-                    if let Some(l) = m.get_mut(&id) {
-                        l.requests += 1;
-                        l.bytes_in += r.bytes_in;
-                        l.bytes_out += r.bytes_out;
+        let started = share::start(
+            share::Options {
+                target: resolved,
+                name,
+                app: true,
+            },
+            move |ev| {
+                if let share::Event::Request(r) = &ev {
+                    for (n, add) in SERVED.iter().zip([1, r.bytes_in, r.bytes_out]) {
+                        n.fetch_add(add, Ordering::Relaxed);
                     }
-                });
-            }
-            let v = event(id, ev);
-            with_links(|m| match v["state"].as_str() {
-                Some("ended") => {
-                    unforward(m.remove(&id).and_then(|l| l.forward));
+                    with_links(|m| {
+                        if let Some(l) = m.get_mut(&id) {
+                            l.requests += 1;
+                            l.bytes_in += r.bytes_in;
+                            l.bytes_out += r.bytes_out;
+                        }
+                    });
                 }
-                Some(s) => {
-                    if let Some(l) = m.get_mut(&id) {
-                        l.state = match s {
-                            "live" => "live",
-                            "reconnecting" => "reconnecting",
-                            _ => "connecting",
-                        };
-                        if let Some(u) = v["url"].as_str() {
-                            l.url = Some(u.to_owned());
+                let v = event(id, ev);
+                with_links(|m| match v["state"].as_str() {
+                    Some("ended") => {
+                        unforward(m.remove(&id).and_then(|l| l.forward));
+                    }
+                    Some(s) => {
+                        if let Some(l) = m.get_mut(&id) {
+                            l.state = match s {
+                                "live" => "live",
+                                "reconnecting" => "reconnecting",
+                                _ => "connecting",
+                            };
+                            if let Some(u) = v["url"].as_str() {
+                                l.url = Some(u.to_owned());
+                            }
                         }
                     }
-                }
-                None => {}
-            });
-            emit(v.to_string());
-        });
+                    None => {}
+                });
+                emit(v.to_string());
+            },
+        );
         match started {
             // Unless it already ended, keep the tunnel so Stop can close it.
             Ok(h) => {
@@ -248,7 +311,8 @@ pub fn close(id: u64) {
 /// `kiri share` on this computer (the account's tunnels with this machine's
 /// id), so nothing stays public while Kiri is off.
 pub fn close_all() {
-    let handles: Vec<share::Handle> = with_links(|m| m.values_mut().filter_map(|l| l.handle.take()).collect());
+    let handles: Vec<share::Handle> =
+        with_links(|m| m.values_mut().filter_map(|l| l.handle.take()).collect());
     std::thread::spawn(move || {
         for h in handles {
             h.stop();
@@ -256,9 +320,15 @@ pub fn close_all() {
         let Ok(live) = share::tunnels() else { return };
         let device = share::load().map(|c| c.device).unwrap_or_default();
         let machine = share::machine_id(&device);
-        for t in live.items.iter().filter(|t| (!t.machine.is_empty() && t.machine == machine) || (!t.device.is_empty() && t.device == device)) {
+        for t in live.items.iter().filter(|t| {
+            (!t.machine.is_empty() && t.machine == machine)
+                || (!t.device.is_empty() && t.device == device)
+        }) {
             if let Err(e) = share::close_tunnel(&t.name) {
-                emit(super::notice("error", &format!("Couldn't stop {}: {e}", t.name)));
+                emit(super::notice(
+                    "error",
+                    &format!("Couldn't stop {}: {e}", t.name),
+                ));
             }
         }
         tunnels();
@@ -269,7 +339,9 @@ pub fn close_all() {
 /// Opens a link's public URL in the browser: only a URL the edge gave one of
 /// this app's tunnels, never one the page names.
 pub fn browse(id: u64) {
-    if let Some(url) = with_links(|m| m.get(&id).and_then(|l| l.url.clone())).filter(|u| u.starts_with("https://")) {
+    if let Some(url) =
+        with_links(|m| m.get(&id).and_then(|l| l.url.clone())).filter(|u| u.starts_with("https://"))
+    {
         browser(&url);
     }
 }
@@ -305,22 +377,36 @@ pub fn tunnels() {
 /// files): `{"type":"sharetraffic", "items": [{url, requests, in, out}]}`.
 /// Local and cheap, so the page asks every couple of seconds on Share.
 pub fn traffic() {
-    let items: Vec<Value> = share::traffic().into_iter().map(|(url, [r, i, o])| json!({"url": url, "requests": r, "in": i, "out": o})).collect();
+    let items: Vec<Value> = share::traffic()
+        .into_iter()
+        .map(|(url, [r, i, o])| json!({"url": url, "requests": r, "in": i, "out": o}))
+        .collect();
     emit(json!({"type": "sharetraffic", "items": items}).to_string());
 }
 
 fn tunnels_event(r: std::io::Result<share::LiveTunnels>) -> Value {
     match r {
         Ok(list) => {
-            *LISTED.lock().unwrap() = list.items.iter().map(|t| (t.name.clone(), t.url.clone())).collect();
+            *LISTED.lock().unwrap() = list
+                .items
+                .iter()
+                .map(|t| (t.name.clone(), t.url.clone()))
+                .collect();
             let device = share::load().map(|c| c.device).unwrap_or_default();
             let machine = share::machine_id(&device);
-            let own: Vec<String> = with_links(|m| m.values().filter_map(|l| l.url.clone()).collect());
-            let items: Vec<Value> = list.items.iter().map(|t| tagged(t, &machine, &device, &own)).collect();
+            let own: Vec<String> =
+                with_links(|m| m.values().filter_map(|l| l.url.clone()).collect());
+            let items: Vec<Value> = list
+                .items
+                .iter()
+                .map(|t| tagged(t, &machine, &device, &own))
+                .collect();
             json!({"type": "sharetunnels", "items": items, "limit": list.limit})
         }
         // An edge from before the list: the page shows its own shares only.
-        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => json!({"type": "sharetunnels", "unsupported": true}),
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => {
+            json!({"type": "sharetunnels", "unsupported": true})
+        }
         Err(e) => json!({"type": "sharetunnels", "error": e.to_string()}),
     }
 }
@@ -331,7 +417,9 @@ fn tunnels_event(r: std::io::Result<share::LiveTunnels>) -> Value {
 /// another computer on the account runs it.
 fn tagged(t: &share::LiveTunnel, machine: &str, device: &str, own: &[String]) -> Value {
     let mine = !t.url.is_empty() && own.contains(&t.url);
-    let here = mine || (!t.machine.is_empty() && t.machine == machine) || (!t.device.is_empty() && t.device == device);
+    let here = mine
+        || (!t.machine.is_empty() && t.machine == machine)
+        || (!t.device.is_empty() && t.device == device);
     json!({
         "name": t.name, "label": t.label, "url": t.url, "host": t.host, "kind": if t.kind == "app" { "app" } else { "cli" }, "program": program(t),
         "target": t.target, "started": t.started, "mine": mine, "where": if here { "here" } else { "external" },
@@ -353,7 +441,12 @@ fn program(t: &share::LiveTunnel) -> String {
 
 /// Opens the link of a tunnel the edge listed: never one the page names.
 pub fn browse_tunnel(name: &str) {
-    let url = LISTED.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, u)| u.clone());
+    let url = LISTED
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, u)| u.clone());
     if let Some(url) = url.filter(|u| u.starts_with("https://")) {
         browser(&url);
     }
@@ -364,7 +457,10 @@ pub fn browse_tunnel(name: &str) {
 pub fn stop_tunnel(name: String) {
     std::thread::spawn(move || {
         if let Err(e) = share::close_tunnel(&name) {
-            emit(super::notice("error", &format!("Couldn't stop {name}: {e}")));
+            emit(super::notice(
+                "error",
+                &format!("Couldn't stop {name}: {e}"),
+            ));
         }
         tunnels();
     });
@@ -379,7 +475,10 @@ pub fn sign_in() {
     std::thread::spawn(|| {
         let result = (|| -> std::io::Result<String> {
             let code = share::login_start()?;
-            emit(json!({"type": "sharelogin", "code": code.user_code, "uri": code.verification_uri}).to_string());
+            emit(
+                json!({"type": "sharelogin", "code": code.user_code, "uri": code.verification_uri})
+                    .to_string(),
+            );
             if code.verification_uri.starts_with("https://github.com/") {
                 browser(&code.verification_uri);
             }
@@ -425,7 +524,15 @@ mod tests {
     use super::*;
 
     fn t(url: &str, machine: &str, device: &str, kind: &str, client: &str) -> share::LiveTunnel {
-        share::LiveTunnel { name: "x".into(), url: url.into(), machine: machine.into(), device: device.into(), kind: kind.into(), client: client.into(), ..Default::default() }
+        share::LiveTunnel {
+            name: "x".into(),
+            url: url.into(),
+            machine: machine.into(),
+            device: device.into(),
+            kind: kind.into(),
+            client: client.into(),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -433,18 +540,66 @@ mod tests {
         let own = vec!["https://web-k3x9ab.runkiri.cloud".to_owned()];
         let at = |x: &share::LiveTunnel| {
             let v = tagged(x, "mac1", "dev1", &own);
-            (v["where"].as_str().unwrap().to_owned(), v["mine"].as_bool().unwrap())
+            (
+                v["where"].as_str().unwrap().to_owned(),
+                v["mine"].as_bool().unwrap(),
+            )
         };
         // This window's own link.
-        assert_eq!(at(&t("https://web-k3x9ab.runkiri.cloud", "mac1", "dev1", "app", "Kiri Dev 0.9.4")), ("here".into(), true));
+        assert_eq!(
+            at(&t(
+                "https://web-k3x9ab.runkiri.cloud",
+                "mac1",
+                "dev1",
+                "app",
+                "Kiri Dev 0.9.4"
+            )),
+            ("here".into(), true)
+        );
         // `kiri share` on this Mac, with its own config dir: another device, the same machine.
-        assert_eq!(at(&t("https://flower-x1ab23.runkiri.cloud", "mac1", "dev9", "cli", "kiri 0.9.4")), ("here".into(), false));
+        assert_eq!(
+            at(&t(
+                "https://flower-x1ab23.runkiri.cloud",
+                "mac1",
+                "dev9",
+                "cli",
+                "kiri 0.9.4"
+            )),
+            ("here".into(), false)
+        );
         // An older CLI that sends no machine id, sharing this app's config.
-        assert_eq!(at(&t("https://old-ab12cd.runkiri.cloud", "", "dev1", "cli", "kiri 0.8.0")), ("here".into(), false));
+        assert_eq!(
+            at(&t(
+                "https://old-ab12cd.runkiri.cloud",
+                "",
+                "dev1",
+                "cli",
+                "kiri 0.8.0"
+            )),
+            ("here".into(), false)
+        );
         // The app on another computer.
-        assert_eq!(at(&t("https://api-7fq2ab.runkiri.cloud", "mac2", "dev2", "app", "Kiri Dev 0.9.4")), ("external".into(), false));
+        assert_eq!(
+            at(&t(
+                "https://api-7fq2ab.runkiri.cloud",
+                "mac2",
+                "dev2",
+                "app",
+                "Kiri Dev 0.9.4"
+            )),
+            ("external".into(), false)
+        );
         // No machine and another device: another computer, as far as anyone can tell.
-        assert_eq!(at(&t("https://old-zz12cd.runkiri.cloud", "", "dev7", "cli", "kiri 0.8.0")), ("external".into(), false));
+        assert_eq!(
+            at(&t(
+                "https://old-zz12cd.runkiri.cloud",
+                "",
+                "dev7",
+                "cli",
+                "kiri 0.8.0"
+            )),
+            ("external".into(), false)
+        );
     }
 
     #[test]
@@ -458,7 +613,10 @@ mod tests {
 
     #[test]
     fn an_edge_without_the_list_says_so() {
-        let v = tunnels_event(Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "no")));
+        let v = tunnels_event(Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "no",
+        )));
         assert_eq!(v["unsupported"], true);
         let v = tunnels_event(Err(std::io::Error::other("offline")));
         assert_eq!(v["error"], "offline");

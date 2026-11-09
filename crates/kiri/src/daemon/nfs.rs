@@ -56,28 +56,42 @@ pub fn socket_path() -> io::Result<PathBuf> {
 
 pub fn start(engine: Arc<Engine>) -> io::Result<PathBuf> {
     let path = socket_path()?;
-    let dir = path.parent().ok_or_else(|| io::Error::other("no folder for the files socket"))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::other("no folder for the files socket"))?;
     std::fs::create_dir_all(dir)?;
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     // SAFETY: getuid cannot fail.
     if std::fs::symlink_metadata(dir)?.uid() != unsafe { libc::getuid() } {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("{} belongs to another user", dir.display())));
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} belongs to another user", dir.display()),
+        ));
     }
     let _ = std::fs::remove_file(&path); // stale, from a daemon that died
     let listener = UnixListener::bind(&path)?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     let handles = Arc::new(Mutex::new(Handles::default()));
-    std::thread::Builder::new().name("kiri-nfs".into()).spawn(move || {
-        for conn in listener.incoming().flatten() {
-            if !allowed(&conn) {
-                continue;
+    std::thread::Builder::new()
+        .name("kiri-nfs".into())
+        .spawn(move || {
+            for conn in listener.incoming().flatten() {
+                if !allowed(&conn) {
+                    continue;
+                }
+                let (engine, handles) = (engine.clone(), handles.clone());
+                let _ = std::thread::Builder::new()
+                    .name("kiri-nfs-conn".into())
+                    .spawn(move || {
+                        let _ = Server {
+                            engine: &engine,
+                            handles: &handles,
+                            listing: None,
+                        }
+                        .serve(conn);
+                    });
             }
-            let (engine, handles) = (engine.clone(), handles.clone());
-            let _ = std::thread::Builder::new().name("kiri-nfs-conn".into()).spawn(move || {
-                let _ = Server { engine: &engine, handles: &handles, listing: None }.serve(conn);
-            });
-        }
-    })?;
+        })?;
     Ok(path)
 }
 
@@ -95,22 +109,32 @@ fn allowed(conn: &UnixStream) -> bool {
 
 /// Where Finder shows the files.
 pub fn mount_point() -> io::Result<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| io::Error::other("HOME is not set"))?;
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("HOME is not set"))?;
     Ok(home.join(crate::flavor::APP.get()))
 }
 
 /// Mounts the server at `~/Kiri`, as the user (no admin rights needed).
 pub fn mount(socket: &Path) -> io::Result<PathBuf> {
     let dir = mount_point()?;
-    let socket = socket.to_str().filter(|s| !s.contains(',')).ok_or_else(|| io::Error::other("the files socket's path cannot be passed to mount_nfs"))?;
+    let socket = socket
+        .to_str()
+        .filter(|s| !s.contains(','))
+        .ok_or_else(|| io::Error::other("the files socket's path cannot be passed to mount_nfs"))?;
     unmount();
     std::fs::create_dir_all(&dir)?;
     // ticotsord with socket paths: mount_nfs's local transport ("<>" is the
     // host). noac: attributes are never reused, so every read sees the
     // current file. soft: if the daemon is gone, Finder gets an error
     // instead of hanging.
-    let opts = format!("vers=3,proto=ticotsord,port={socket},mountport={socket},rdonly,nolocks,soft,intr,timeo=10,retrans=2,noac");
-    let status = std::process::Command::new("/sbin/mount_nfs").args(["-o", &opts, "<>:/"]).arg(&dir).status()?;
+    let opts = format!(
+        "vers=3,proto=ticotsord,port={socket},mountport={socket},rdonly,nolocks,soft,intr,timeo=10,retrans=2,noac"
+    );
+    let status = std::process::Command::new("/sbin/mount_nfs")
+        .args(["-o", &opts, "<>:/"])
+        .arg(&dir)
+        .status()?;
     if !status.success() {
         return Err(io::Error::other(format!("mount_nfs failed: {status}")));
     }
@@ -119,7 +143,11 @@ pub fn mount(socket: &Path) -> io::Result<PathBuf> {
 
 pub fn unmount() {
     if let Ok(dir) = mount_point() {
-        let _ = std::process::Command::new("/sbin/umount").arg("-f").arg(&dir).stderr(std::process::Stdio::null()).status();
+        let _ = std::process::Command::new("/sbin/umount")
+            .arg("-f")
+            .arg(&dir)
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 }
 
@@ -165,7 +193,10 @@ impl Handles {
         if generation != self.generation {
             return Err(STALE);
         }
-        self.nodes.get((i as usize).wrapping_sub(1)).cloned().ok_or(STALE)
+        self.nodes
+            .get((i as usize).wrapping_sub(1))
+            .cloned()
+            .ok_or(STALE)
     }
 
     /// A stable file id: the handle's index, unique across the export.
@@ -183,7 +214,10 @@ fn encode_fh(generation: u64, i: u64) -> [u8; 16] {
 
 fn decode_fh(fh: &[u8]) -> Option<(u64, u64)> {
     let fh: &[u8; 16] = fh.try_into().ok()?;
-    Some((u64::from_be_bytes(fh[..8].try_into().ok()?), u64::from_be_bytes(fh[8..].try_into().ok()?)))
+    Some((
+        u64::from_be_bytes(fh[..8].try_into().ok()?),
+        u64::from_be_bytes(fh[8..].try_into().ok()?),
+    ))
 }
 
 /// XDR decoding over one call's bytes.
@@ -274,7 +308,15 @@ impl Attr {
     }
 
     fn dir(fileid: u64) -> Attr {
-        Attr { dir: true, link: false, mode: 0o040755, size: 4096, mtime: 0, mtime_nsec: 0, fileid }
+        Attr {
+            dir: true,
+            link: false,
+            mode: 0o040755,
+            size: 4096,
+            mtime: 0,
+            mtime_nsec: 0,
+            fileid,
+        }
     }
 
     /// fattr3. Files belong to the Mac user and read as read-only, so Finder
@@ -300,8 +342,17 @@ impl Attr {
         }
         // SAFETY: getuid/getgid cannot fail.
         let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
-        o.u32(ftype).u32(mode).u32(if self.dir { 2 } else { 1 }).u32(uid).u32(gid);
-        o.u64(self.size).u64(self.size.div_ceil(4096) * 4096).u32(0).u32(0).u64(FSID).u64(self.fileid);
+        o.u32(ftype)
+            .u32(mode)
+            .u32(if self.dir { 2 } else { 1 })
+            .u32(uid)
+            .u32(gid);
+        o.u64(self.size)
+            .u64(self.size.div_ceil(4096) * 4096)
+            .u32(0)
+            .u32(0)
+            .u64(FSID)
+            .u64(self.fileid);
         for _ in 0..3 {
             o.u32(self.mtime.max(0) as u32).u32(self.mtime_nsec);
         }
@@ -332,7 +383,10 @@ impl Server<'_> {
                 let mark = u32::from_be_bytes(mark);
                 let len = (mark & 0x7fff_ffff) as usize;
                 if record.len() + len > MAX_RECORD {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "RPC record too large"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "RPC record too large",
+                    ));
                 }
                 let at = record.len();
                 record.resize(at + len, 0);
@@ -341,7 +395,9 @@ impl Server<'_> {
                     break;
                 }
             }
-            let Some(reply) = self.call(&record) else { continue };
+            let Some(reply) = self.call(&record) else {
+                continue;
+            };
             let mut framed = Vec::with_capacity(reply.len() + 4);
             framed.extend_from_slice(&(0x8000_0000 | reply.len() as u32).to_be_bytes());
             framed.extend_from_slice(&reply);
@@ -397,7 +453,11 @@ impl Server<'_> {
             0 | 3 | 4 => {} // NULL, UMNT, UMNTALL
             1 => {
                 a.str()?;
-                let fh = self.handles.lock().unwrap_or_else(|e| e.into_inner()).get(Node::Root);
+                let fh = self
+                    .handles
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(Node::Root);
                 o.u32(OK).opaque(&fh).u32(1).u32(1); // AUTH_SYS
             }
             5 => {
@@ -474,7 +534,13 @@ impl Server<'_> {
                     Ok(at) => {
                         o.u32(OK);
                         at.post_op(o);
-                        o.u64(1 << 40).u64(0).u64(0).u64(1 << 20).u64(0).u64(0).u32(0);
+                        o.u64(1 << 40)
+                            .u64(0)
+                            .u64(0)
+                            .u64(1 << 20)
+                            .u64(0)
+                            .u64(0)
+                            .u32(0);
                     }
                     Err(e) => {
                         o.u32(e).bool(false);
@@ -487,7 +553,13 @@ impl Server<'_> {
                     Ok(at) => {
                         o.u32(OK);
                         at.post_op(o);
-                        o.u32(MAX_READ).u32(MAX_READ).u32(4096).u32(0).u32(0).u32(4096).u32(64 * 1024);
+                        o.u32(MAX_READ)
+                            .u32(MAX_READ)
+                            .u32(4096)
+                            .u32(0)
+                            .u32(0)
+                            .u32(4096)
+                            .u32(64 * 1024);
                         o.u64(u64::MAX >> 1).u32(0).u32(1).u32(0x08); // FSF_HOMOGENEOUS
                     }
                     Err(e) => {
@@ -501,7 +573,12 @@ impl Server<'_> {
                     Ok(at) => {
                         o.u32(OK);
                         at.post_op(o);
-                        o.u32(1).u32(255).bool(true).bool(true).bool(false).bool(true);
+                        o.u32(1)
+                            .u32(255)
+                            .bool(true)
+                            .bool(true)
+                            .bool(false)
+                            .bool(true);
                     }
                     Err(e) => {
                         o.u32(e).bool(false);
@@ -527,11 +604,17 @@ impl Server<'_> {
     }
 
     fn node(&self, fh: &[u8]) -> Result<Node, u32> {
-        self.handles.lock().unwrap_or_else(|e| e.into_inner()).node(fh)
+        self.handles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .node(fh)
     }
 
     fn handle(&self, node: Node) -> [u8; 16] {
-        self.handles.lock().unwrap_or_else(|e| e.into_inner()).get(node)
+        self.handles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(node)
     }
 
     /// The running container `id`, or STALE once it stopped.
@@ -557,10 +640,19 @@ impl Server<'_> {
     /// The root changes whenever the set of running containers does; its
     /// mtime says so, which is what makes the client list it again.
     fn root_attr(&self) -> Attr {
-        let mut names = self.engine.each(|c| (c.status == Status::Running).then(|| c.id.clone()));
+        let mut names = self
+            .engine
+            .each(|c| (c.status == Status::Running).then(|| c.id.clone()));
         names.sort();
-        let h = names.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, n| n.bytes().fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)));
-        Attr { mtime: 1_700_000_000 + (h % 1_000_000) as i64, mtime_nsec: ((h >> 20) % 1_000_000_000) as u32, ..Attr::dir(1) }
+        let h = names.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, n| {
+            n.bytes()
+                .fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
+        });
+        Attr {
+            mtime: 1_700_000_000 + (h % 1_000_000) as i64,
+            mtime_nsec: ((h >> 20) % 1_000_000_000) as u32,
+            ..Attr::dir(1)
+        }
     }
 
     fn lookup(&mut self, dir: &[u8], name: &str, o: &mut Out) {
@@ -580,9 +672,19 @@ impl Server<'_> {
             _ if name == "." => Ok((dir.try_into().unwrap_or([0; 16]), None)),
             Ok(Node::Root) => {
                 // Names are not unique over time; the running one wins.
-                let id = self.engine.each(|c| (c.status == Status::Running && c.name == name).then(|| c.id.clone())).into_iter().next();
+                let id = self
+                    .engine
+                    .each(|c| (c.status == Status::Running && c.name == name).then(|| c.id.clone()))
+                    .into_iter()
+                    .next();
                 match id {
-                    Some(id) => Ok((self.handle(Node::File { id, path: "/".into() }), None)),
+                    Some(id) => Ok((
+                        self.handle(Node::File {
+                            id,
+                            path: "/".into(),
+                        }),
+                        None,
+                    )),
                     None => Err(NOENT),
                 }
             }
@@ -649,7 +751,11 @@ impl Server<'_> {
             Ok(data) => {
                 // No attributes: the client already holds fresh ones from its
                 // open, and fetching them would cost another guest round trip.
-                o.u32(OK).bool(false).u32(data.len() as u32).bool((data.len() as u32) < count).opaque(&data);
+                o.u32(OK)
+                    .bool(false)
+                    .u32(data.len() as u32)
+                    .bool((data.len() as u32) < count)
+                    .opaque(&data);
             }
             Err(e) => {
                 o.u32(errno(e)).bool(false);
@@ -677,7 +783,13 @@ impl Server<'_> {
             let list = match &node {
                 Node::Root => {
                     let mut names = self.engine.each(|c| {
-                        (c.status == Status::Running).then(|| FileInfo { name: c.name.clone(), mode: 0o040755, size: 4096, mtime: 0, mtime_nsec: 0 })
+                        (c.status == Status::Running).then(|| FileInfo {
+                            name: c.name.clone(),
+                            mode: 0o040755,
+                            size: 4096,
+                            mtime: 0,
+                            mtime_nsec: 0,
+                        })
                     });
                     names.sort_by(|a, b| a.name.cmp(&b.name));
                     names
@@ -693,7 +805,11 @@ impl Server<'_> {
             };
             self.listing = Some((*fh, list));
         }
-        let entries = self.listing.as_ref().map(|(_, l)| l.clone()).unwrap_or_default();
+        let entries = self
+            .listing
+            .as_ref()
+            .map(|(_, l)| l.clone())
+            .unwrap_or_default();
         o.u32(OK);
         dir_attr.post_op(o);
         o.u64(0); // cookie verifier
@@ -703,13 +819,29 @@ impl Server<'_> {
         let mut eof = true;
         for (i, f) in entries.iter().enumerate().skip(cookie as usize) {
             let child = match &node {
-                Node::Root => self.engine.each(|c| (c.status == Status::Running && c.name == f.name).then(|| c.id.clone())).into_iter().next().map(|id| Node::File { id, path: "/".into() }),
-                Node::File { id, path } => Some(Node::File { id: id.clone(), path: format!("{}/{}", path.trim_end_matches('/'), f.name) }),
+                Node::Root => self
+                    .engine
+                    .each(|c| {
+                        (c.status == Status::Running && c.name == f.name).then(|| c.id.clone())
+                    })
+                    .into_iter()
+                    .next()
+                    .map(|id| Node::File {
+                        id,
+                        path: "/".into(),
+                    }),
+                Node::File { id, path } => Some(Node::File {
+                    id: id.clone(),
+                    path: format!("{}/{}", path.trim_end_matches('/'), f.name),
+                }),
             };
             let Some(child) = child else { continue };
             let cfh = self.handle(child);
             let mut e = Out::default();
-            e.bool(true).u64(Handles::fileid(&cfh)).opaque(f.name.as_bytes()).u64(i as u64 + 1);
+            e.bool(true)
+                .u64(Handles::fileid(&cfh))
+                .opaque(f.name.as_bytes())
+                .u64(i as u64 + 1);
             if plus {
                 if matches!(node, Node::Root) {
                     // Container folders' own attributes come with LOOKUP/GETATTR.
@@ -760,13 +892,19 @@ mod tests {
         let mut h = Handles::default();
         let root = h.get(Node::Root);
         assert_eq!(h.node(&root), Ok(Node::Root));
-        let a = Node::File { id: "c1".into(), path: "/etc".into() };
+        let a = Node::File {
+            id: "c1".into(),
+            path: "/etc".into(),
+        };
         let fa = h.get(a.clone());
         assert_eq!(h.get(a.clone()), fa);
         assert_eq!(h.node(&fa), Ok(a));
         assert_eq!(h.node(b"short"), Err(BADHANDLE));
         for i in 0..MAX_HANDLES {
-            h.get(Node::File { id: "c1".into(), path: format!("/{i}") });
+            h.get(Node::File {
+                id: "c1".into(),
+                path: format!("/{i}"),
+            });
         }
         // The table started over: the old handle is stale, the root is not.
         assert_eq!(h.node(&fa), Err(STALE));

@@ -18,7 +18,12 @@ mod imp {
         static F: std::sync::OnceLock<Option<F>> = std::sync::OnceLock::new();
         let f = F.get_or_init(|| {
             // SAFETY: dlsym with a NUL-terminated name; the symbol, when there, has this signature.
-            let p = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"responsibility_get_pid_responsible_for_pid".as_ptr()) };
+            let p = unsafe {
+                libc::dlsym(
+                    libc::RTLD_DEFAULT,
+                    c"responsibility_get_pid_responsible_for_pid".as_ptr(),
+                )
+            };
             (!p.is_null()).then(|| unsafe { std::mem::transmute::<*mut libc::c_void, F>(p) })
         });
         // SAFETY: takes and returns a pid.
@@ -30,7 +35,8 @@ mod imp {
         // SAFETY: the buffer is as large as we say.
         let n = unsafe { libc::proc_pidpath(pid, path.as_mut_ptr().cast(), path.len() as u32) };
         n > 0
-            && String::from_utf8_lossy(&path[..n as usize]).contains("com.apple.Virtualization.VirtualMachine")
+            && String::from_utf8_lossy(&path[..n as usize])
+                .contains("com.apple.Virtualization.VirtualMachine")
             && {
                 // The engine, or whatever macOS holds responsible for it: the
                 // window, when the window started the engine.
@@ -43,7 +49,8 @@ mod imp {
     fn find() -> Option<i32> {
         let mut pids = vec![0i32; 8192];
         // SAFETY: the buffer is as large as we say, in bytes.
-        let n = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), (pids.len() * 4) as i32) };
+        let n =
+            unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), (pids.len() * 4) as i32) };
         pids.truncate(n.max(0) as usize);
         pids.into_iter().filter(|&p| p > 0).find(|&p| is_ours(p))
     }
@@ -51,7 +58,13 @@ mod imp {
     fn cpu_of(pid: i32) -> Option<u64> {
         let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
         // SAFETY: info is a rusage_info_v2, the flavor asked for.
-        let rc = unsafe { libc::proc_pid_rusage(pid, libc::RUSAGE_INFO_V2, (&mut info as *mut libc::rusage_info_v2).cast()) };
+        let rc = unsafe {
+            libc::proc_pid_rusage(
+                pid,
+                libc::RUSAGE_INFO_V2,
+                (&mut info as *mut libc::rusage_info_v2).cast(),
+            )
+        };
         (rc == 0).then_some(info.ri_user_time + info.ri_system_time)
     }
 
@@ -68,7 +81,11 @@ mod imp {
         let mut tb = libc::mach_timebase_info { numer: 0, denom: 0 };
         // SAFETY: tb is the struct the call fills.
         unsafe { libc::mach_timebase_info(&mut tb) };
-        Some(if tb.denom == 0 { ticks } else { (ticks as u128 * tb.numer as u128 / tb.denom as u128) as u64 })
+        Some(if tb.denom == 0 {
+            ticks
+        } else {
+            (ticks as u128 * tb.numer as u128 / tb.denom as u128) as u64
+        })
     }
 }
 
@@ -79,7 +96,12 @@ mod imp {
         let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
         // Fields after the command, which is in parentheses and may hold spaces.
         let rest = &stat[stat.rfind(')')? + 2..];
-        let f: Vec<u64> = rest.split_whitespace().skip(11).take(2).filter_map(|v| v.parse().ok()).collect();
+        let f: Vec<u64> = rest
+            .split_whitespace()
+            .skip(11)
+            .take(2)
+            .filter_map(|v| v.parse().ok())
+            .collect();
         // SAFETY: sysconf takes no pointers.
         let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as u64;
         (f.len() == 2).then(|| (f[0] + f[1]) * 1_000_000_000 / hz)
