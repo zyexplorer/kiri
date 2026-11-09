@@ -149,6 +149,8 @@ t("Toast and pull-panel leftovers translate", () => {
   if (tr("Pull exactly this") !== "精确拉取此项") throw new Error("exact");
   if (tr("Waiting for the first sample…") !== "正在等待第一次采样…") throw new Error("stats");
   if (!tr("Couldn't share {source}: {reason}", { source: "a", reason: "b" }).includes("a")) throw new Error("share toast");
+  if (tr("Mirror settings") !== "镜像源设置") throw new Error("mirror settings");
+  if (tr("Registry") !== "仓库地址") throw new Error("registry login field");
 });
 t("Engine error fragments go through trErr()", () => {
   prefs.lang = "zh";

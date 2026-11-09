@@ -2496,7 +2496,7 @@ const ZH = {
   "VPNs need no setting: container traffic leaves through macOS.": "VPN 无需额外设置：容器流量经 macOS 外出。",
   "Start Kiri to change its network settings. ({error})": "请先启动 Kiri 再改网络设置。（{error}）",
   "Registry mirrors": "镜像加速",
-  "Registry": "仓库",
+  "Mirror settings": "镜像源设置",
   "Paste a Docker <span class=\"mono\">daemon.json</span>. Kiri applies <span class=\"mono\">registry-mirrors</span>, <span class=\"mono\">insecure-registries</span> and <span class=\"mono\">max-concurrent-downloads</span>/<span class=\"mono\">uploads</span>.": "可直接粘贴 Docker 的 <span class=\"mono\">daemon.json</span>。Kiri 会应用 <span class=\"mono\">registry-mirrors</span>、<span class=\"mono\">insecure-registries</span> 以及 <span class=\"mono\">max-concurrent-downloads</span>/<span class=\"mono\">uploads</span>。",
   "https://mirror.example.com": "https://docker.m.daocloud.io",
   "Saved in <span class=\"mono\">~/.kiri/daemon.json</span>. Changes apply on the next pull or push.": "保存在 <span class=\"mono\">~/.kiri/daemon.json</span>。更改对下次拉取或推送立即生效。",
@@ -3813,7 +3813,7 @@ const ZH_TW = {
   "VPNs need no setting: container traffic leaves through macOS.": "VPN 無需額外設置：容器流量經 macOS 外出。",
   "Start Kiri to change its network settings. ({error})": "請先啟動 Kiri 再改網絡設置。（{error}）",
   "Registry mirrors": "鏡像加速",
-  "Registry": "倉庫地址",
+  "Mirror settings": "鏡像源設置",
   "Paste a Docker <span class=\"mono\">daemon.json</span>. Kiri applies <span class=\"mono\">registry-mirrors</span>, <span class=\"mono\">insecure-registries</span> and <span class=\"mono\">max-concurrent-downloads</span>/<span class=\"mono\">uploads</span>.": "可直接粘貼 Docker 的 <span class=\"mono\">daemon.json</span>。Kiri 會應用 <span class=\"mono\">registry-mirrors</span>、<span class=\"mono\">insecure-registries</span> 以及 <span class=\"mono\">max-concurrent-downloads</span>/<span class=\"mono\">uploads</span>。",
   "https://mirror.example.com": "https://docker.m.daocloud.io",
   "Saved in <span class=\"mono\">~/.kiri/daemon.json</span>. Changes apply on the next pull or push.": "保存在 <span class=\"mono\">~/.kiri/daemon.json</span>。更改對下次拉取或推送立即生效。",
@@ -3849,6 +3849,7 @@ const ZH_TW = {
   "Signing in…": "正在登錄…",
   "Sign in to a registry…": "登錄鏡像倉庫…",
   "Sign in to a registry": "登錄鏡像倉庫",
+  "Registry": "倉庫地址",
   "Username": "用戶名",
   "Token": "令牌",
   "Access token or password": "訪問令牌或密碼",
@@ -6336,7 +6337,7 @@ function networkPane() {
       <div class="seg" role="group" aria-label="${tr("Pass to containers")}"><button data-pxc="0" aria-pressed="${!d.containers}">${tr("Off")}</button><button data-pxc="1" aria-pressed="${!!d.containers}">${tr("On")}</button></div></div>
     <div class="res-foot"><span class="muted">${tr(WIN ? "Container traffic leaves through WSL's network." : "VPNs need no setting: container traffic leaves through macOS.")}</span><span style="flex:1"></span><button class="btn primary" data-savepx>${tr("Save")}</button></div>
     <div class="mx-sec">
-      <div class="mx-head"><span class="t">${tr("Registry")}</span><span class="d">${tr("Paste a Docker <span class=\"mono\">daemon.json</span>. Kiri applies <span class=\"mono\">registry-mirrors</span>, <span class=\"mono\">insecure-registries</span> and <span class=\"mono\">max-concurrent-downloads</span>/<span class=\"mono\">uploads</span>.")}</span></div>
+      <div class="mx-head"><span class="t">${tr("Mirror settings")}</span><span class="d">${tr("Paste a Docker <span class=\"mono\">daemon.json</span>. Kiri applies <span class=\"mono\">registry-mirrors</span>, <span class=\"mono\">insecure-registries</span> and <span class=\"mono\">max-concurrent-downloads</span>/<span class=\"mono\">uploads</span>.")}</span></div>
       ${mirrors}
     </div>
   </div>`;
