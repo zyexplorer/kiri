@@ -5,6 +5,8 @@
 #   scripts/dev.sh build          # guest (if needed) + signed host binary
 #   scripts/dev.sh up             # start isolated daemon in the background
 #   scripts/dev.sh down           # stop it
+#   scripts/dev.sh ui             # open the window (survives the shell; no Terminal)
+#   scripts/dev.sh ui-down        # close that window
 #   scripts/dev.sh status
 #   scripts/dev.sh test           # cargo test (unit)
 #   scripts/dev.sh smoke          # boot + ping; optional docker run if an image exists
@@ -140,6 +142,53 @@ cmd_up() {
   say "daemon up (pid $(cat "$pidfile"))"
 }
 
+# The window must outlive the launching shell. Cursor/agent shells kill their
+# children on exit, which looks like a flash-then-quit. launchd keeps it.
+ui_label=dev.kiri.src.ui
+ui_plist=$home/run/ui.plist
+ui_logfile=$home/ui.log
+
+cmd_ui_down() {
+  launchctl bootout "gui/$(id -u)/$ui_label" 2>/dev/null || true
+  # Orphans from older launches (Terminal / nohup).
+  pgrep -f "$bin ui" >/dev/null 2>&1 && pkill -f "$bin ui" 2>/dev/null || true
+  rm -f "$ui_plist"
+  say "ui down"
+}
+
+cmd_ui() {
+  need_bin
+  mkdir -p "$home/run"
+  cmd_up
+  cmd_ui_down >/dev/null
+  cat >"$ui_plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$ui_label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$bin</string>
+    <string>ui</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>KIRI_DATA_DIR</key><string>$data</string>
+    <key>KIRI_SOCKET</key><string>$sock</string>
+    <key>KIRI_GUEST_DIR</key><string>$guest</string>
+  </dict>
+  <key>WorkingDirectory</key><string>$root</string>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>$ui_logfile</string>
+  <key>StandardErrorPath</key><string>$ui_logfile</string>
+</dict>
+</plist>
+EOF
+  launchctl bootstrap "gui/$(id -u)" "$ui_plist"
+  say "ui up (launchd $ui_label) — log: $ui_logfile"
+}
+
 cmd_status() {
   printf 'repo          %s\n' "$root"
   printf 'binary        %s%s\n' "$bin" "$([ -x "$bin" ] && echo ' (ok)' || echo ' (missing)')"
@@ -151,6 +200,13 @@ cmd_status() {
     printf 'daemon        up (pid %s)\n' "$pid"
   else
     printf 'daemon        down\n'
+  fi
+  if launchctl print "gui/$(id -u)/$ui_label" >/dev/null 2>&1; then
+    printf 'ui            up (launchd %s)\n' "$ui_label"
+  elif pgrep -f "$bin ui" >/dev/null 2>&1; then
+    printf 'ui            up (pid %s)\n' "$(pgrep -f "$bin ui" | tr '\n' ' ')"
+  else
+    printf 'ui            down\n'
   fi
   for f in Image initramfs.cpio data.img; do
     if [ -e "$guest/$f" ]; then
@@ -250,6 +306,8 @@ case "$cmd" in
   seed) seed_images "$@" ;;
   up) cmd_up "$@" ;;
   down) cmd_down "$@" ;;
+  ui) cmd_ui "$@" ;;
+  ui-down) cmd_ui_down "$@" ;;
   status) cmd_status "$@" ;;
   test) cmd_test "$@" ;;
   smoke) cmd_smoke "$@" ;;

@@ -35,6 +35,7 @@ t("a container's image line and the image's page say it the same short way", () 
   eq([crumb.textContent, crumb.querySelector(".dg").title], ["kindest/node @ sha256:a1ed56cf", D], "crumb");
   const h = $("content").querySelector(".dhead .who b");
   eq([h.textContent, h.querySelector(".dg .mono").textContent, h.querySelector("[data-copy]").dataset.copy], ["kindest/node @ sha256:a1ed56cf", "sha256:a1ed56cf", D], "heading, with a copy button for the digest");
+  eq($("content").querySelector(".dhead .who .ttl > [data-copy]")?.dataset.copy, REF, "copy button for the whole image name");
   ui.imgd = null;
 });
 t("the image's page names two of its users, then how many more", () => {

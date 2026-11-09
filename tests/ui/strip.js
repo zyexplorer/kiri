@@ -28,6 +28,19 @@ t("Settings opens Settings", () => {
   if (ui.view !== "settings") throw new Error(ui.view);
   show("containers");
 });
+t("the strip theme button sits left of Terminal and toggles", () => {
+  const theme = $("strip-theme"), term = $("strip-term"), settings = $("strip-settings");
+  if (!theme || !term || !settings) throw new Error("missing strip buttons");
+  if (!(theme.compareDocumentPosition(term) & Node.DOCUMENT_POSITION_FOLLOWING)) throw new Error("theme should be left of terminal");
+  if (!(term.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING)) throw new Error("terminal should be left of settings");
+  const before = prefs.theme;
+  prefs.theme = "dark"; applyPrefs();
+  theme.click();
+  if (prefs.theme !== "light") throw new Error("want light, got " + prefs.theme);
+  theme.click();
+  if (prefs.theme !== "dark") throw new Error("want dark, got " + prefs.theme);
+  prefs.theme = before; applyPrefs();
+});
 t("the strip drags the window, its buttons don't", () => {
   sent.length = 0;
   document.querySelector(".strip .drag").dispatchEvent(new MouseEvent("mousedown", { button: 0, detail: 1, bubbles: true }));
