@@ -180,6 +180,79 @@ fn binds() -> Vec<String> {
     std::iter::once(format!("{VOLUME}:/var/lib/rancher/k3s")).chain(drives().map(|d| format!("{d}:{d}"))).collect()
 }
 
+/// k3s private-registry file for Docker Hub mirrors (Settings → Network).
+/// See https://docs.k3s.io/installation/private-registry
+fn registries_yaml(mirrors: &[String], insecure: &[String]) -> String {
+    let mut out = String::from("mirrors:\n");
+    if mirrors.is_empty() {
+        out.push_str("  docker.io:\n    endpoint: []\n");
+    } else {
+        out.push_str("  docker.io:\n    endpoint:\n");
+        for m in mirrors {
+            out.push_str(&format!("      - \"{m}\"\n"));
+        }
+    }
+    let mut hosts: Vec<String> = mirrors
+        .iter()
+        .filter(|m| m.starts_with("http://"))
+        .filter_map(|m| {
+            let rest = m.strip_prefix("http://")?;
+            let host = rest.split('/').next()?.trim();
+            (!host.is_empty()).then(|| host.to_owned())
+        })
+        .collect();
+    for h in insecure {
+        if !h.contains('/') {
+            hosts.push(h.clone());
+        }
+    }
+    hosts.sort();
+    hosts.dedup();
+    if !hosts.is_empty() {
+        out.push_str("configs:\n");
+        for h in hosts {
+            out.push_str(&format!("  \"{h}\":\n    tls:\n      insecure_skip_verify: true\n"));
+        }
+    }
+    out
+}
+
+/// Hub mirrors + insecure hosts from the engine's daemon.json.
+fn daemon_mirrors() -> (Vec<String>, Vec<String>) {
+    let Ok(v) = client::get("/kiri/daemon") else {
+        return (Vec::new(), Vec::new());
+    };
+    let settings = &v["settings"];
+    let mirrors = settings["registry-mirrors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|x| x.as_str().map(str::to_owned))
+        .collect();
+    let insecure = settings["insecure-registries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|x| x.as_str().map(str::to_owned))
+        .collect();
+    (mirrors, insecure)
+}
+
+/// Writes Settings → Network mirrors into the node's registries.yaml.
+/// Returns whether the file changed (caller should restart the node).
+fn apply_registries() -> io::Result<bool> {
+    let (mirrors, insecure) = daemon_mirrors();
+    let yaml = registries_yaml(&mirrors, &insecure);
+    let script = "set -e; d=/etc/rancher/k3s; f=$d/registries.yaml; mkdir -p $d; \
+         printf '%s' \"$1\" > $d/.kiri-registries.tmp; \
+         if cmp -s $d/.kiri-registries.tmp $f 2>/dev/null; then rm -f $d/.kiri-registries.tmp; else mv $d/.kiri-registries.tmp $f; echo written; fi";
+    let (code, out) = client::exec(NAME, &["sh", "-c", script, "sh", &yaml])?;
+    if code != 0 {
+        return Err(io::Error::other(format!("could not write registries.yaml: {}", out.trim())));
+    }
+    Ok(out.contains("written"))
+}
+
 /// The port a node container publishes its API server on: its live binding
 /// while it runs, else the one it was made with.
 fn bound_port(info: &Value) -> Option<u16> {
@@ -469,6 +542,15 @@ fn start(say: &dyn Fn(&str)) -> io::Result<()> {
     let started = client::request("POST", &format!("/containers/{NAME}/start"), None)?;
     if !started.ok() && started.status != 304 {
         return Err(io::Error::other(started.error()));
+    }
+    // Settings → Network mirrors: k3s pulls through its own containerd.
+    match apply_registries() {
+        Ok(true) => {
+            say("applying registry mirrors to the cluster…");
+            let _ = client::request("POST", &format!("/containers/{NAME}/restart?t=20"), None)?;
+        }
+        Ok(false) => {}
+        Err(e) => say(&format!("registry mirrors not applied to the cluster: {e}")),
     }
     say("waiting for the node…");
     let deadline = Instant::now() + Duration::from_secs(180);
@@ -785,5 +867,19 @@ mod tests {
         for bad in ["", "a b", "-x.com", "a..b", "x/y", "--flag"] {
             assert!(!super::valid_san(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn registries_yaml_lists_hub_mirrors() {
+        let y = super::registries_yaml(
+            &["https://docker.m.daocloud.io".into(), "http://mirror.local:5000".into()],
+            &["harbor.example:9090".into(), "10.0.0.0/8".into()],
+        );
+        assert!(y.contains("      - \"https://docker.m.daocloud.io\"\n"), "{y}");
+        assert!(y.contains("      - \"http://mirror.local:5000\"\n"), "{y}");
+        assert!(y.contains("  \"harbor.example:9090\":\n    tls:\n      insecure_skip_verify: true\n"), "{y}");
+        assert!(y.contains("  \"mirror.local:5000\":\n    tls:\n      insecure_skip_verify: true\n"), "{y}");
+        assert!(!y.contains("10.0.0.0/8"), "{y}");
+        assert!(super::registries_yaml(&[], &[]).contains("endpoint: []\n"));
     }
 }
