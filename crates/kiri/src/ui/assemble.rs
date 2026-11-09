@@ -11,7 +11,12 @@ const ICONS_JS: &str = include_str!("icons.js");
 const XTERM_CSS: &str = include_str!("xterm/xterm.css");
 /// xterm.js 6.0.0 and its fit, search and web-links add-ons (UMD builds,
 /// each defining a global), in the order they load.
-const XTERM_JS: [&str; 4] = [include_str!("xterm/xterm.js"), include_str!("xterm/addon-fit.js"), include_str!("xterm/addon-search.js"), include_str!("xterm/addon-web-links.js")];
+const XTERM_JS: [&str; 4] = [
+    include_str!("xterm/xterm.js"),
+    include_str!("xterm/addon-fit.js"),
+    include_str!("xterm/addon-search.js"),
+    include_str!("xterm/addon-web-links.js"),
+];
 
 /// `index` (index.html) with everything spliced in.
 pub fn page(index: &str) -> String {
@@ -21,7 +26,10 @@ pub fn page(index: &str) -> String {
         // Each ends in a source-map comment: the next must start on a line of its own.
         js.push('\n');
     }
-    index.replacen("/*ICONS*/", ICONS_JS, 1).replacen("/*XTERM_CSS*/", XTERM_CSS, 1).replacen("/*XTERM_JS*/", &js, 1)
+    index
+        .replacen("/*ICONS*/", ICONS_JS, 1)
+        .replacen("/*XTERM_CSS*/", XTERM_CSS, 1)
+        .replacen("/*XTERM_JS*/", &js, 1)
 }
 
 #[cfg(test)]
@@ -34,6 +42,10 @@ mod tests {
         }
         assert!(page.contains(".xterm-viewport"), "xterm.css missing");
         // NavigateToString's limit is 2 MB; keep a margin for the page to grow.
-        assert!(page.encode_utf16().count() < 1_800_000, "page is {} UTF-16 units", page.encode_utf16().count());
+        assert!(
+            page.encode_utf16().count() < 1_800_000,
+            "page is {} UTF-16 units",
+            page.encode_utf16().count()
+        );
     }
 }

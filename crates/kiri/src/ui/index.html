@@ -193,6 +193,83 @@ body.picking .ltabs { display: none; }
 .hright { display: flex; align-items: center; gap: 8px; }
 .hright .btn svg { width: 14px; height: 14px; fill: currentColor; flex: none; }
 .hright .vsep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
+/* Containers / Images: list ↔ grid toggle in the toolbar. */
+.hright .vmode { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex: none; }
+.hright .vmode button { width: 30px; height: 30px; padding: 0; border: 0; border-left: 1px solid var(--line); background: var(--panel); color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.hright .vmode button:first-child { border-left: 0; }
+.hright .vmode button[aria-pressed=true] { background: var(--blue); color: #fff; }
+.hright .vmode button svg { width: 14px; height: 14px; fill: currentColor; }
+/* Card grid for Containers and Images. */
+.ggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 14px; padding: 6px 20px 28px; align-content: start; outline: none; }
+.gcard { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 168px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); cursor: pointer; position: relative; box-sizing: border-box; transition: border-color .14s ease, background .14s ease, box-shadow .14s ease; }
+/* Hover fills the whole card like a selected row — solid wash, not just a rim. */
+.gcard:hover { background: color-mix(in srgb, var(--blue) 18%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 50%, var(--line)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 22%, transparent); }
+.gcard.chosen { background: color-mix(in srgb, var(--blue) 16%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 45%, var(--line)); box-shadow: inset 2px 0 0 var(--blue); }
+.gcard.chosen:hover { background: color-mix(in srgb, var(--blue) 22%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 55%, var(--line)); box-shadow: inset 2px 0 0 var(--blue); }
+.gcard.cur { outline: 2px solid color-mix(in srgb, var(--blue) 55%, transparent); outline-offset: 1px; }
+.gcard.picked { background: color-mix(in srgb, var(--blue) 14%, var(--panel)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 45%, transparent); }
+.gcard .gpick { position: absolute; top: 12px; right: 12px; z-index: 1; }
+.gcard .gpick .ckbox { width: 22px; height: 22px; }
+.gcard .ghead { display: flex; align-items: flex-start; gap: 12px; min-width: 0; padding-right: 28px; }
+.gcard .ghead .who { min-width: 0; flex: 1; display: grid; gap: 4px; }
+.gcard .ghead .gtitle { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.gcard .ghead .gtitle .link { min-width: 0; flex: 1; }
+.gcard .ghead .gtitle .k8s-mark { flex: none; margin-left: 0; vertical-align: 0; }
+.gcard .ghead .link { font-weight: 650; font-size: var(--fs-head); letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.gcard:hover .ghead .link { color: var(--blue-light); }
+.gcard .ghead .sub { color: var(--muted); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcard.ctr .ghead .sub { display: flex; align-items: center; gap: 4px; }
+.gcard.ctr .ghead .sub .nm { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcard.ctr .ghead .sub .copy { flex: none; opacity: .55; margin-left: 0; }
+.gcard.ctr .ghead .sub .copy:hover { opacity: 1; }
+.gcard .gmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: var(--fs-small); color: var(--muted); min-height: 22px; }
+.gcard .gmeta .pill { font-size: var(--fs-small); }
+.gcard .gused { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-small); color: var(--muted); }
+.gcard .gused .l2 { display: flex; align-items: center; gap: 6px; }
+.gcard .gused .l2 span { display: inline-flex; align-items: center; gap: 4px; }
+.gcard .gused .l2 i { font-style: normal; color: var(--faint); opacity: .6; }
+.gcard .gacts { display: flex; align-items: center; gap: 4px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); }
+.gcard .gacts .gacts-l { display: inline-flex; align-items: center; gap: 4px; }
+.gcard .gacts .spacer { flex: 1; }
+.gcard.prow .ghead .tile.blue { color: var(--blue-light); background: color-mix(in srgb, var(--blue) 16%, var(--raised)); }
+.gcard.prow .ghead .tile.err { color: var(--red-text); background: color-mix(in srgb, var(--red) 16%, var(--raised)); }
+.gcard.prow .ghead .tile.wrn { color: var(--sun-text); background: color-mix(in srgb, var(--sun) 16%, var(--raised)); }
+.gcard .gpull { min-height: 28px; }
+/* Images / Containers grid: clearer hierarchy — badge, labeled stats, roomier tile. */
+.gcard.img, .gcard.ctr { gap: 14px; min-height: 210px; padding: 16px 16px 12px; background: linear-gradient(180deg, color-mix(in srgb, var(--raised) 55%, var(--panel)) 0%, var(--panel) 42%); }
+.gcard.img:hover, .gcard.ctr:hover,
+.gcard.img.chosen, .gcard.ctr.chosen { background: color-mix(in srgb, var(--blue) 18%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 50%, var(--line)); }
+.gcard.img.chosen { box-shadow: inset 2px 0 0 var(--blue); }
+.gcard.img.chosen:hover, .gcard.ctr.chosen:hover { background: color-mix(in srgb, var(--blue) 22%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 55%, var(--line)); box-shadow: inset 2px 0 0 var(--blue); }
+.gcard.img:hover .gstats, .gcard.ctr:hover .gstats,
+.gcard.img.chosen .gstats, .gcard.ctr.chosen .gstats { background: color-mix(in srgb, var(--blue) 10%, var(--bg)); border-color: color-mix(in srgb, var(--blue) 28%, var(--line)); }
+.gcard.img .ghead .tile, .gcard.ctr .ghead .tile { width: 40px; height: 40px; border-radius: 11px; }
+.gcard.img .ghead .tile svg, .gcard.ctr .ghead .tile svg { width: 22px; height: 22px; }
+.gcard.img .gtags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.gcard.img .gtags .tag { max-width: calc(100% - 28px); }
+.gcard.img .gtags .copy { opacity: .55; }
+.gcard.img .gtags .copy:hover { opacity: 1; }
+.gcard.img .gbadge { display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; height: 24px; padding: 0 9px; border-radius: 999px; font-size: var(--fs-small); font-weight: 600; border: 1px solid var(--line); background: var(--raised); color: var(--muted); }
+.gcard.img .gbadge .cubes { display: inline-flex; align-items: center; gap: 5px; margin-left: 2px; font-weight: 550; font-variant-numeric: tabular-nums; color: var(--text); }
+.gcard.img .gbadge .cubes span { display: inline-flex; align-items: center; gap: 3px; }
+.gcard.img .gbadge .cubes i { font-style: normal; color: var(--faint); opacity: .55; }
+.gcard.img .gbadge.on { color: color-mix(in srgb, var(--moss) 75%, var(--text)); border-color: color-mix(in srgb, var(--moss) 35%, var(--line)); background: color-mix(in srgb, var(--moss) 12%, var(--raised)); }
+.gcard.img .gbadge.off { color: var(--faint); }
+.gcard.img .gstats, .gcard.ctr .gstats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--bg) 55%, transparent); border: 1px solid color-mix(in srgb, var(--line) 80%, transparent); }
+.gcard.ctr .gstats { gap: 8px 22px; }
+.gcard.img .gstats .cell, .gcard.ctr .gstats .cell { min-width: 0; display: grid; gap: 2px; }
+.gcard.img .gstats .k, .gcard.ctr .gstats .k { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+.gcard.img .gstats .v, .gcard.ctr .gstats .v { font-size: var(--fs-small); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcard.img .gstats .v.mono, .gcard.ctr .gstats .v.mono { font: 500 var(--fs-mono) var(--mono-font); color: var(--text); }
+.gcard.img .gstats .v .copy, .gcard.ctr .gstats .v .copy { vertical-align: -2px; }
+.gcard.img .gacts, .gcard.ctr .gacts { padding-top: 12px; border-top-color: color-mix(in srgb, var(--line) 85%, transparent); }
+.gcard.ctr .gstatus { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 24px; }
+.gcard.ctr .gstatus .pill { font-size: var(--fs-small); }
+.gcard.ctr .gstatus .shc { height: 24px; }
+.gcard.ctr .gstats .v.ports { white-space: normal; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; overflow: visible; }
+.gcard.ctr .gstats .v.ports .port, .gcard.ctr .gstats .v.ports .port-more { font-size: var(--fs-small); }
+.gcard.ctr .gstatus .gaddr { max-width: 100%; height: 24px; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--blue) 10%, var(--raised)); color: var(--blue-light); font: 550 var(--fs-small) var(--ui-font); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcard.ctr .gstatus .gaddr:hover { background: color-mix(in srgb, var(--blue) 16%, var(--raised)); border-color: color-mix(in srgb, var(--blue) 50%, var(--line)); }
 /* Quiet: no frame until the pointer is on it. */
 .btn.quiet { border-color: transparent; background: none; color: var(--muted); padding: 0 10px; }
 .btn.quiet:hover { color: var(--text); background: var(--raised); border-color: var(--line); }
@@ -222,8 +299,8 @@ th .ckbox { height: 22px; }
 .cb svg { width: 11px; height: 11px; fill: #fff; opacity: 0; }
 .ckbox:hover .cb { border-color: var(--muted); }
 .ckbox:focus-visible { outline: none; } .ckbox:focus-visible .cb { box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 35%, transparent); }
-tr.chosen .cb, .cb.all, .cb.some { background: var(--blue); border-color: var(--blue); }
-tr.chosen .cb svg, .cb.all svg { opacity: 1; }
+tr.chosen .cb, .gcard.chosen .cb, .cb.all, .cb.some { background: var(--blue); border-color: var(--blue); }
+tr.chosen .cb svg, .gcard.chosen .cb svg, .cb.all svg { opacity: 1; }
 .cb.some::after { content: ""; width: 8px; height: 2px; border-radius: 1px; background: #fff; }
 tr.row.chosen td { background: color-mix(in srgb, var(--blue) 14%, transparent); }
 tr.row.chosen:hover td { background: color-mix(in srgb, var(--blue) 18%, transparent); }
@@ -519,6 +596,8 @@ tr.member .tree::after { content: ""; position: absolute; left: 7.5px; top: 50%;
 .dhead .tile { width: 40px; height: 40px; border-radius: 10px; }
 .dhead .tile svg, .dhead .tile.kiri .kdot { width: 22px; height: 23px; }
 .dhead .who { display: grid; gap: 3px; min-width: 0; }
+.dhead .who .ttl { display: inline-flex; align-items: center; gap: 2px; min-width: 0; max-width: 100%; }
+.dhead .who .ttl b { font-size: var(--fs-head); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dhead .who b { font-size: var(--fs-head); }
 /* Under the name, lined up with it: small labelled facts (Image, ID, Compose). */
 .dfacts { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 28px; margin: 2px 0 0 52px; }
@@ -549,11 +628,19 @@ tr[data-rowopen] .sel, .sel { cursor: text; -webkit-user-select: text; user-sele
                 border-bottom: 2px solid transparent; margin-bottom: -1px; display: flex; gap: 7px; align-items: center; }
 .dtabs > button:hover { color: var(--text); }
 .dtabs > button[aria-current=true] { color: var(--text); border-bottom-color: var(--blue); }
-.kv { display: grid; grid-template-columns: max-content 1fr; gap: 9px 28px; font-size: var(--fs); max-width: 900px; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 9px 28px; font-size: var(--fs); width: 100%; max-width: none; }
 .kv dt { color: var(--muted); }
 /* Values a step softer than headings: a container's details are long, and full white is loud in dark mode. */
 .kv dd { min-width: 0; overflow-wrap: anywhere; color: color-mix(in srgb, var(--text) 58%, var(--muted)); }
 .kv .mono { font-size: var(--fs-mono); }
+/* A docker run / CMD preview: monospace block with copy and save-to-notes. */
+.cmdbox { border: 1px solid var(--line); border-radius: 9px; background: var(--bg); overflow: hidden; width: 100%; max-width: none; box-sizing: border-box; }
+.cmdbox-bar { display: flex; align-items: center; gap: 1px; justify-content: flex-end; padding: 1px 3px; border-bottom: 1px solid var(--line); background: var(--raised); }
+.cmdbox-bar .copy, .cmdbox-bar .cmdnote { width: 18px; height: 18px; border: 0; border-radius: 4px; background: none; color: var(--muted); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.cmdbox-bar .copy:hover, .cmdbox-bar .cmdnote:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.cmdbox-bar .copy svg, .cmdbox-bar .cmdnote svg { width: 12px; height: 12px; fill: currentColor; }
+.cmdbox-bar .copy.done { color: var(--moss); }
+.cmdbox pre { margin: 0; padding: 10px 12px; font: var(--fs-mono) var(--mono-font); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: color-mix(in srgb, var(--text) 78%, var(--muted)); max-height: 220px; overflow: auto; -webkit-user-select: text; user-select: text; }
 .envs { display: grid; gap: 3px; }
 .envhead { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; font-size: var(--fs-small); color: var(--muted); }
 /* Editing the environment, in place: name and value per row. */
@@ -623,6 +710,9 @@ tr[data-rowopen] .sel, .sel { cursor: text; -webkit-user-select: text; user-sele
 .statusbar .grow { flex: 1; }
 .statusbar .use { color: var(--faint); margin-left: -8px; }
 .statusbar .item { display: inline-flex; align-items: center; gap: 6px; }
+.statusbar .sb-ai { width: 22px; height: 18px; justify-content: center; border-radius: 5px; color: var(--muted); margin-right: -4px; }
+.statusbar .sb-ai:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.statusbar .sb-ai svg.i { width: 13px; height: 13px; fill: currentColor; }
 .kmem { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 9px 12px; border-radius: 10px; font-size: var(--fs); color: var(--text);
         border: 1px solid color-mix(in srgb, var(--sun) 45%, var(--line)); background: color-mix(in srgb, var(--sun) 10%, var(--panel)); }
 .kmem > svg { width: 16px; height: 16px; flex: none; fill: var(--sun); }
@@ -903,14 +993,17 @@ td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px
 @media (prefers-color-scheme: light) { .dialog.alert > .ico.info { --ink: var(--blue); } }
 /* Removing: a red tint, not a block of red. */
 .port-row { display: grid; grid-template-columns: 1fr 18px 1fr 74px 30px; gap: 8px; align-items: center; }
-.port-row input, .port-row select { height: 30px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: var(--fs) ui-monospace, "SF Mono", Menlo, monospace; min-width: 0; }
+.port-row input, .port-row select { height: 30px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: var(--fs) ui-monospace, "SF Mono", Menlo, monospace; min-width: 0; outline: none; }
+.port-row input:focus, .port-row select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent); }
 .port-row .arrow { color: var(--faint); text-align: center; }
 .port-head { display: grid; grid-template-columns: 1fr 18px 1fr 74px 30px; gap: 8px; font-size: var(--fs-small); font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; }
 /* Ports dialog only: cap height so "Add port" can't grow past the window;
    mapping rows scroll inside .port-list. Keep selectors under .ports-dialog
-   so other dialogs/lists are untouched. */
+   so other dialogs/lists are untouched. Padding leaves room for the focus ring
+   (overflow-y:auto otherwise clips box-shadow on focused inputs). */
 .dialog.ports-dialog { width: min(460px, calc(100% - 32px)); max-height: min(640px, calc(100vh - 48px)); overflow: hidden; align-content: start; }
-.dialog.ports-dialog .port-list { display: grid; gap: 8px; max-height: min(280px, calc(100vh - 280px)); overflow-y: auto; min-height: 0; padding-right: 2px; }
+.dialog.ports-dialog .port-head { padding: 0 4px; }
+.dialog.ports-dialog .port-list { display: grid; gap: 8px; max-height: min(280px, calc(100vh - 280px)); overflow-y: auto; min-height: 0; padding: 4px; }
 .dialog .row-end { display: flex; justify-content: space-between; gap: 8px; }
 .toasts { position: fixed; right: 18px; bottom: 18px; display: grid; gap: 8px; z-index: 9; }
 /* Images → Run: the "Started" note beside the button, pointing at it. */
@@ -927,6 +1020,13 @@ td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px
 /* Run on an image that can't start as it is: what it needs, on its Run button. */
 .need { position: fixed; z-index: 10; width: 360px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
         box-shadow: 0 14px 36px rgba(0, 0, 0, .38), 0 2px 6px rgba(0, 0, 0, .2); display: grid; gap: 12px; padding: 14px 14px 12px; animation: need-in .16s ease-out; }
+.need.wide { width: 420px; }
+.need .modeseg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; justify-self: start; }
+.need .modeseg button { height: 28px; padding: 0 12px; border: 0; border-left: 1px solid var(--line); background: var(--bg); color: var(--muted); font: 500 var(--fs) var(--ui-font); cursor: pointer; }
+.need .modeseg button:first-child { border-left: 0; }
+.need .modeseg button[aria-pressed=true] { background: var(--blue); color: #fff; }
+.need .pane[hidden] { display: none !important; }
+.need .inp textarea.bad { border-color: var(--red); }
 .need::before { content: ""; position: absolute; left: calc(var(--ax) - 5px); width: 10px; height: 10px; background: var(--panel); border: solid var(--line); transform: rotate(45deg); }
 .need.below::before { top: -6px; border-width: 1px 0 0 1px; }
 .need.above::before { bottom: -6px; border-width: 0 1px 1px 0; }
@@ -941,6 +1041,10 @@ td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px
 .need .fld > label { font: 600 var(--fs-mono) var(--mono-font); color: var(--text); }
 .need .pw { display: flex; gap: 6px; align-items: center; }
 .need .inp { position: relative; flex: 1; min-width: 0; display: flex; }
+.need .inp textarea { width: 100%; min-height: 88px; max-height: 200px; resize: vertical; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); padding: 7px 9px; font: var(--fs-mono) var(--mono-font); line-height: 1.45; -webkit-user-select: text; user-select: text; white-space: pre-wrap; }
+.need .inp textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent); }
+.need .inp textarea::placeholder { color: var(--faint); font-family: var(--mono-font); }
+.need .inp textarea:disabled { opacity: .55; }
 .need .inp input, .need .more input { width: 100%; height: 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); padding: 0 30px 0 9px;
              font: var(--fs-mono) var(--mono-font); outline: none; -webkit-user-select: text; user-select: text; min-width: 0; }
 .need .more input { padding-right: 9px; }
@@ -952,7 +1056,9 @@ td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px
 .need .eye svg, .need .gen svg { width: 15px; height: 15px; fill: currentColor; }
 .need .btn.gen { gap: 5px; padding: 0 9px; height: 28px; }
 .need .btn.gen svg { width: 13px; height: 13px; }
-.need .hint { color: var(--faint); font-size: var(--fs-small); display: flex; align-items: center; gap: 8px; }
+.need .hint { color: var(--faint); font-size: var(--fs-small); display: block; line-height: 1.45; overflow-wrap: anywhere; }
+/* Password strength keeps the bars and label on one row. */
+.need .hint:has(.bars) { display: flex; align-items: center; gap: 8px; }
 .need .hint.ok { color: var(--moss); } .need .hint.no { color: var(--sun-text); }
 .need .bars { display: inline-flex; gap: 3px; flex: none; }
 .need .bars i { width: 18px; height: 4px; border-radius: 99px; background: var(--line); }
@@ -1233,25 +1339,26 @@ td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px
 .bl-cfg > div:not(.bl-lhead) { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; padding: 6px 12px; font-size: var(--fs); }
 .bl-cfg > div:not(.bl-lhead) + div { border-top: 1px solid var(--line); }
 .bl-cfg .mono { overflow-wrap: anywhere; }
-/* Security: a scan's severity chips, filters and findings. */
-.sc-intro, .sc-run { display: grid; gap: 10px; margin-top: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: var(--fs); }
-.sc-intro p, .sc-run p { margin: 0; max-width: 640px; }
+/* Security: a scan's severity chips, filters and findings.
+   The intro / running cards span the pane (same width as Layers), not a 640px column. */
+.sc-intro, .sc-run { display: grid; gap: 10px; margin-top: 14px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: var(--fs); width: 100%; box-sizing: border-box; }
+.sc-intro p:not(.sc-err), .sc-run p:not(.sc-err) { margin: 0; max-width: 72ch; }
 .sc-introtop, .sc-runline { display: flex; align-items: center; gap: 8px; font-size: var(--fs); }
 .sc-introtop .i { width: 18px; height: 18px; fill: var(--moss); }
 .sc-spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--blue); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .sc-run .stripe { width: 100%; max-width: 360px; }
-.sc-err { margin: 0; padding: 8px 10px; border-radius: 8px; color: var(--red-text); background: color-mix(in srgb, var(--red) 12%, transparent); font-size: var(--fs); }
-.sc { display: grid; gap: 10px; margin-top: 14px; }
+.sc-err { display: block; width: 100%; max-width: none; box-sizing: border-box; margin: 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--red) 35%, var(--line)); border-radius: 8px; color: var(--red-text); background: color-mix(in srgb, var(--red) 12%, transparent); font-size: var(--fs); line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; }
+.sc { display: grid; gap: 10px; margin-top: 14px; width: 100%; }
 .sc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--fs); }
 .sc-introtop .spacer, .sc-runline .spacer { flex: 1; }
 .sc-by { display: inline-flex; align-items: center; gap: 5px; padding: 2px 6px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: var(--fs-small) var(--ui-font); cursor: pointer; }
 .sc-by img { width: 15px; height: 17px; }
 .sc-by b { color: var(--text); font-weight: 600; }
 .sc-by:hover { background: var(--raised); }
-.sc-opts { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; max-width: 640px; }
+.sc-opts { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; width: 100%; }
 /* Start scan sits under the scanner card, at its right edge. */
-.sc-go { max-width: 640px; display: flex; justify-content: flex-end; }
+.sc-go { width: 100%; display: flex; justify-content: flex-end; }
 .sc-opts legend { padding: 0 0 8px; font-size: var(--fs); }
 .sc-opt { display: grid; grid-template-columns: auto 22px 1fr; gap: 10px; align-items: start; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--raised); font-size: var(--fs); line-height: 1.45; cursor: pointer; }
 .sc-opt input { margin: 3px 0 0; accent-color: var(--blue); }
@@ -1462,6 +1569,121 @@ body.sway .is-art .load { animation: sway 1.2s ease-in-out; }
 .kaddr { color: var(--text); user-select: text; -webkit-user-select: text; }
 .pref .kdelete, .pref .pact { grid-row: 1 / span 2; grid-column: 2; }
 .pane .seg button:disabled { opacity: .5; cursor: default; }
+
+/* --- Notes: personal Markdown under ~/.kiri/notes (host-side) ----------------------------- */
+.content:has(.notes) { display: flex; padding: 0 12px 0 8px; }
+.notes { flex: 1; min-height: 0; width: 100%; display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); -webkit-user-select: text; user-select: text; }
+.notes.solo { grid-template-columns: 1fr; }
+.notes-side { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 72%, var(--panel)); }
+.notes-side-h { display: flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 0 8px 0 10px; border-bottom: 1px solid var(--line); height: 52px; box-sizing: border-box; }
+.notes-side-h .btn.ic { width: 28px; height: 28px; padding: 0; border-radius: 7px; flex-shrink: 0; }
+.notes-tree { flex: 1; overflow: auto; padding: 4px 6px 8px; display: grid; align-content: start; gap: 1px; }
+.notes-row { display: flex; align-items: center; flex-wrap: nowrap; gap: 2px; width: 100%; min-width: 0; min-height: 30px; padding: 0 4px 0 0; border: 0; border-radius: 7px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; position: relative; box-sizing: border-box; }
+.notes-row:hover { background: var(--row-hover); }
+.notes-row[aria-current=true] { background: color-mix(in srgb, var(--blue) 14%, transparent); }
+.notes-row.root { font-weight: 650; margin-bottom: 2px; }
+.notes-row.root .t { letter-spacing: -.01em; }
+.notes-row.root[aria-current=true] { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.notes-row .tree-toggle { width: 22px; height: 22px; margin-left: auto; flex: none; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; padding: 0; }
+.notes-row .tree-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.notes-row .tree-toggle svg { width: 13px; height: 13px; fill: currentColor; }
+.notes-row.drop { background: color-mix(in srgb, var(--blue) 18%, transparent); outline: 1px dashed color-mix(in srgb, var(--blue) 55%, var(--line)); outline-offset: -1px; }
+.notes-row.dragging { opacity: .45; }
+.notes-row .twist { width: 20px; height: 26px; display: grid; place-items: center; flex: none; border: 0; background: transparent; color: var(--faint); border-radius: 6px; cursor: pointer; padding: 0; }
+.notes-row .twist:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.notes-row .twist svg { width: 11px; height: 11px; fill: currentColor; transition: transform .15s ease; }
+.notes-row .twist[aria-expanded=true] svg { transform: rotate(90deg); }
+.notes-row .twist.leaf { visibility: hidden; pointer-events: none; }
+.notes-row .ic { width: 15px; height: 15px; flex: none; fill: var(--muted); opacity: .9; }
+/* Favorites sit in a left gutter so notepad icons stay column-aligned with folders. */
+.notes-row .ic.star { position: absolute; left: 3px; top: 50%; transform: translateY(-50%); width: 11px; height: 11px; margin: 0; fill: #e6a817; opacity: 1; pointer-events: none; z-index: 1; }
+.notes-row[aria-current=true] .ic:not(.star), .notes-row.root .ic { fill: var(--blue); opacity: 1; }
+.notes-row[aria-current=true] .ic.star { fill: #e6a817; opacity: 1; }
+.notes-row .t { flex: 1; min-width: 0; font-weight: 550; font-size: var(--fs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
+.notes-row .acts { display: none; align-items: center; gap: 1px; flex: none; flex-shrink: 0; }
+.notes-row:hover .acts, .notes-row:focus-within .acts, .notes-row[aria-current=true] .acts { display: inline-flex; }
+.notes-row .acts .btn.ic { width: 22px; height: 22px; border-radius: 6px; flex: none; }
+.notes-row .acts .btn.ic svg { width: 12px; height: 12px; fill: currentColor; }
+.notes-row input.rename { flex: 1; min-width: 0; height: 24px; margin: 0 4px; padding: 0 8px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--blue) 55%, var(--line)); background: var(--bg); color: var(--text); font: 550 var(--fs) var(--ui-font); outline: none; }
+.notes-dock { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 40%, var(--panel)); }
+.notes-dock .btn.ic { width: 30px; height: 30px; border-radius: 8px; }
+.notes-dock .spacer { flex: 1; }
+.notes-dock .hint { font-size: var(--fs-small); color: var(--faint); }
+.notes-ctx { position: fixed; z-index: 80; min-width: 180px; padding: 5px; background: var(--raised); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 14px 40px rgb(0 0 0 / .45); }
+.notes-ctx[hidden] { display: none; }
+.notes-ctx .mi { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: none; cursor: pointer; color: var(--text); font: var(--fs) var(--ui-font); text-align: left; }
+.notes-ctx .mi svg { width: 14px; height: 14px; fill: currentColor; flex: none; opacity: .88; }
+.notes-ctx .mi:hover { background: var(--blue); color: #fff; }
+.notes-ctx .mi:hover svg { opacity: 1; }
+.notes-ctx .mi.danger { color: var(--rose, #e35); }
+.notes-ctx .mi.danger:hover { background: color-mix(in srgb, var(--rose, #e35) 85%, #000); color: #fff; }
+.notes-ctx .sep { height: 1px; margin: 4px 6px; background: var(--line); }
+.notes-empty, .notes-blank { display: grid; place-items: center; align-content: center; gap: 10px; padding: 48px 32px; color: var(--muted); text-align: center; min-height: 280px; }
+.notes-empty .art, .notes-blank .art { width: 36px; height: 36px; fill: var(--faint); margin: 0 auto 2px; opacity: .85; }
+.notes-empty h3 { color: var(--text); font-size: var(--fs-head); margin: 0; font-weight: 650; }
+.notes-empty p, .notes-blank p { margin: 0; max-width: 34em; line-height: 1.55; color: var(--muted); }
+.notes-empty .btn, .notes-blank .btn { margin-top: 8px; }
+.notes-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; width: 100%; background: var(--panel); }
+.notes-bar { display: flex; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--line); height: 52px; box-sizing: border-box; flex-wrap: nowrap; background: color-mix(in srgb, var(--bg) 35%, var(--panel)); }
+.notes-bar .title { flex: 1; min-width: 120px; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--text); font: 650 var(--fs-head) var(--ui-font); letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notes-bar .title:hover { border-color: var(--line); background: var(--bg); }
+.notes-bar .title:focus { border-color: color-mix(in srgb, var(--blue) 55%, var(--line)); background: var(--bg); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent); }
+.notes-bar .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.notes-bar .seg button { height: 28px; padding: 0 12px; border: 0; background: transparent; color: var(--muted); font: 500 var(--fs) var(--ui-font); cursor: pointer; }
+.notes-bar .seg button[aria-pressed=true] { background: color-mix(in srgb, var(--blue) 16%, transparent); color: var(--text); }
+.notes-bar .dirty { color: var(--sun); font-size: var(--fs-small); font-weight: 500; }
+.notes-bar .acts { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.notes-body { flex: 1; min-width: 0; min-height: 0; width: 100%; display: flex; flex-direction: column; }
+.notes-body textarea { flex: 1; min-height: 240px; width: 100%; max-width: none; box-sizing: border-box; resize: none; border: 0; padding: 18px 22px; background: transparent; color: var(--text); font: var(--fs-mono, var(--fs)) / 1.6 var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); outline: none; }
+.notes-preview { flex: 1; min-width: 0; width: 100%; max-width: none; overflow: auto; padding: 18px 22px 36px; line-height: 1.6; box-sizing: border-box; }
+.notes-preview :is(h1, h2, h3) { margin: 1.1em 0 .45em; font-weight: 700; letter-spacing: -.01em; }
+.notes-preview h1 { font-size: 1.45em; } .notes-preview h2 { font-size: 1.2em; } .notes-preview h3 { font-size: 1.05em; }
+.notes-preview p, .notes-preview ul, .notes-preview ol, .notes-preview pre { margin: 0 0 .85em; max-width: none; }
+.notes-preview ul, .notes-preview ol { padding-left: 1.35em; }
+.notes-preview a { color: var(--blue-light); }
+.notes-preview code { font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: .92em; padding: .1em .35em; border-radius: 4px; background: var(--raised); }
+/* Outer box is the positioning context so .md-copy stays pinned while <pre> scrolls. */
+.notes-preview .md-code { position: relative; width: 100%; max-width: none; box-sizing: border-box; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); margin: 0 0 .85em; }
+.notes-preview .md-code pre { margin: 0; padding: 12px 14px; padding-right: 64px; overflow: auto; max-width: none; }
+.notes-preview .md-code code { padding: 0; background: none; white-space: pre; font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: .92em; }
+.notes-preview .md-copy { position: absolute; top: 8px; right: 8px; z-index: 1; height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font: 500 var(--fs-small) var(--ui-font); cursor: pointer; }
+.notes-preview .md-copy:hover { color: var(--text); }
+.notes-preview blockquote { margin: 0 0 .85em; padding: 0 0 0 12px; border-left: 3px solid var(--line); color: var(--muted); }
+
+/* Per-image Markdown remarks (dialog + detail tab). */
+.content:has(> .img-remark) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: 12px; }
+.content:has(> .img-remark) > .dhead,
+.content:has(> .img-remark) > .bl-tabs { flex: none; }
+.content:has(> .img-remark) > .img-remark { flex: 1; min-height: 0; margin-top: 12px; }
+.dialog.imgnote-dlg { width: min(520px, calc(100vw - 48px)); height: min(420px, calc(100vh - 72px)); max-height: none; padding: 0; gap: 0; overflow: hidden; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; -webkit-user-select: text; user-select: text; }
+.imgnote-dlg .ihn-head { display: flex; align-items: center; gap: 10px; padding: 14px 44px 12px 16px; border-bottom: 1px solid var(--line); position: relative; }
+.imgnote-dlg .ihn-head .tile { width: 32px; height: 32px; flex: none; }
+.imgnote-dlg .ihn-head .who { min-width: 0; display: grid; gap: 2px; flex: 1; }
+.imgnote-dlg .ihn-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imgnote-dlg .ihn-head small { color: var(--muted); font-size: var(--fs-small); }
+.imgnote-dlg .ihn-x { position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; border: 0; border-radius: 7px; background: none; color: var(--muted); font: 20px/1 var(--ui-font); cursor: pointer; display: grid; place-items: center; padding: 0; }
+.imgnote-dlg .ihn-x:hover { color: var(--text); background: var(--raised); }
+.imgnote-dlg .ihn-bar, .img-remark .ihn-bar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 40%, var(--panel)); flex: none; }
+.imgnote-dlg .ihn-bar .seg, .img-remark .ihn-bar .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.imgnote-dlg .ihn-bar .seg button, .img-remark .ihn-bar .seg button { height: 28px; padding: 0 12px; border: 0; background: transparent; color: var(--muted); font: 500 var(--fs) var(--ui-font); cursor: pointer; }
+.imgnote-dlg .ihn-bar .seg button[aria-pressed=true], .img-remark .ihn-bar .seg button[aria-pressed=true] { background: color-mix(in srgb, var(--blue) 16%, transparent); color: var(--text); }
+.imgnote-dlg .ihn-bar .dirty, .img-remark .ihn-bar .dirty { color: var(--sun); font-size: var(--fs-small); }
+.imgnote-dlg .ihn-body, .img-remark .ihn-body { min-height: 0; overflow: hidden; display: flex; flex-direction: column; flex: 1; }
+.imgnote-dlg .ihn-body .notes-preview, .img-remark .notes-preview { flex: 1; min-height: 0; overflow: auto; padding: 16px 18px 28px; }
+.imgnote-dlg .ihn-body .notes-blank, .img-remark .notes-blank { flex: 1; min-height: 0; overflow: auto; }
+.imgnote-dlg .ihn-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 30%, var(--panel)); flex: none; }
+.img-remark { display: flex; flex-direction: column; min-height: 0; width: 100%; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); -webkit-user-select: text; user-select: text; }
+.img-remark .ihn-bar .acts { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
+.btn.sm.ic.has-note { color: var(--blue-light); }
+/* Lined Markdown editor (gutter + textarea), shared by remark dialog and detail tab.
+   Explicit text selection so ⌘C / ⌘V / right-click Copy·Paste work despite body { user-select: none }. */
+.md-ed { --md-ed-lh: 1.55; display: grid; grid-template-columns: auto minmax(0, 1fr); flex: 1; min-height: 0; height: 100%; width: 100%; overflow: hidden; background: var(--bg); font: var(--fs-mono, 13px) / var(--md-ed-lh) var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); -webkit-user-select: text; user-select: text; cursor: text; }
+.md-ed-gutter { margin: 0; padding: 14px 10px 18px 12px; min-width: calc(var(--md-ed-digits, 2) * 1ch + 12px); text-align: right; color: var(--faint); background: color-mix(in srgb, var(--raised) 70%, var(--bg)); border-right: 1px solid var(--line); overflow: hidden; user-select: none; -webkit-user-select: none; pointer-events: none; white-space: pre; font: inherit; font-variant-numeric: tabular-nums; line-height: var(--md-ed-lh); box-sizing: border-box; }
+.md-ed-ta { margin: 0; padding: 14px 16px 18px; border: 0; resize: none; outline: none; background: transparent; color: var(--text); font: inherit; line-height: var(--md-ed-lh); overflow: auto; white-space: pre; overflow-wrap: normal; tab-size: 2; min-width: 0; min-height: 0; height: 100%; width: 100%; box-sizing: border-box; caret-color: var(--blue-light); -webkit-user-select: text; user-select: text; cursor: text; }
+.md-ed-ta:focus { outline: none; }
+.md-ed-view { margin: 0; padding: 14px 16px 28px; overflow: auto; min-width: 0; min-height: 0; height: 100%; width: 100%; box-sizing: border-box; font: var(--fs) / 1.6 var(--ui-font); color: var(--text); -webkit-user-select: text; user-select: text; cursor: text; }
+.md-ed-prev .md-ed-gutter { line-height: 1.6; }
+.img-remark .notes-preview, .imgnote-dlg .notes-preview { -webkit-user-select: text; user-select: text; cursor: text; }
 
 /* --- Share: what's shared on the internet, live (Kiri Dev on the Mac; Kiri on Windows) ---- */
 nav button.shareonly { display: none; }
@@ -2080,6 +2302,7 @@ main { position: relative; }
   <span class="drag"></span>
   <label class="gfind" id="gfind"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="7" cy="7" r="4.8"/><path d="M10.6 10.6L14 14"/></svg>
     <input id="gq" placeholder="Search containers, images…" spellcheck="false" autocomplete="off" role="combobox" aria-controls="pal" aria-expanded="false" data-i18n-aria="Search Kiri" aria-label="Search Kiri"><kbd id="gkbd">⌘K</kbd></label>
+  <button class="sb" id="strip-theme" title="Theme"><svg viewBox="0 0 256 256" aria-hidden="true"></svg></button>
   <button class="sb" id="strip-settings" data-i18n-title="Settings" title="Settings" aria-label="Settings"><svg viewBox="0 0 256 256" data-ph="gear"></svg></button>
 </header>
 
@@ -2101,6 +2324,7 @@ main { position: relative; }
   <div class="navlabel" data-i18n="Kiri">Kiri</div>
   <nav>
     <button data-view="share" class="shareonly"><svg class="i" viewBox="0 0 256 256" data-ph="globe"></svg><span class="lbl" data-i18n="Share">Share</span></button>
+    <button data-view="notes"><svg class="i" viewBox="0 0 256 256" data-ph="notepad"></svg><span class="lbl" data-i18n="Notes">Notes</span></button>
     <button data-view="settings"><svg class="i" viewBox="0 0 256 256" data-ph="gear"></svg><span class="lbl" data-i18n="Settings">Settings</span></button>
   </nav>
 
@@ -2159,8 +2383,46 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
 const ZH = {
   // Nav / views
   "Containers": "容器", "Images": "镜像", "Volumes": "卷", "Networks": "网络", "Builds": "构建",
-  "Pods": "容器组", "Services": "服务", "Settings": "设置", "Share": "分享", "Shares": "分享",
+  "Pods": "容器组", "Services": "服务", "Settings": "设置", "Share": "分享", "Shares": "分享", "Notes": "便笺",
   "Docker": "Docker", "Kubernetes": "Kubernetes", "Kiri": "Kiri", "Kubernetes settings": "Kubernetes 设置",
+  "Remark": "备注", "Remark for {name}": "{name} 的备注", "No remark yet": "暂无备注",
+  "Write a Markdown remark for this image.": "用 Markdown 为该镜像写下备注。",
+  "Remark saved": "备注已保存", "Save remark": "保存备注",
+  "Discard unsaved changes?": "放弃未保存的更改？",
+  "New note": "新建便笺", "New folder": "新建文件夹", "New subfolder": "新建子目录", "Untitled": "未命名", "Preview": "预览",
+  "Save note": "保存", "Delete note": "删除便笺", "Delete this note?": "删除这条便笺？",
+  "Delete folder?": "删除此文件夹及其全部内容？", "Rename": "重命名",
+  "Confirm delete": "确认删除", "Note saved": "便笺已保存", "Copy body": "复制正文",
+  "No notes yet": "还没有便笺", "Ask AI": "AI 助手", "AI coming soon": "AI 功能即将接入",
+  "Add note": "新建便笺", "Add folder": "新建文件夹", "Move here": "移动到此处",
+  "Keep commands, startup scripts, login details and short runbooks here — handy next to your containers. Stored on this computer under ~/.kiri/notes.": "在此随手记下操作命令、启动脚本、服务器登录信息等，和容器一起维护。保存在本机 ~/.kiri/notes。",
+  "Pick a note or create one.": "选择一条便笺，或新建一条。",
+  "Select a note from the list.": "从左侧目录中选择一条便笺。",
+  "No content": "暂无内容",
+  "Create a note in “{folder}”.": "在「{folder}」中新建便笺。",
+  "Create a note at the top level.": "在便笺根目录新建一条。",
+  "Search notes…": "搜索便笺…", "notes": "便笺", "Folder name": "文件夹名称",
+  "Subfolder name": "子目录名称",
+  "Open location": "打开位置",
+  "Unsaved changes": "有未保存的更改",
+  "Could not find Kiri's data folder": "找不到 Kiri 的数据目录",
+  "Could not create the notes folder": "无法创建便笺目录",
+  "Bad folder": "文件夹无效",
+  "Bad note id": "便笺 ID 无效",
+  "Note already exists": "便笺已存在",
+  "Bad folder name": "文件夹名称无效",
+  "Bad parent folder": "上级文件夹无效",
+  "Bad folder path": "文件夹路径无效",
+  "Folder already exists": "文件夹已存在",
+  "Folder not found": "找不到文件夹",
+  "Name required": "请填写名称",
+  "Bad note name": "便笺名称无效",
+  "Not found": "未找到",
+  "Bad path": "路径无效",
+  "Bad parent": "上级目录无效",
+  "Cannot move into itself": "不能移动到自身内部",
+  "Bad destination": "目标位置无效",
+  "Note not found": "找不到便笺",
   "Linux VM": "Linux 虚拟机", "Engine": "引擎",
   "Running": "运行中", "CPUs": "CPU", "Memory": "内存", "Asleep": "休眠",
   "Start": "启动", "Stop": "停止", "Starting…": "正在启动…", "Stopping…": "正在停止…",
@@ -2291,8 +2553,25 @@ const ZH = {
   "up to {mem}": "最多 {mem}",
   // Run / need / confirm
   "Name defaults to {name}. Host port is optional.": "名称默认为 {name}。主机端口可选。",
+  "Name defaults to {name}. Host port and command are optional.": "名称默认为 {name}。主机端口与命令可选。",
   "Container name": "容器名称", "Host port": "主机端口",
   "Leave empty to assign automatically": "留空则自动分配",
+  "Leave empty to use the image default": "留空则使用镜像默认命令",
+  "Replaces the image CMD, like docker run IMAGE …": "会替换镜像的 CMD，等同于 docker run IMAGE …",
+  "End a line with \\ to continue on the next.": "行末加 \\ 可换行续写。",
+  "Replaces the image CMD, or paste a full docker run line. End a line with \\ to continue.": "可替换镜像 CMD；也可粘贴完整的 docker run（含 \\ 换行），会自动填入名称与端口。",
+  "Paste a docker run for {image}. \\ continues a line.": "粘贴 {image} 的 docker run 命令。行末 \\ 可换行续写。",
+  "Paste a docker run command": "请粘贴 docker run 命令",
+  "Must start with docker run": "必须以 docker run 开头",
+  "Missing the image name": "缺少镜像名称",
+  "The command must use {image}": "命令须使用镜像 {image}",
+  "Container start command": "容器启动命令",
+  "Save to Notes": "收藏到便笺",
+  "Collected note": "收藏的便笺",
+  "List": "列表", "Grid": "网格", "Layout": "布局",
+  "start command": "启动命令",
+  "Command for {name}": "{name} 的启动命令",
+  "Default": "默认", "Custom": "自定义",
   "Only letters, digits, _, . and -": "仅字母、数字、_、. 和 -",
   "Enter a port from 1 to 65535": "请输入 1 到 65535 的端口",
   "“{name}” is already in use": "“{name}” 已被占用",
@@ -2301,6 +2580,7 @@ const ZH = {
   "That container name is already in use. Pick another.": "该容器名称已被占用，请换一个。",
   "Host port {n} is already in use. Pick another, or leave it blank.": "主机端口 {n} 已被占用，请换一个或留空。",
   "That host port is already in use. Pick another, or leave it blank.": "该主机端口已被占用，请换一个或留空。",
+  "this image exposes no ports to publish on the host": "该镜像未声明可发布到主机的端口",
   "Couldn't start": "无法启动",
   "Saved in the container's environment. Kiri doesn't keep a copy.": "保存在容器环境变量中。Kiri 不会另存副本。",
   "Generate": "生成", "Show": "显示", "Show password": "显示密码",
@@ -2468,7 +2748,7 @@ const ZH = {
   "Select the project's containers": "选择该项目的容器",
   "Select all in this project": "全选此项目",
   "Pull an image": "拉取镜像",
-  "address": "地址", "image ID": "镜像 ID", "container ID": "容器 ID", "digest": "摘要", "report ID": "报告 ID", "link": "链接",
+  "address": "地址", "image ID": "镜像 ID", "image name": "镜像名称", "Copy image:tag": "复制 镜像名:标签名", "container ID": "容器 ID", "digest": "摘要", "report ID": "报告 ID", "link": "链接",
   "containers": "容器", "images": "镜像", "volumes": "卷", "networks": "网络", "builds": "构建", "pods": "容器组", "services": "服务",
   "Kubernetes is off": "Kubernetes 已关闭",
   "Kubernetes is starting": "Kubernetes 正在启动",
@@ -3282,7 +3562,27 @@ const ZH = {
 
   "What's new": "更新内容",
 
-
+  // Engine / registry error fragments (toasts, pull, Kubernetes)
+  "network error: ": "网络错误：",
+  "network error": "网络错误",
+  "registry mirrors failed": "镜像加速失败",
+  "pull access denied for ": "拒绝拉取 ",
+  "repository does not exist or may require 'docker login'": "仓库不存在或可能需要 docker login",
+  "timeout: connect": "连接超时",
+  "timed out": "已超时",
+  "pull cancelled": "拉取已取消",
+  "unexpected manifest: ": "意外的清单：",
+  "no registry endpoint": "没有可用的镜像仓库端点",
+  "manifest failed digest check": "清单摘要校验失败",
+  "incorrect username or password": "用户名或密码不正确",
+  " returned HTTP ": " 返回 HTTP ",
+  "the API server didn't answer; asking again shortly": "API 服务器未响应；稍后会再试",
+  "connection refused": "连接被拒绝",
+  "connection reset": "连接被重置",
+  "no such host": "找不到主机",
+  "i/o timeout": "读写超时",
+  "TLS handshake timeout": "TLS 握手超时",
+  "Couldn't find an image called {name}. Check the name; if it's private, sign in with docker login.": "找不到名为 {name} 的镜像。请检查名称；若是私有镜像，请先 docker login。",
 
 }
 const ZH_TW = {
@@ -3296,6 +3596,63 @@ const ZH_TW = {
   "Settings": "設置",
   "Share": "分享",
   "Shares": "分享",
+  "Notes": "便箋",
+  "Remark": "備註",
+  "Remark for {name}": "{name} 的備註",
+  "No remark yet": "暫無備註",
+  "Write a Markdown remark for this image.": "用 Markdown 為該鏡像寫下備註。",
+  "Remark saved": "備註已保存",
+  "Save remark": "保存備註",
+  "Discard unsaved changes?": "放棄未保存的更改？",
+  "New note": "新建便箋",
+  "New folder": "新建資料夾",
+  "New subfolder": "新建子目錄",
+  "Untitled": "未命名",
+  "Preview": "預覽",
+  "Save note": "保存",
+  "Delete note": "刪除便箋",
+  "Delete this note?": "刪除這條便箋？",
+  "Delete folder?": "刪除此資料夾及其全部內容？",
+  "Rename": "重新命名",
+  "Confirm delete": "確認刪除",
+  "Note saved": "便箋已保存",
+  "Copy body": "複製正文",
+  "No notes yet": "還沒有便箋",
+  "Ask AI": "AI 助手",
+  "AI coming soon": "AI 功能即將接入",
+  "Add note": "新建便箋",
+  "Add folder": "新建資料夾",
+  "Move here": "移動到此處",
+  "Keep commands, startup scripts, login details and short runbooks here — handy next to your containers. Stored on this computer under ~/.kiri/notes.": "在此隨手記下操作命令、啟動腳本、伺服器登入資訊等，和容器一起維護。保存在本機 ~/.kiri/notes。",
+  "Pick a note or create one.": "選擇一條便箋，或新建一條。",
+  "Select a note from the list.": "從左側目錄中選擇一條便箋。",
+  "No content": "暫無內容",
+  "Create a note in “{folder}”.": "在「{folder}」中新建便箋。",
+  "Create a note at the top level.": "在便箋根目錄新建一條。",
+  "Search notes…": "搜索便箋…",
+  "notes": "便箋",
+  "Folder name": "資料夾名稱",
+  "Subfolder name": "子目錄名稱",
+  "Open location": "打開位置",
+  "Unsaved changes": "有未保存的更改",
+  "Could not find Kiri's data folder": "找不到 Kiri 的資料目錄",
+  "Could not create the notes folder": "無法建立便箋目錄",
+  "Bad folder": "資料夾無效",
+  "Bad note id": "便箋 ID 無效",
+  "Note already exists": "便箋已存在",
+  "Bad folder name": "資料夾名稱無效",
+  "Bad parent folder": "上級資料夾無效",
+  "Bad folder path": "資料夾路徑無效",
+  "Folder already exists": "資料夾已存在",
+  "Folder not found": "找不到資料夾",
+  "Name required": "請填寫名稱",
+  "Bad note name": "便箋名稱無效",
+  "Not found": "未找到",
+  "Bad path": "路徑無效",
+  "Bad parent": "上級目錄無效",
+  "Cannot move into itself": "不能移動到自身內部",
+  "Bad destination": "目標位置無效",
+  "Note not found": "找不到便箋",
   "Docker": "Docker",
   "Kubernetes": "Kubernetes",
   "Kiri": "Kiri",
@@ -3529,9 +3886,27 @@ const ZH_TW = {
   "The name comes from the Igbo word ntakịrị, “small”.": "名字來自伊博語 ntakịrị，意為「小」。",
   "up to {mem}": "最多 {mem}",
   "Name defaults to {name}. Host port is optional.": "名稱默認為 {name}。主機端口可選。",
+  "Name defaults to {name}. Host port and command are optional.": "名稱默認為 {name}。主機端口與命令可選。",
   "Container name": "容器名稱",
   "Host port": "主機端口",
   "Leave empty to assign automatically": "留空則自動分配",
+  "Leave empty to use the image default": "留空則使用鏡像默認命令",
+  "Replaces the image CMD, like docker run IMAGE …": "會替換鏡像的 CMD，等同於 docker run IMAGE …",
+  "End a line with \\ to continue on the next.": "行末加 \\ 可換行續寫。",
+  "Replaces the image CMD, or paste a full docker run line. End a line with \\ to continue.": "可替換鏡像 CMD；也可粘貼完整的 docker run（含 \\ 換行），會自動填入名稱與端口。",
+  "Paste a docker run for {image}. \\ continues a line.": "粘貼 {image} 的 docker run 命令。行末 \\ 可換行續寫。",
+  "Paste a docker run command": "請粘貼 docker run 命令",
+  "Must start with docker run": "必須以 docker run 開頭",
+  "Missing the image name": "缺少鏡像名稱",
+  "The command must use {image}": "命令須使用鏡像 {image}",
+  "Container start command": "容器啟動命令",
+  "Save to Notes": "收藏到便箋",
+  "Collected note": "收藏的便箋",
+  "List": "列表", "Grid": "網格", "Layout": "佈局",
+  "start command": "啟動命令",
+  "Command for {name}": "{name} 的啟動命令",
+  "Default": "默認",
+  "Custom": "自定義",
   "Only letters, digits, _, . and -": "僅限字母、數字、_、. 和 -",
   "Enter a port from 1 to 65535": "請輸入 1 到 65535 的端口",
   "“{name}” is already in use": "“{name}” 已被佔用",
@@ -3540,6 +3915,7 @@ const ZH_TW = {
   "That container name is already in use. Pick another.": "該容器名稱已被佔用，請換一個。",
   "Host port {n} is already in use. Pick another, or leave it blank.": "主機端口 {n} 已被佔用，請換一個或留空。",
   "That host port is already in use. Pick another, or leave it blank.": "該主機端口已被佔用，請換一個或留空。",
+  "this image exposes no ports to publish on the host": "該鏡像未宣告可發佈到主機的連接埠",
   "Couldn't start": "無法啟動",
   "Saved in the container's environment. Kiri doesn't keep a copy.": "保存在容器環境變量中。Kiri 不會另存副本。",
   "Generate": "生成",
@@ -3750,6 +4126,8 @@ const ZH_TW = {
   "Pull an image": "拉取鏡像",
   "address": "地址",
   "image ID": "鏡像 ID",
+  "image name": "鏡像名稱",
+  "Copy image:tag": "複製 鏡像名:標籤名",
   "container ID": "容器 ID",
   "digest": "摘要",
   "report ID": "報告 ID",
@@ -4478,9 +4856,31 @@ const ZH_TW = {
   "You have {ref}{when}. Pull again to get any updates; only changed layers download.": "已有 {ref}{when}。重新拉取可獲取更新，僅下載變更層。",
   ", {when}": "，{when}",
   "If it's private, {signin}.": "若是私有鏡像，請{signin}。",
+
+  // Engine / registry error fragments (toasts, pull, Kubernetes)
+  "network error: ": "網絡錯誤：",
+  "network error": "網絡錯誤",
+  "registry mirrors failed": "鏡像加速失敗",
+  "pull access denied for ": "拒絕拉取 ",
+  "repository does not exist or may require 'docker login'": "倉庫不存在或可能需要 docker login",
+  "timeout: connect": "連接超時",
+  "timed out": "已超時",
+  "pull cancelled": "拉取已取消",
+  "unexpected manifest: ": "意外的清單：",
+  "no registry endpoint": "沒有可用的鏡像倉庫端點",
+  "manifest failed digest check": "清單摘要校驗失敗",
+  "incorrect username or password": "用戶名或密碼不正確",
+  " returned HTTP ": " 返回 HTTP ",
+  "the API server didn't answer; asking again shortly": "API 服務器未響應；稍後會再試",
+  "connection refused": "連接被拒絕",
+  "connection reset": "連接被重置",
+  "no such host": "找不到主機",
+  "i/o timeout": "讀寫超時",
+  "TLS handshake timeout": "TLS 握手超時",
+  "Couldn't find an image called {name}. Check the name; if it's private, sign in with docker login.": "找不到名為 {name} 的鏡像。請檢查名稱；若是私有鏡像，請先 docker login。",
   "繁體中文": "繁體中文",
 };
-const VIEW_LABEL = { containers: "Containers", images: "Images", volumes: "Volumes", networks: "Networks", builds: "Builds", pods: "Pods", services: "Services", settings: "Settings", share: "Share" };
+const VIEW_LABEL = { containers: "Containers", images: "Images", volumes: "Volumes", networks: "Networks", builds: "Builds", pods: "Pods", services: "Services", settings: "Settings", share: "Share", notes: "Notes" };
 /* Codes offered in Settings → Appearance → Language → Custom. Add here to grow the menu. */
 /*I18N_NEWLANGS*/
 /* ja/ko/fr/de/es/pt/ru: gzip+base64, inflated once after load so NavigateToString
@@ -4523,6 +4923,47 @@ function tr(en, vars) {
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, String(v));
   return s;
 }
+/* Engine / registry errors arrive as English fragments (often concatenated).
+   Exact catalog hit first, then known templates, then longest-phrase replace. */
+const ERR_PHRASES = [
+  "repository does not exist or may require 'docker login'",
+  "the API server didn't answer; asking again shortly",
+  "pull access denied for ",
+  "registry mirrors failed",
+  "manifest failed digest check",
+  "incorrect username or password",
+  "unexpected manifest: ",
+  "TLS handshake timeout",
+  "no registry endpoint",
+  "timeout: connect",
+  "connection refused",
+  "connection reset",
+  "network error: ",
+  " returned HTTP ",
+  "network error",
+  "pull cancelled",
+  "no such host",
+  "i/o timeout",
+  "timed out",
+].sort((a, b) => b.length - a.length);
+function trErr(text) {
+  if (text == null) return "";
+  let s = String(text);
+  if (!s) return s;
+  const exact = tr(s);
+  if (exact !== s) return exact;
+  let m;
+  if ((m = /^Couldn't find an image called (.+)\. Check the name; if it's private, sign in with docker login\.$/.exec(s)))
+    return tr("Couldn't find an image called {name}. Check the name; if it's private, sign in with docker login.", { name: m[1] });
+  if ((m = /^([^\s].*?) has no tag (.+)\.$/.exec(s)) && !/:\s/.test(m[1]))
+    return tr("{repo} has no tag {tag}.", { repo: m[1], tag: m[2] });
+  for (const en of ERR_PHRASES) {
+    if (!s.includes(en)) continue;
+    const zh = tr(en);
+    if (zh !== en) s = s.split(en).join(zh);
+  }
+  return s;
+}
 function paintChrome() {
   const code = lang();
   document.documentElement.lang = code === "zh" ? "zh-CN" : code;
@@ -4545,7 +4986,8 @@ function paintSearchPlaceholder() {
   const v = ui.view;
   // View id stays lower-case in English ("containers"), matching the old
   // `Search ${view}…` placeholders; other locales translate the id via tr().
-  el.placeholder = ["containers", "images", "volumes", "networks", "builds", "pods", "services"].includes(v) && !ui.detail && !ui.imgd
+  el.placeholder = v === "notes" ? tr("Search notes…")
+    : ["containers", "images", "volumes", "networks", "builds", "pods", "services"].includes(v) && !ui.detail && !ui.imgd
     ? tr("Search {view}…", { view: tr(v) })
     : tr("Search Kiri…");
 }
@@ -4554,7 +4996,11 @@ const ui = { running: new Set(), launched: new Map(), runWatch: new Map(), need:
   imp: { sources: null, source: null, inv: null, picked: { images: new Set(), volumes: new Set(), containers: new Set() }, steps: {}, running: false, summary: "" },
   upd: null, engineStale: null, staleHidden: false,
   // The Builds view: the list, the picked build and its detail, and how its steps show.
-  bl: { items: null, error: "", sel: null, d: null, steps: "all", internal: false, open: new Set(), confirm: null, tab: "steps", layers: null, plat: null } };
+  bl: { items: null, error: "", sel: null, d: null, steps: "all", internal: false, open: new Set(), confirm: null, tab: "steps", layers: null, plat: null },
+  // Personal Markdown notes (~/.kiri/notes on the host).
+  notes: { items: null, tree: null, open: {}, folder: "", id: "", title: "", body: "", collected: false, mode: "preview", dirty: false, saving: false, confirmDel: false, renaming: null, creating: null, drag: null, ctx: null },
+  // Per-image Markdown remarks (~/.kiri/img-notes.json).
+  imgNotes: new Set(), imgNoteDlg: null };
 function resetPicks() { ui.imp.picked = { images: new Set(), volumes: new Set(), containers: new Set() }; ui.imp.steps = {}; ui.imp.summary = ""; }
 // Asleep is ready: the VM sleeps after a minute with nothing running and the next
 // request wakes it in milliseconds, so it reads as Ready with Stop, never as stopped
@@ -4728,12 +5174,17 @@ const prefs = { font: "System", mono: "System Mono", scale: 1, tab: "appearance"
 const ACCENTS = [["blue", "Blue", "#0D6EFD"], ["purple", "Purple", "#8C6EF5"], ["orange", "Orange", "#F58228"], ["teal", "Teal", "#14B4A5"], ["pink", "Pink", "#EC408C"], ["green", "Green", "#28AA5A"]];
 const darkNow = () => prefs.theme === "dark" || (prefs.theme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { themeBtn(); if (ui.view === "settings") render(); });
-// The strip's theme button shows what a click switches to.
+// Theme buttons (sidebar + strip) show what a click switches to.
 function themeBtn() {
-  const b = $("theme-toggle"), dark = darkNow();
-  b.title = dark ? tr("Switch to the light theme") : tr("Switch to the dark theme");
-  b.setAttribute("aria-label", b.title);
-  b.firstElementChild.innerHTML = `<path d="${PH[dark ? "sun" : "moon"]}"/>`;
+  const dark = darkNow();
+  const title = dark ? tr("Switch to the light theme") : tr("Switch to the dark theme");
+  const path = `<path d="${PH[dark ? "sun" : "moon"]}"/>`;
+  for (const id of ["theme-toggle", "strip-theme"]) {
+    const b = $(id); if (!b) continue;
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.firstElementChild.innerHTML = path;
+  }
 }
 const fontLists = { families: [], mono: [] };
 const optsMemo = {}, settingsShown = { html: "", el: null };
@@ -4760,7 +5211,7 @@ function applyPrefs() {
 /* A right-click gets no browser menu (Reload, Back, Inspect): this is an app,
    not a web page. Text fields and selected text keep theirs, for Copy and Paste. */
 document.addEventListener("contextmenu", (ev) => {
-  const editable = ev.target.closest?.("input, textarea, [contenteditable]");
+  const editable = ev.target.closest?.("input, textarea, [contenteditable], .md-ed, .img-remark .notes-preview, .imgnote-dlg .notes-preview");
   if (!editable && !String(getSelection()).trim()) ev.preventDefault();
 });
 function setPref(name, value) {
@@ -5112,6 +5563,58 @@ function renderDetail() {
   } else body.innerHTML = filesView(d);
 }
 
+/* Pretty-print a stored docker run for display / copy. Flatten old `\`
+   continuations, drop lone `\` tokens, then re-break by shell tokens so a
+   quoted `sh -c '… -p …'` is never split (regex flag matching used to). */
+function formatStartCommand(text) {
+  const raw = String(text || "").replace(/\r\n/g, "\n").trim();
+  if (!raw) return "";
+  const flat = flattenShellLines(raw)
+    .replace(/(^|\s)\\(?=\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!flat) return "";
+  const args = shellSplit(flat);
+  if (args.length < 2 || args[0] !== "docker" || args[1] !== "run") return flat;
+  const bool = new Set(["-d", "--detach", "-i", "--interactive", "-t", "--tty", "-P", "--publish-all", "--rm", "--privileged", "-it", "-ti", "-itd", "-dit", "-idt", "-tid"]);
+  const q = (s) => (/^[A-Za-z0-9._.:/=@+,-]+$/.test(s) ? s : shq(s));
+  const head = ["docker", "run"];
+  const opts = [];
+  let i = 2;
+  while (i < args.length) {
+    const a = args[i];
+    if (bool.has(a)) { head.push(a); i += 1; continue; }
+    if (a.startsWith("-") && a.includes("=")) { opts.push([a]); i += 1; continue; }
+    if (a.startsWith("-") && args[i + 1] && !String(args[i + 1]).startsWith("-")) {
+      opts.push([a, args[i + 1]]);
+      i += 2;
+      continue;
+    }
+    if (a.startsWith("-")) { opts.push([a]); i += 1; continue; }
+    const image = args[i];
+    const cmd = args.slice(i + 1);
+    const lines = [head.map(q).join(" "), ...opts.map((o) => o.map(q).join(" ")), q(image)];
+    if (cmd.length) lines.push(cmd.map(q).join(" "));
+    return lines.map((ln, n) => {
+      const body = n === 0 ? ln : `  ${ln}`;
+      return n === lines.length - 1 ? body : `${body} \\`;
+    }).join("\n");
+  }
+  const lines = [head.map(q).join(" "), ...opts.map((o) => o.map(q).join(" "))];
+  return lines.map((ln, n) => {
+    const body = n === 0 ? ln : `  ${ln}`;
+    return n === lines.length - 1 ? body : `${body} \\`;
+  }).join("\n");
+}
+function cmdPreview(text, title) {
+  const body = formatStartCommand(text);
+  if (!body) return "";
+  const t = title || tr("start command");
+  return `<div class="cmdbox"><div class="cmdbox-bar">
+      <button type="button" class="copy" data-cmdcopy title="${tr("Copy")} ${esc(t)}" aria-label="${tr("Copy")} ${esc(t)}"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.copy}"/></svg></button>
+      <button type="button" class="cmdnote" data-cmdnote title="${tr("Save to Notes")}" aria-label="${tr("Save to Notes")}"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.note}"/></svg></button>
+    </div><pre>${esc(body)}</pre></div>`;
+}
 function overview(c, info) {
   if (!info) return `<p class="muted">${tr("Loading…")}</p>`;
   const cfg = info.Config || {}, hc = info.HostConfig || {}, st = info.State || {};
@@ -5122,9 +5625,11 @@ function overview(c, info) {
   const env = ui.detail?.env ? envEditor(ui.detail.env)
     : `<div class="envhead"><span>${list.length ? tr(list.length === 1 ? "{n} variable" : "{n} variables", { n: list.length }) : tr("None")}</span><button class="linkish" data-envedit>${list.length ? tr("Edit") : tr("Add")}</button></div>`
       + (list.length ? `<div class="envs">${list.map((e) => `<span class="mono">${esc(e)}</span>`).join("")}</div>` : "");
+  const startCmd = (cfg.Labels || {})["kiri.start.command"] || "";
   const row = (k, v) => (v ? `<dt>${tr(k)}</dt><dd>${v}</dd>` : "");
   return `<dl class="kv">
     ${row("Image", `<span class="mono">${esc(cfg.Image || c.Image)}</span>`)}
+    ${row("Container start command", startCmd && cmdPreview(startCmd, tr("start command")))}
     ${row("Command", cmd && `<span class="mono">${esc(cmd)}</span>`)}
     ${row("ID", `<span class="mono sel">${esc(info.Id.slice(0, 12))}</span>${copyBtn(info.Id, "container ID")}`)}
     ${row("Created", esc(new Date(info.Created).toLocaleString()))}
@@ -5707,6 +6212,41 @@ function buildsPane() {
   </div>`;
 }
 
+/* Tab / Shift+Tab in a textarea: indent with two spaces (JSON-style), don't leave the field. */
+function textareaTabIndent(ev, pad = "  ") {
+  if (ev.key !== "Tab" || ev.altKey || ev.ctrlKey || ev.metaKey) return false;
+  const el = ev.target;
+  if (!el || el.tagName !== "TEXTAREA" || el.readOnly || el.disabled) return false;
+  ev.preventDefault();
+  const val = el.value;
+  let start = el.selectionStart, end = el.selectionEnd;
+  if (ev.shiftKey) {
+    const lineStart = val.lastIndexOf("\n", start - 1) + 1;
+    const lineEnd = end === start ? (val.indexOf("\n", end) === -1 ? val.length : val.indexOf("\n", end)) : end;
+    const block = val.slice(lineStart, lineEnd);
+    const next = block.replace(/(^|\n)(?: {1,2}|\t)/g, "$1");
+    const removed = block.length - next.length;
+    if (!removed) return true;
+    el.setRangeText(next, lineStart, lineEnd, "select");
+    if (start === end) {
+      const caret = Math.max(lineStart, start - Math.min(pad.length, start - lineStart));
+      el.setSelectionRange(caret, caret);
+    } else {
+      el.setSelectionRange(lineStart, lineStart + next.length);
+    }
+    return true;
+  }
+  if (start !== end) {
+    const lineStart = val.lastIndexOf("\n", start - 1) + 1;
+    const block = val.slice(lineStart, end);
+    const next = block.replace(/^/gm, pad);
+    el.setRangeText(next, lineStart, end, "select");
+    el.setSelectionRange(lineStart, lineStart + next.length);
+    return true;
+  }
+  el.setRangeText(pad, start, end, "end");
+  return true;
+}
 /* Full Docker-shaped `daemon.json` in the editor; a bare mirrors array also works. */
 function formatDaemonDraft(settings) {
   const obj = settings && typeof settings === "object" && !Array.isArray(settings) ? { ...settings } : {};
@@ -5953,6 +6493,10 @@ function renderSettings() {
     const cap = document.querySelector("[data-mxcount]");
     if (cap) cap.textContent = mirrorsCountLabel(parsed.ok ? daemonMirrorCount(parsed.value) : 0);
   });
+  // Tab / Shift+Tab indent JSON instead of leaving the field.
+  $("px-mirrors")?.addEventListener("keydown", (ev) => {
+    if (textareaTabIndent(ev)) ev.target.dispatchEvent(new Event("input", { bubbles: true }));
+  });
   $("reg-server")?.addEventListener("input", (ev) => { ui.reg.server = ev.target.value; regHintShow(); });
   document.querySelectorAll("#content [data-imp]").forEach((cb) => cb.addEventListener("change", (ev) => {
     pickChange(ev.target);
@@ -5977,6 +6521,8 @@ function show(view) {
   ui.view = view; ui.filter = ""; $("gq").value = "";
   if (view === "builds") send("builds");
   if (view === "share") { send("shares"); send("shareusage"); shPoll(); }
+  if (view === "notes") { ui.notes.confirmDel = false; send("notes"); }
+  if (view === "images") send("imgnotes");
   if (view === "settings") { if (!fontLists.families.length) send("fonts"); send("about"); send("logins"); send("resources"); send("proxy"); send("daemon"); if (!ui.imp.sources) send("importsources"); if (prefs.tab === "diagnostics") diagOpen(); }
   render();
   // From the top, as a container's or pod's page opens: leaving a page scrolled
@@ -6182,11 +6728,26 @@ const CONTAINER_SORT = {
   size: (c) => (ui.images.find((i) => i.Id === c.ImageID) || ui.images.find((i) => (i.RepoTags || []).includes(c.Image)))?.Size || 0,
   created: (c) => c.Created || 0,
 };
+const listLayout = (v) => ((prefs.listLayout || {})[v] === "grid" ? "grid" : "list");
+function viewModeToggle(v) {
+  if (v !== "containers" && v !== "images") return "";
+  const mode = listLayout(v);
+  const btn = (id, icon, label) => `<button type="button" data-vmode="${id}" aria-pressed="${mode === id}" title="${tr(label)}" aria-label="${tr(label)}">${svgOf(icon)}</button>`;
+  return `<div class="vmode" role="group" aria-label="${tr("Layout")}">${btn("list", "list", "List")}${btn("grid", "squares", "Grid")}</div>`;
+}
+function setListLayout(v, mode) {
+  if (listLayout(v) === mode) return;
+  setPref("listLayout", { ...(prefs.listLayout || {}), [v]: mode });
+}
 function renderContainers() {
   // Sorting orders the containers first; a Compose group then sits where its first member lands.
   const items = sortBy(listed("containers"), "containers", CONTAINER_SORT);
   if (!kept("containers").length) return renderEmpty("containers");
   if (!items.length) return noMatch();
+  if (listLayout("containers") === "grid") {
+    morph($("content"), `<div class="ggrid" data-view="containers" tabindex="0">${items.map((c) => containerCard(c)).join("")}</div>`);
+    return;
+  }
   // A Compose project shows where its newest container would, as one group.
   const rows = [], seen = new Set();
   for (const c of items) {
@@ -6233,6 +6794,44 @@ function projectAction(project, action) {
   for (const c of pick) send("container", { action, id: c.Id });
 }
 
+function containerActs(c, name, up, starting, enter) {
+  const primary = `${up ? ibtn("restart", "Restart", `data-c="restart" data-id="${c.Id}"`, enter)
+    : ibtn("restart", "Start it to restart it", "disabled", "ghost")}
+  ${up ? ibtn("stop", "Stop", `data-c="stop" data-id="${c.Id}"`, `halt ${enter}`)
+    : ibtn("play", starting ? "Starting…" : "Start", `data-c="start" data-id="${c.Id}"`, starting ? "go rolling" : "go")}`;
+  const danger = `${isKiriK8s(c) ? ibtn("trash", "Kubernetes is managed in Settings → Kubernetes", "data-ksettings", "locked")
+    : ibtn("trash", "Remove", `data-c="remove" data-id="${c.Id}"`, "danger")}
+  ${btn("⋯", `data-more="${c.Id}" aria-label="More actions for ${esc(name)}" aria-haspopup="menu"`, "more")}`;
+  return { primary, danger, all: primary + danger };
+}
+function containerCard(c) {
+  const name = c.Names[0].replace(/^\//, "");
+  const up = c.State === "running" || c.State === "paused";
+  const domain = c.State === "running" ? localUrl(c, name) : "", reach = domain && c.Ports?.length;
+  const starting = !up && ui.starting.has(c.Id), enter = up && ui.starting.delete(c.Id) ? "enter" : "";
+  const img = refLabel(c.Image);
+  // Always show the image under the name (same for running and stopped).
+  // A reachable local address sits with the status row, not in place of the image.
+  const addr = reach
+    ? `<button class="gaddr" data-open="${esc(domain)}" title="Open ${esc(domain)}">${esc(domain.replace(/^https?:\/\//, ""))}</button>`
+    : "";
+  const cell = (k, v, cls = "") => `<div class="cell"><span class="k">${tr(k)}</span><span class="v${cls ? ` ${cls}` : ""}">${v}</span></div>`;
+  const portHtml = ports(c, 1) || '<span class="muted">—</span>';
+  const imgCopy = `<button class="copy" data-copy="${esc(c.Image)}" title="${tr("Copy image:tag")}" aria-label="${tr("Copy image:tag")}"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.copy}"/></svg></button>`;
+  const acts = containerActs(c, name, up, starting, enter);
+  return `<div class="gcard ctr${chosen("containers", c)}" role="button" tabindex="-1" data-rowopen="detail" data-key="${c.Id}"${pickAt("containers", c)}>
+    <span class="gpick">${pickMark("containers", c)}</span>
+    <div class="ghead">${tile(c.icon, "cube")}<div class="who" data-detail="${c.Id}" title="${esc(name)}"><div class="gtitle"><span class="link">${esc(name)}</span>${isKiriK8s(c) ? `<span class="k8s-mark" title="Kiri's Kubernetes cluster" aria-label="Kubernetes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${K8S_LOGO}"/></svg></span>` : ""}</div><div class="sub" title="${esc(c.Image)}"><span class="nm">${esc(img)}</span>${imgCopy}</div></div></div>
+    <div class="gstatus">${statusPill(c)}${addr}${shareOn() ? shareCell(c, name) : ""}</div>
+    <div class="gstats">
+      ${cell("ID", `<span class="mono sel" title="${esc(c.Id)}">${esc(short(c.Id))}</span>${copyBtn(c.Id, "container ID")}`)}
+      ${cell("Ports", portHtml, "ports")}
+      ${cell("Size", `<span class="num">${imageSize(c)}</span>`)}
+      ${cell("Created", ago(c.Created))}
+    </div>
+    <div class="gacts"><span class="gacts-l">${acts.primary}</span><span class="spacer"></span>${acts.danger}</div>
+  </div>`;
+}
 function containerRow(c, member = false) {
     const name = c.Names[0].replace(/^\//, "");
     const project = c.Labels?.["com.docker.compose.project"];
@@ -6247,15 +6846,7 @@ function containerRow(c, member = false) {
       ${shareOn() ? `<td class="col-share">${shareCell(c, name)}</td>` : ""}
       <td class="r num">${imageSize(c)}</td>
       <td class="muted col-created">${ago(c.Created)}</td>
-      <td class="actions"><div class="acts-row">
-        ${up ? ibtn("restart", "Restart", `data-c="restart" data-id="${c.Id}"`, enter)
-          : ibtn("restart", "Start it to restart it", "disabled", "ghost")}
-        ${up ? ibtn("stop", "Stop", `data-c="stop" data-id="${c.Id}"`, `halt ${enter}`)
-          : ibtn("play", starting ? "Starting…" : "Start", `data-c="start" data-id="${c.Id}"`, starting ? "go rolling" : "go")}
-        ${isKiriK8s(c) ? ibtn("trash", "Kubernetes is managed in Settings → Kubernetes", "data-ksettings", "locked")
-          : ibtn("trash", "Remove", `data-c="remove" data-id="${c.Id}"`, "danger")}
-        ${btn("⋯", `data-more="${c.Id}" aria-label="More actions for ${esc(name)}" aria-haspopup="menu"`, "more")}
-      </div></td></tr>`;
+      <td class="actions"><div class="acts-row">${containerActs(c, name, up, starting, enter).all}</div></td></tr>`;
 }
 
 /* The ⋯ menu: the actions that don't need a button of their own. */
@@ -6546,7 +7137,7 @@ function usedCell(i, lit) {
    container is up, then the play button again. The list stays put.
    With no env yet, a popover asks for an optional container name (and any
    password the image needs). Pass env (even []) to start. */
-function runImage(name, env, container, port) {
+function runImage(name, env, container, port, command, extra) {
   if (isK8sImage(name)) return k8sRunNote(name);
   if (ui.running.has(name)) return;
   if (env === undefined) {
@@ -6555,7 +7146,15 @@ function runImage(name, env, container, port) {
     return runOpen(name);
   }
   ui.running.add(name);
-  send("run", { name, value: env || [], container: container || "", port: port || 0 });
+  send("run", {
+    name, value: env || [], container: container || "", port: port || 0, command: command || "",
+    target_port: extra?.target_port || 0,
+    binds: extra?.binds || [],
+    entrypoint: extra?.entrypoint || "",
+    restart: extra?.restart || "",
+    start_command: extra?.start_command || "",
+    network: extra?.network || "",
+  });
   if (ui.view === "images") render();
 }
 function runBtn(name) {
@@ -6636,13 +7235,68 @@ function removeImage(name) {
   scrim.querySelector("[data-go], [data-close]")?.focus();
 }
 
+function usedBrief(i, lit) {
+  const users = usersOf(i), n = users.length, by = { running: 0, stopped: 0, failed: 0 };
+  for (const c of users) by[ctrState(c)]++;
+  const groups = [["running", "run"], ["stopped", "stop"], ["failed", "fail"]].filter(([s]) => by[s]);
+  const ctrs = (k) => tr(k === 1 ? "{n} container" : "{n} containers", { n: k });
+  if (!n) return `<span class="gbadge off" title="${tr("Not in use: no container was made from it")}">${tr("not in use")}</span>`;
+  const boxes = groups.map(([s, k]) => `<span>${cube(k, k === "run" ? lit.n++ : 0)}${by[s]}</span>`).join("<i>·</i>");
+  return `<span class="gbadge on" title="${esc(groups.map(([s]) => `${by[s]} ${s}`).join(" · "))}"><span>${ctrs(n)}</span><span class="cubes">${boxes}</span></span>`;
+}
+function imageCard(i, lit) {
+  const name = imgKey(i);
+  const [repo, tag] = untagged(i) ? ["<none>", ""] : split(name);
+  const picked = ui.picked && (i.RepoTags || []).some((t) => t === ui.picked || t === `${ui.picked}:latest`);
+  const cell = (k, v) => `<div class="cell"><span class="k">${tr(k)}</span><span class="v">${v}</span></div>`;
+  const tagCopy = `<button class="copy" data-copy="${esc(name)}" title="${tr("Copy image:tag")}" aria-label="${tr("Copy image:tag")}"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.copy}"/></svg></button>`;
+  const tagRow = untagged(i)
+    ? `<span class="tag none">${tr("untagged")}</span>`
+    : `${tagPill(tag)}${tagCopy}`;
+  return `<div class="gcard img${picked ? " picked" : ""}${chosen("images", i)}" role="button" tabindex="-1" data-rowopen="img" data-key="${esc(name)}"${pickAt("images", i)}>
+    <span class="gpick">${pickMark("images", i)}</span>
+    <div class="ghead">${tile(i.icon)}<div class="who" data-img="${esc(name)}" title="${esc(repo)}"><span class="link">${esc(repo)}</span><div class="gtags">${tagRow}</div></div></div>
+    ${usedBrief(i, lit)}
+    <div class="gstats">
+      ${cell("ID", `<span class="mono sel">${esc(short(i.Id))}</span>${copyBtn(i.Id, "image ID")}`)}
+      ${cell("Created", ago(i.Created))}
+      ${cell("Size", `<span class="num">${size(i.Size)}</span>`)}
+      ${cell("Pulled", i.Pulled ? ago(i.Pulled) : "—")}
+    </div>
+    <div class="gacts"><span class="gacts-l">${runBtn(name, true)}${ibtn("pull", "Pull", `data-pull="${esc(name)}" ${pulling(name) || untagged(i) ? "disabled" : ""}`)}${imgNoteBtn(name)}</span><span class="spacer"></span>${ibtn("trash", "Remove", `data-rmi="${esc(name)}"`, "danger")}</div>
+  </div>`;
+}
+function imgNoteBtn(name) {
+  const has = ui.imgNotes.has(name);
+  return ibtn("note", "Remark", `data-imgnote="${esc(name)}"`, has ? "has-note" : "");
+}
+function pullCard(p) {
+  const [repo, tag] = split(p.name), failed = p.phase === "failed", warn = failed && p.kind === "network", off = p.phase === "cancelled";
+  const art = failed ? `<div class="tile ${warn ? "wrn" : "err"}">${svgOf(p.kind === "auth" ? "lock" : warn ? "warning" : "xcircle")}</div>`
+    : off ? `<div class="tile">${svgOf("xcircle")}</div>`
+    : `<div class="tile blue">${p.phase === "done" ? svgOf("check") : '<span class="hspin"></span>'}</div>`;
+  const what = failed ? tr("Didn't pull") : off ? tr("Cancelled") : p.phase === "done" ? tr("Pulled") : p.phase === "asking" ? tr("Starting") : p.again ? tr("Updating") : tr("Pulling");
+  const n = esc(p.name);
+  const acts = pulling(p.name) ? ibtn("xcircle", "Cancel pull", `data-pcancel="${n}"`)
+    : !failed ? "" : (["notfound", "notag"].includes(p.kind) || (p.kind === "auth" && loginsOn()) ? "" : `<button class="btn sm" data-pretry="${n}">${svgOf("restart")}${tr("Retry")}</button>`) + btn("Dismiss", `data-pdismiss="${n}"`, "quiet");
+  return `<div class="gcard prow${failed ? (warn ? " warn" : " bad") : off ? " off" : ""}" data-key="pull:${n}">
+    <div class="ghead">${art}<div class="who"><b>${esc(repo)}</b><div class="sub">${what} · ${tagPill(tag)}</div></div></div>
+    <div class="gpull" data-pcell="${n}">${pullCell(p)}</div>
+    <div class="gacts">${acts}</div>
+  </div>`;
+}
 function renderImages() {
   // A finished pull's row stays until the list has its image.
   for (const [n, p] of ui.pulls) if (p.phase === "done" && (ui.images.some((i) => i.RepoTags?.includes(n)) || Date.now() - p.end > 5000)) ui.pulls.delete(n);
   const items = sortBy(listed("images"), "images", IMAGE_SORT), pulls = [...ui.pulls.values()].reverse();
   if (!kept("images").length && !pulls.length) return renderEmpty("images");
   if (!items.length && !pulls.length) return noMatch();
-  const rows = pulls.map(pullRow), lit = { n: 0 };
+  const lit = { n: 0 };
+  if (listLayout("images") === "grid") {
+    morph($("content"), `<div class="ggrid" data-view="images" tabindex="0">${pulls.map(pullCard).join("")}${items.map((i) => imageCard(i, lit)).join("")}</div>`);
+    return;
+  }
+  const rows = pulls.map(pullRow);
   for (const i of items) {
     const name = imgKey(i);
     const [repo, tag] = untagged(i) ? ["<none>", ""] : split(name);
@@ -6658,6 +7312,7 @@ function renderImages() {
       <td class="actions"><div class="acts-row">
         ${runBtn(name, true)}
         ${ibtn("pull", "Pull", `data-pull="${esc(name)}" ${pulling(name) || untagged(i) ? "disabled" : ""}`)}
+        ${imgNoteBtn(name)}
         ${ibtn("trash", "Remove", `data-rmi="${esc(name)}"`, "danger")}
       </div></td></tr>`);
   }
@@ -6668,7 +7323,7 @@ function renderImages() {
 
 // An image's page: Images › name, with its layers and settings read from Kiri's store.
 function openImage(name) {
-  ui.imgd = { name, layers: null };
+  ui.imgd = { name, layers: null, tab: "layers", noteBody: null, noteMode: "preview", noteDirty: false, noteSaving: false };
   send("imagelayers", { name });
   render();
 }
@@ -6677,20 +7332,269 @@ function renderImageDetail() {
   const d = ui.imgd;
   const i = ui.images.find((x) => imgKey(x) === d.name || x.Id === d.name);
   if (!i) { ui.imgd = null; return render(); }
+  const tab = d.tab || "layers";
+  if (tab === "remark" && d.noteBody == null && !d.noteLoading) {
+    d.noteLoading = true;
+    send("imgnote", { name: d.name });
+  }
   $("title").innerHTML = `<span class="crumb"><button data-back>${tr("Images")}</button><span aria-hidden="true">›</span><span title="${esc(d.name)}">${refHtml(d.name)}</span></span>`;
   $("subtitle").textContent = "";
   const users = usersOf(i);
+  const keep = tab === "remark" && d.noteMode === "edit" ? { id: "img-note-body", start: $("img-note-body")?.selectionStart, end: $("img-note-body")?.selectionEnd } : null;
   $("content").innerHTML = `<div class="dhead">
       ${tile(i.icon)}
-      <div class="who"><b title="${esc(d.name)}">${refHtml(d.name, true)}</b><span class="muted"><span class="mono sel">${esc(short(i.Id))}</span>${copyBtn(i.Id, "image ID")} · ${size(i.Size)} · ${tr("made {when}", { when: ago(i.Created) })}${users.length ? ` · <span title="${esc(users.map(cname).join(", "))}">${users.length > 2 ? tr("used by {names} +{n} more", { names: users.slice(0, 2).map((u) => esc(cname(u))).join(", "), n: users.length - 2 }) : tr("used by {names}", { names: users.slice(0, 2).map((u) => esc(cname(u))).join(", ") })}</span>` : ""}</span></div>
+      <div class="who"><span class="ttl"><b title="${esc(d.name)}">${refHtml(d.name, true)}</b>${copyBtn(d.name, "image name")}</span><span class="muted"><span class="mono sel">${esc(short(i.Id))}</span>${copyBtn(i.Id, "image ID")} · ${size(i.Size)} · ${tr("made {when}", { when: ago(i.Created) })}${users.length ? ` · <span title="${esc(users.map(cname).join(", "))}">${users.length > 2 ? tr("used by {names} +{n} more", { names: users.slice(0, 2).map((u) => esc(cname(u))).join(", "), n: users.length - 2 }) : tr("used by {names}", { names: users.slice(0, 2).map((u) => esc(cname(u))).join(", ") })}</span>` : ""}</span></div>
       <span class="spacer"></span>
-      <div class="acts-row">${runBtn(d.name, false)}${lbtn("pull", "Pull", `data-pull="${esc(d.name)}" ${pulling(d.name) ? "disabled" : ""}`)}${lbtn("trash", "Remove", `data-rmi="${esc(d.name)}"`, "danger")}</div>
+      <div class="acts-row">${runBtn(d.name, false)}${lbtn("pull", "Pull", `data-pull="${esc(d.name)}" ${pulling(d.name) ? "disabled" : ""}`)}${imgNoteBtn(d.name)}${lbtn("trash", "Remove", `data-rmi="${esc(d.name)}"`, "danger")}</div>
     </div>
     <div class="bl-tabs" role="tablist">
-      <button role="tab" data-imgtab="layers" aria-selected="${d.tab !== "security"}">${tr("Layers")}</button>
-      <button role="tab" data-imgtab="security" aria-selected="${d.tab === "security"}">${tr("Security")}</button>
+      <button role="tab" data-imgtab="layers" aria-selected="${tab === "layers"}">${tr("Layers")}</button>
+      <button role="tab" data-imgtab="security" aria-selected="${tab === "security"}">${tr("Security")}</button>
+      <button role="tab" data-imgtab="remark" aria-selected="${tab === "remark"}">${tr("Remark")}</button>
     </div>
-    ${d.tab === "security" ? scanView(i, { own: "this image" }) : layersView(d.layers, null, { own: "Added in this image", base: "From its base image" })}`;
+    ${tab === "security" ? scanView(i, { own: "this image" }) : tab === "remark" ? imgRemarkPane(d) : layersView(d.layers, null, { own: "Added in this image", base: "From its base image" })}`;
+  if (tab === "remark") {
+    if ((d.noteMode || "preview") === "edit") mdEdBind($("content"));
+    else mdEdBindPreview($("content"));
+  }
+  if (keep?.id && $(keep.id)) {
+    const el = $(keep.id);
+    el.focus();
+    try { el.setSelectionRange(keep.start ?? el.value.length, keep.end ?? el.value.length); } catch {}
+  }
+}
+
+function mdEdLines(text) {
+  return Math.max(1, String(text ?? "").split("\n").length);
+}
+function mdEdGutter(n) {
+  return Array.from({ length: Math.max(1, n) }, (_, i) => i + 1).join("\n");
+}
+function mdEdHtml(id, body, label) {
+  const text = String(body ?? "");
+  const lines = mdEdLines(text);
+  return `<div class="md-ed" style="--md-ed-digits:${String(lines).length}"><pre class="md-ed-gutter" aria-hidden="true">${mdEdGutter(lines)}</pre><textarea id="${id}" class="md-ed-ta" spellcheck="false" aria-label="${esc(label)}">${esc(text)}</textarea></div>`;
+}
+/** Preview keeps the same lined chrome; the right pane is rendered Markdown. */
+function mdEdPreviewHtml(body, id = "img-note-preview") {
+  const text = String(body ?? "");
+  const lines = mdEdLines(text);
+  return `<div class="md-ed md-ed-prev" style="--md-ed-digits:${String(lines).length}"><pre class="md-ed-gutter" aria-hidden="true">${mdEdGutter(lines)}</pre><div class="md-ed-view notes-preview" id="${esc(id)}">${mdToHtml(text)}</div></div>`;
+}
+function mdEdBindPreview(root = document) {
+  root.querySelectorAll?.(".md-ed-prev .md-ed-view").forEach((view) => {
+    if (view.dataset.mdEdBound) return;
+    view.dataset.mdEdBound = "1";
+    const gut = view.closest(".md-ed")?.querySelector(".md-ed-gutter");
+    view.addEventListener("scroll", () => {
+      if (!gut) return;
+      const maxV = view.scrollHeight - view.clientHeight;
+      const maxG = gut.scrollHeight - gut.clientHeight;
+      gut.scrollTop = maxV > 0 && maxG > 0 ? (view.scrollTop / maxV) * maxG : 0;
+    });
+  });
+}
+function mdEdSync(ta) {
+  const ed = ta?.closest?.(".md-ed");
+  if (!ed) return;
+  const gut = ed.querySelector(".md-ed-gutter");
+  const n = Math.max(1, String(ta.value || "").split("\n").length);
+  ed.style.setProperty("--md-ed-digits", String(n).length);
+  if (gut) {
+    gut.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
+    gut.scrollTop = ta.scrollTop;
+  }
+}
+function mdEdTab(ta, shift) {
+  const v = ta.value, s = ta.selectionStart, e = ta.selectionEnd;
+  if (!shift && s === e) {
+    ta.value = v.slice(0, s) + "  " + v.slice(e);
+    ta.selectionStart = ta.selectionEnd = s + 2;
+  } else {
+    const a = v.lastIndexOf("\n", s - 1) + 1;
+    let b = e;
+    if (e > s && v[e - 1] === "\n") b = e - 1;
+    else {
+      const n = v.indexOf("\n", Math.max(e - 1, s));
+      b = n < 0 ? v.length : n;
+    }
+    const out = v.slice(a, b).split("\n").map((line) => {
+      if (!shift) return "  " + line;
+      if (line.startsWith("  ")) return line.slice(2);
+      if (line.startsWith("\t") || line.startsWith(" ")) return line.slice(1);
+      return line;
+    }).join("\n");
+    ta.value = v.slice(0, a) + out + v.slice(b);
+    ta.selectionStart = a;
+    ta.selectionEnd = a + out.length;
+  }
+  ta.dispatchEvent(new Event("input", { bubbles: true }));
+  mdEdSync(ta);
+}
+function mdEdBind(root = document) {
+  root.querySelectorAll?.(".md-ed-ta").forEach((ta) => {
+    if (ta.dataset.mdEdBound) { mdEdSync(ta); return; }
+    ta.dataset.mdEdBound = "1";
+    mdEdSync(ta);
+    ta.addEventListener("input", () => mdEdSync(ta));
+    // Paste updates the value before input in some WebViews; sync gutter either way.
+    ta.addEventListener("paste", () => { setTimeout(() => mdEdSync(ta), 0); });
+    ta.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Tab" || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      mdEdTab(ta, ev.shiftKey);
+    });
+    ta.addEventListener("scroll", () => {
+      const gut = ta.closest(".md-ed")?.querySelector(".md-ed-gutter");
+      if (gut) gut.scrollTop = ta.scrollTop;
+    });
+  });
+}
+function imgRemarkPane(d) {
+  const body = d.noteBody == null ? "" : d.noteBody;
+  const mode = d.noteMode || "preview";
+  const loading = d.noteBody == null;
+  const preview = loading
+    ? `<div class="notes-blank"><p>${tr("Loading…")}</p></div>`
+    : !String(body).trim()
+      ? `<div class="notes-blank" id="img-note-preview"><p>${tr("No remark yet")}</p><p>${tr("Write a Markdown remark for this image.")}</p><button class="btn" data-imgnotemode="edit">${tr("Edit")}</button></div>`
+      : mdEdPreviewHtml(body, "img-note-preview");
+  return `<div class="img-remark">
+    <div class="ihn-bar">
+      <div class="seg" role="group" aria-label="${tr("Remark")}">
+        <button type="button" data-imgnotemode="preview" aria-pressed="${mode === "preview"}">${tr("Preview")}</button>
+        <button type="button" data-imgnotemode="edit" aria-pressed="${mode === "edit"}">${tr("Edit")}</button>
+      </div>
+      ${d.noteDirty ? `<span class="dirty">${tr("Unsaved changes")}</span>` : ""}
+      <span class="acts"><button class="btn sm primary" data-imgnotesave ${d.noteSaving || !d.noteDirty ? "disabled" : ""}>${tr("Save")}</button></span>
+    </div>
+    <div class="ihn-body">${mode === "edit" ? mdEdHtml("img-note-body", body, tr("Remark")) : preview}</div>
+  </div>`;
+}
+
+function openImgNote(name) {
+  imgNoteClose(true);
+  const scrim = document.createElement("div");
+  scrim.className = "scrim";
+  scrim.id = "imgnote-dlg";
+  const state = { name, body: "", mode: "edit", dirty: false, saving: false, loaded: false, pendingSave: false, scrim };
+  ui.imgNoteDlg = state;
+  const syncChrome = () => {
+    const dirty = scrim.querySelector(".ihn-bar .dirty");
+    if (state.dirty && !dirty) {
+      const bar = scrim.querySelector(".ihn-bar");
+      bar?.insertAdjacentHTML("beforeend", `<span class="dirty">${tr("Unsaved changes")}</span>`);
+    } else if (!state.dirty) dirty?.remove();
+    const save = scrim.querySelector("[data-ihnsave]");
+    if (save) save.disabled = state.saving || !state.dirty;
+  };
+  const bindEditor = () => {
+    mdEdBind(scrim);
+    const el = scrim.querySelector("#imgnote-body");
+    el?.addEventListener("input", () => {
+      state.body = el.value;
+      state.dirty = true;
+      syncChrome();
+    });
+    el?.focus();
+  };
+  const draw = () => {
+    const mode = state.mode;
+    const preview = !state.loaded
+      ? `<div class="notes-blank"><p>${tr("Loading…")}</p></div>`
+      : !String(state.body).trim() && mode === "preview"
+        ? `<div class="notes-blank"><p>${tr("No remark yet")}</p><p>${tr("Write a Markdown remark for this image.")}</p></div>`
+        : mdEdPreviewHtml(state.body, "imgnote-preview");
+    scrim.innerHTML = `<div class="dialog imgnote-dlg" role="dialog" aria-modal="true" aria-labelledby="imgnote-h">
+      <div class="ihn-head">${tile(ui.images.find((x) => imgKey(x) === name)?.icon)}<div class="who"><b id="imgnote-h">${tr("Remark for {name}", { name: esc(name) })}</b><small>${tr("Write a Markdown remark for this image.")}</small></div>
+        <button type="button" class="ihn-x" data-ihnclose title="${tr("Close")}" aria-label="${tr("Close")}">×</button></div>
+      <div class="ihn-bar">
+        <div class="seg" role="group">
+          <button type="button" data-ihnmode="preview" aria-pressed="${mode === "preview"}">${tr("Preview")}</button>
+          <button type="button" data-ihnmode="edit" aria-pressed="${mode === "edit"}">${tr("Edit")}</button>
+        </div>
+        ${state.dirty ? `<span class="dirty">${tr("Unsaved changes")}</span>` : ""}
+      </div>
+      <div class="ihn-body">${mode === "edit" ? mdEdHtml("imgnote-body", state.body, tr("Remark")) : preview}</div>
+      <div class="ihn-foot">
+        <button type="button" class="btn" data-ihnclose>${tr("Cancel")}</button>
+        <button type="button" class="btn primary" data-ihnsave ${state.saving || !state.dirty ? "disabled" : ""}>${tr("Save")}</button>
+      </div>
+    </div>`;
+    if (mode === "edit") bindEditor();
+    else mdEdBindPreview(scrim);
+  };
+  state.draw = draw;
+  draw();
+  document.body.append(scrim);
+  send("imgnote", { name });
+  const onKey = (ev) => {
+    if (ev.key !== "Escape") return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    // Escape discards like Cancel — confirm() is unreliable in the WKWebView.
+    imgNoteClose(true);
+  };
+  state.onKey = onKey;
+  document.addEventListener("keydown", onKey, true);
+  scrim.addEventListener("click", (ev) => {
+    // Cancel / × / backdrop: close immediately (Cancel means discard).
+    if (ev.target === scrim || ev.target.closest("[data-ihnclose]")) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      return imgNoteClose(true);
+    }
+    const modeBtn = ev.target.closest("[data-ihnmode]");
+    if (modeBtn) {
+      if (state.mode === "edit") state.body = scrim.querySelector("#imgnote-body")?.value ?? state.body;
+      state.mode = modeBtn.dataset.ihnmode;
+      draw();
+      return;
+    }
+    if (ev.target.closest("[data-ihnsave]")) {
+      if (state.mode === "edit") state.body = scrim.querySelector("#imgnote-body")?.value ?? state.body;
+      state.saving = true;
+      state.pendingSave = true;
+      state.dirty = false;
+      syncChrome();
+      send("imgnotesave", { name: state.name, value: { body: state.body } });
+    }
+  });
+}
+function imgNoteClose(force) {
+  const s = ui.imgNoteDlg;
+  if (!s) return;
+  if (!force && s.dirty && !window.confirm(tr("Discard unsaved changes?"))) return;
+  if (s.onKey) document.removeEventListener("keydown", s.onKey, true);
+  s.scrim?.remove();
+  ui.imgNoteDlg = null;
+}
+function imgNoteApply(name, body, fromSave) {
+  if (ui.imgNotes) {
+    if (String(body || "").trim()) ui.imgNotes.add(name); else ui.imgNotes.delete(name);
+  }
+  const dlg = ui.imgNoteDlg;
+  if (dlg && dlg.name === name) {
+    dlg.body = body || "";
+    dlg.loaded = true;
+    dlg.saving = false;
+    if (fromSave || dlg.pendingSave) {
+      dlg.pendingSave = false;
+      dlg.dirty = false;
+      imgNoteClose(true);
+      if (ui.view === "images") render();
+      return;
+    }
+    if (!dlg.dirty) dlg.draw?.();
+  }
+  if (ui.imgd?.name === name) {
+    ui.imgd.noteBody = body || "";
+    ui.imgd.noteLoading = false;
+    ui.imgd.noteSaving = false;
+    ui.imgd.noteDirty = false;
+    if (ui.view === "images") render();
+  } else if (ui.view === "images" && !ui.imgd) render();
 }
 
 function renderVolumes() {
@@ -7102,6 +8006,7 @@ function renderStatus() {
   const vmText = { running: tr("{vm} running", { vm: tr(VM) }), stopped: tr("{vm} off", { vm: tr(VM) }), booting: tr("Starting…"), stopping: tr("Stopping…") }[vshown] || vshown;
   const mem = ui.mem ? tr("{used} of {ceiling} GB", { used: memText(ui.mem.used), ceiling: Math.round(ui.mem.ceiling / 1024) }) : "";
   const parts = [
+    `<button type="button" class="item sb-ai" data-notesai title="${tr("AI coming soon")}" aria-label="${tr("Ask AI")}"><svg class="i" viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.sparkle}"/></svg></button>`,
     `<span class="item">${KDOT}<span>Kiri ${esc(ui.status?.version || "")}</span>${ui.status?.dev ? `<span class="dev" title="${esc(ui.status?.app || "Kiri Dev")}: its own engine, containers and settings">DEV</span>` : ""}</span>`,
     usageItem(),
     updateChip(),
@@ -7344,6 +8249,7 @@ function render() {
   if (v !== "share") { $("sh-pane")?.remove(); $("content").hidden = false; }
   if (v === "settings") return renderSettings();
   if (v === "share") return renderShare();
+  if (v === "notes") return renderNotes();
   if (ui.vm === "stopped") return renderEmpty("stopped");
   if (v === "containers" && ui.detail) {
     // The list refreshes while you edit the environment: keep your place.
@@ -7370,7 +8276,7 @@ function setVm(state, error) {
     if (state !== "running") ["vm-mem"].forEach((id) => ($(id).textContent = "—")), ($("vm-meter").style.width = "0");
     if (state === "stopped" || was === "stopped") render();
   }
-  if (error) toast("error", error);
+  if (error) toast("error", trErr(error));
 }
 /* Your running containers: Kiri's own (its builder, Run's look at an image)
    are already left out of ui.containers. */
@@ -7772,6 +8678,154 @@ function needPortField() {
     <div class="pw"><span class="inp"><input id="need-hport" data-needport inputmode="numeric" spellcheck="false" autocomplete="off" placeholder="${tr("Leave empty to assign automatically")}" aria-label="${tr("Host port")}"></span></div>
     <span class="hint" data-porthint></span></div>`;
 }
+function needModeSeg(mode) {
+  return `<div class="modeseg" role="group" aria-label="${tr("Run")}">
+    <button type="button" data-needmode="default" aria-pressed="${mode === "default"}">${tr("Default")}</button>
+    <button type="button" data-needmode="custom" aria-pressed="${mode === "custom"}">${tr("Custom")}</button></div>`;
+}
+function needCustomField(image) {
+  const eg = `docker run -d -it -P \\
+  --name ${defaultContainerName(image)} \\
+  ${image}`;
+  return `<div class="fld"><label for="need-cmd">${tr("Container start command")}</label>
+    <div class="pw"><span class="inp"><textarea id="need-cmd" data-needcmd rows="6" spellcheck="false" autocomplete="off" placeholder="${esc(eg)}" aria-label="${tr("Container start command")}"></textarea></span></div>
+    <span class="hint" data-cmdhint>${tr("Paste a docker run for {image}. \\ continues a line.", { image: `<span class="mono">${esc(image)}</span>` })}</span></div>`;
+}
+function needPanes(image, mode) {
+  return `${needModeSeg(mode)}
+    <div class="pane" data-needdefault${mode === "default" ? "" : " hidden"}>
+      ${needNameField(image)}
+      ${needPortField()}
+    </div>
+    <div class="pane" data-needcustom${mode === "custom" ? "" : " hidden"}>
+      ${needCustomField(image)}
+    </div>`;
+}
+function sameImageRef(a, b) {
+  const n = (s) => String(s || "").replace(/^docker\.io\/(?:library\/)?/, "").toLowerCase();
+  return n(a) === n(b);
+}
+/* Fold `\` line continuations and bare newlines into one shell line. */
+function flattenShellLines(s) {
+  let out = "";
+  for (const line of String(s || "").replace(/\r\n/g, "\n").split("\n")) {
+    let t = line.trim();
+    if (!t) continue;
+    const bs = (t.match(/\\+$/) || [""])[0].length;
+    if (bs % 2 === 1) t = t.slice(0, -1).trimEnd();
+    out = out ? `${out} ${t}` : t;
+  }
+  return out;
+}
+function shellSplit(s) {
+  const flat = flattenShellLines(s);
+  const out = [];
+  let cur = "", quote = "";
+  for (const c of flat) {
+    if (quote) {
+      if (c === quote) quote = "";
+      else cur += c;
+    } else if (c === '"' || c === "'") quote = c;
+    else if (/\s/.test(c)) { if (cur) { out.push(cur); cur = ""; } }
+    else cur += c;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+/* `-p` / `--publish` spec → host + container port (tcp). */
+function parsePublishSpec(spec) {
+  const body = String(spec || "").split("/")[0];
+  const segs = body.split(":");
+  let host = "", container = "";
+  if (segs.length === 1) { host = container = segs[0]; }
+  else if (segs.length === 2) { host = segs[0]; container = segs[1]; }
+  else { host = segs[segs.length - 2]; container = segs[segs.length - 1]; }
+  if (!/^\d+$/.test(host) || !/^\d+$/.test(container)) return null;
+  return { host: +host, container: +container };
+}
+/* A pasted 容器启动命令 (`docker run … \`) → name / ports / env / mounts / CMD. */
+function parseDockerRun(text) {
+  const args = shellSplit(text);
+  if (args.length < 2 || args[0] !== "docker" || args[1] !== "run") return null;
+  let i = 2, name = "", port = 0, targetPort = 0, env = [], binds = [], entrypoint = "", restart = "", network = "", image = "", cmd = [];
+  const bool = new Set(["-d", "--detach", "-i", "--interactive", "-t", "--tty", "-P", "--publish-all", "--rm", "--privileged", "-it", "-ti", "-itd", "-dit", "-idt", "-tid"]);
+  while (i < args.length) {
+    const a = args[i];
+    if (a === "--name" && args[i + 1]) { name = args[i + 1]; i += 2; continue; }
+    if (a.startsWith("--name=")) { name = a.slice(7); i += 1; continue; }
+    if ((a === "-p" || a === "--publish") && args[i + 1]) {
+      const pub = parsePublishSpec(args[i + 1]);
+      if (pub) { port = pub.host; targetPort = pub.container; }
+      i += 2; continue;
+    }
+    if (a.startsWith("-p=") || a.startsWith("--publish=")) {
+      const pub = parsePublishSpec(a.slice(a.indexOf("=") + 1));
+      if (pub) { port = pub.host; targetPort = pub.container; }
+      i += 1; continue;
+    }
+    if ((a === "-e" || a === "--env") && args[i + 1]) { env.push(args[i + 1]); i += 2; continue; }
+    if (a.startsWith("-e=") || a.startsWith("--env=")) { env.push(a.slice(a.indexOf("=") + 1)); i += 1; continue; }
+    if ((a === "-v" || a === "--volume") && args[i + 1]) { binds.push(args[i + 1]); i += 2; continue; }
+    if (a.startsWith("-v=") || a.startsWith("--volume=")) { binds.push(a.slice(a.indexOf("=") + 1)); i += 1; continue; }
+    if (a === "--entrypoint" && args[i + 1] != null) { entrypoint = args[i + 1]; i += 2; continue; }
+    if (a.startsWith("--entrypoint=")) { entrypoint = a.slice(13); i += 1; continue; }
+    if (a === "--restart" && args[i + 1]) { restart = args[i + 1]; i += 2; continue; }
+    if (a.startsWith("--restart=")) { restart = a.slice(10); i += 1; continue; }
+    if ((a === "--network" || a === "--net") && args[i + 1]) { network = args[i + 1]; i += 2; continue; }
+    if (a.startsWith("--network=")) { network = a.slice(10); i += 1; continue; }
+    if (a.startsWith("--net=")) { network = a.slice(6); i += 1; continue; }
+    if (bool.has(a)) { i += 1; continue; }
+    /* Other `--flag=value` options must not swallow the image. */
+    if (a.startsWith("-") && a.includes("=")) { i += 1; continue; }
+    if (a.startsWith("-") && args[i + 1] && !args[i + 1].startsWith("-")) { i += 2; continue; }
+    if (a.startsWith("-")) { i += 1; continue; }
+    image = a;
+    cmd = args.slice(i + 1);
+    break;
+  }
+  // Re-quote argv so a later split_command keeps `sh -c '… with spaces…'` intact.
+  const command = cmd.map((t) => (/^[A-Za-z0-9._:/=@+,-]+$/.test(t) ? t : shq(t))).join(" ");
+  return { name, port, targetPort, env, binds, entrypoint, restart, network, image, command };
+}
+/* Validate Custom mode's docker run textarea. */
+function needCustom() {
+  const raw = (ui.need?.el.querySelector("[data-needcmd]")?.value || "").trim();
+  if (!raw) return { ok: false, why: tr("Paste a docker run command") };
+  const parsed = parseDockerRun(raw);
+  if (!parsed) return { ok: false, why: tr("Must start with docker run") };
+  if (!parsed.image) return { ok: false, why: tr("Missing the image name") };
+  if (!sameImageRef(parsed.image, ui.need.image)) {
+    return { ok: false, why: tr("The command must use {image}", { image: ui.need.image }) };
+  }
+  const name = parsed.name || defaultContainerName(ui.need.image);
+  if (!validContainerName(name)) return { ok: false, why: tr("Only letters, digits, _, . and -") };
+  if (nameInUse(name)) return { ok: false, why: tr("“{name}” is already in use", { name }) };
+  if (parsed.port) {
+    if (parsed.port < 1 || parsed.port > 65535) return { ok: false, why: tr("Enter a port from 1 to 65535") };
+    if (portInUse(parsed.port)) return { ok: false, why: tr("Host port {n} is already in use", { n: parsed.port }) };
+  }
+  return {
+    ok: true, name, port: parsed.port || 0, command: parsed.command || "", env: parsed.env || [],
+    target_port: parsed.targetPort || 0, binds: parsed.binds || [],
+    entrypoint: parsed.entrypoint || "", restart: parsed.restart || "",
+    network: parsed.network || "",
+    start_command: flattenShellLines(raw),
+  };
+}
+function needSetMode(mode) {
+  const p = ui.need;
+  if (!p) return;
+  p.mode = mode === "custom" ? "custom" : "default";
+  p.el.classList.toggle("wide", p.mode === "custom");
+  p.el.querySelectorAll("[data-needmode]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.needmode === p.mode ? "true" : "false"));
+  const def = p.el.querySelector("[data-needdefault]"), cust = p.el.querySelector("[data-needcustom]");
+  if (def) def.hidden = p.mode !== "default";
+  if (cust) cust.hidden = p.mode !== "custom";
+  needClearRunErr();
+  needCheck();
+  if (p.mode === "custom") p.el.querySelector("[data-needcmd]")?.focus({ preventScroll: true });
+  else p.el.querySelector("[data-needcname]")?.focus({ preventScroll: true });
+}
 function nameInUse(name) {
   return ui.containers.some((c) => cname(c) === name);
 }
@@ -7814,7 +8868,7 @@ function needRunFail(message) {
   p.busy = false;
   p.runErr = message || tr("Couldn't start");
   p.runErrKind = classifyRunErr(p.runErr);
-  p.el.querySelectorAll("input, button").forEach((x) => { x.disabled = false; });
+  p.el.querySelectorAll("input, textarea, button").forEach((x) => { x.disabled = false; });
   const go = p.el.querySelector("[data-needgo]");
   if (go) go.textContent = tr("Run");
   needPaintRunErr();
@@ -7856,20 +8910,19 @@ function needClearRunErr() {
   p.el.querySelector("[data-needcname]")?.classList.remove("bad");
   p.el.querySelector("[data-needport]")?.classList.remove("bad");
 }
-/* Run with no password to collect: name + optional host port. */
+/* Run with no password to collect: Default = name + port; Custom = docker run. */
 function runOpen(image) {
   needClose();
   const el = document.createElement("div");
   el.className = "need";
   el.setAttribute("role", "dialog");
   el.setAttribute("aria-label", tr("Run {image}", { image }));
-  el.innerHTML = `<div class="hd"><span class="oic">${svgOf("play")}</span><h3>${tr("Run {image}", { image: esc(image) })}</h3><p class="why">${tr("Name defaults to {name}. Host port is optional.", { name: `<span class="mono">${esc(defaultContainerName(image))}</span>` })}</p></div>
-    ${needNameField(image)}
-    ${needPortField()}
+  el.innerHTML = `<div class="hd"><span class="oic">${svgOf("play")}</span><h3>${tr("Run {image}", { image: esc(image) })}</h3><p class="why" data-needwhy>${tr("Name defaults to {name}. Host port is optional.", { name: `<span class="mono">${esc(defaultContainerName(image))}</span>` })}</p></div>
+    ${needPanes(image, "default")}
     <div class="err" data-neederr hidden></div>
     <div class="ft"><div class="row"><button class="btn sm quiet" data-needcancel>${tr("Cancel")} <span class="kbd">esc</span></button><button class="btn sm primary" data-needgo>${tr("Run")}</button></div>
-      <span class="note"><span class="mono">docker run --name</span> and <span class="mono">-p</span>.</span></div>`;
-  ui.need = { image, n: null, el };
+      <span class="note" data-neednote><span class="mono">docker run --name</span> and <span class="mono">-p</span>.</span></div>`;
+  ui.need = { image, n: null, el, mode: "default" };
   document.body.append(el);
   needCheck();
   if (ui.view === "images") render();
@@ -7898,13 +8951,12 @@ function needOpen(image) {
   const more = n.more ? `<button class="disc" data-needdisc aria-expanded="false">${svgOf("caret")}${tr("More settings")} <span class="n">${n.more.length} ${tr("optional")}</span></button>
       <div class="more" hidden>${n.more.map(([k, ph]) => `<label for="need-${k}">${k}</label><input id="need-${k}" data-needmore="${k}" spellcheck="false" autocomplete="off" placeholder="${esc(ph)}">`).join("")}</div>` : "";
   el.innerHTML = `<div class="hd"><span class="oic">${svgOf("lock")}</span><h3>${tr("{image} needs {what} to start", { image: esc(image), what: esc(what) })}</h3><p class="why">${esc(n.why)}</p></div>
-    ${needNameField(image)}
-    ${needPortField()}
+    ${needPanes(image, "default")}
     ${body}${more}
     <div class="err" data-neederr hidden></div>
     <div class="ft"><div class="row"><button class="btn sm quiet" data-needcancel>${tr("Cancel")} <span class="kbd">esc</span></button><button class="btn sm primary" data-needgo>${tr("Run")}</button></div>
       <span class="note">${tr("Saved in the container's environment. Kiri doesn't keep a copy.")}</span></div>`;
-  ui.need = { image, n, el };
+  ui.need = { image, n, el, mode: "default" };
   document.body.append(el);
   needCheck();
   if (ui.view === "images") render();
@@ -7926,8 +8978,8 @@ function needPlace() {
   const b = ui.view === "images" ? document.querySelector(`[data-run="${CSS.escape(p.image)}"]`) : null;
   const r = b?.getBoundingClientRect(), c = $("content").getBoundingClientRect();
   if (!r || !r.height || r.bottom < c.top || r.top > c.bottom) { p.busy = false; return needClose(); }
-  const el = p.el, cx = r.left + r.width / 2;
-  const left = Math.max(8, Math.min(innerWidth - 360 - 14, cx - 290));
+  const el = p.el, cx = r.left + r.width / 2, w = el.offsetWidth || 360;
+  const left = Math.max(8, Math.min(innerWidth - w - 14, cx - Math.min(290, w - 70)));
   el.style.left = `${left}px`;
   el.style.setProperty("--ax", `${cx - left}px`);
   const h = el.offsetHeight, roomBelow = innerHeight - r.bottom - 40, roomAbove = r.top - 16;
@@ -7958,33 +9010,65 @@ function needEnv() {
 function needCheck() {
   const p = ui.need;
   if (!p) return;
+  const mode = p.mode || "default";
   const h = p.el.querySelector("[data-needhint]"), v = p.el.querySelector("[data-needpw]")?.value || "";
   if (h) {
     const k = pwScore(v), ok = k === 4;
     h.className = `hint${ok ? " ok" : v ? " no" : ""}`;
     h.innerHTML = `<span class="bars" data-n="${v ? k : 0}"><i></i><i></i><i></i><i></i></span><span>${ok ? tr("Strong enough") : tr("Needs upper and lower case, a digit and a symbol, 8 or more")}</span>`;
   }
-  const c = needContainer(), ch = p.el.querySelector("[data-cnamehint]");
-  const cIn = p.el.querySelector("[data-needcname]");
-  if (ch && p.runErrKind !== "name") {
-    ch.className = `hint${c.ok ? "" : " no"}`;
-    ch.textContent = c.ok ? "" : (c.why || "Only letters, digits, _, . and -");
+  const why = p.el.querySelector("[data-needwhy]");
+  const note = p.el.querySelector("[data-neednote]");
+  if (why && !p.n) {
+    why.innerHTML = mode === "custom"
+      ? tr("Paste a docker run for {image}. \\ continues a line.", { image: `<span class="mono">${esc(p.image)}</span>` })
+      : tr("Name defaults to {name}. Host port is optional.", { name: `<span class="mono">${esc(defaultContainerName(p.image))}</span>` });
   }
-  cIn?.classList.toggle("bad", !c.ok || p.runErrKind === "name");
-  const hp = needHostPort(), ph = p.el.querySelector("[data-porthint]");
-  const pIn = p.el.querySelector("[data-needport]");
-  if (ph && p.runErrKind !== "port") {
-    ph.className = `hint${hp.ok ? "" : " no"}`;
-    ph.textContent = hp.ok ? "" : (hp.why || "Enter a port from 1 to 65535");
+  if (note) {
+    note.innerHTML = mode === "custom"
+      ? `<span class="mono">docker run …</span>`
+      : `<span class="mono">docker run --name</span> and <span class="mono">-p</span>.`;
   }
-  pIn?.classList.toggle("bad", !hp.ok || p.runErrKind === "port");
+  let ready = needEnv() !== null;
+  if (mode === "custom") {
+    const c = needCustom(), ch = p.el.querySelector("[data-cmdhint]");
+    const ta = p.el.querySelector("[data-needcmd]");
+    if (ch && p.runErrKind !== "other") {
+      ch.className = `hint${c.ok ? "" : (ta?.value || "").trim() ? " no" : ""}`;
+      ch.innerHTML = c.ok
+        ? tr("Paste a docker run for {image}. \\ continues a line.", { image: `<span class="mono">${esc(p.image)}</span>` })
+        : esc(c.why || "");
+    }
+    ta?.classList.toggle("bad", !c.ok && !!(ta.value || "").trim());
+    ready = ready && c.ok;
+  } else {
+    const c = needContainer(), ch = p.el.querySelector("[data-cnamehint]");
+    const cIn = p.el.querySelector("[data-needcname]");
+    if (ch && p.runErrKind !== "name") {
+      ch.className = `hint${c.ok ? "" : " no"}`;
+      ch.textContent = c.ok ? "" : (c.why || "Only letters, digits, _, . and -");
+    }
+    cIn?.classList.toggle("bad", !c.ok || p.runErrKind === "name");
+    const hp = needHostPort(), ph = p.el.querySelector("[data-porthint]");
+    const pIn = p.el.querySelector("[data-needport]");
+    if (ph && p.runErrKind !== "port") {
+      ph.className = `hint${hp.ok ? "" : " no"}`;
+      ph.textContent = hp.ok ? "" : (hp.why || "Enter a port from 1 to 65535");
+    }
+    pIn?.classList.toggle("bad", !hp.ok || p.runErrKind === "port");
+    ready = ready && c.ok && hp.ok;
+  }
   p.el.classList.toggle("sec-off", !!p.el.querySelector("[data-needoff]")?.checked);
-  p.el.querySelector("[data-needgo]").disabled = !c.ok || !hp.ok || needEnv() === null;
+  p.el.querySelector("[data-needgo]").disabled = !ready;
 }
 document.addEventListener("input", (ev) => {
   if (!ev.target.closest(".need")) return;
-  if (ev.target.matches("[data-needcname],[data-needport]")) needClearRunErr();
+  if (ev.target.matches("[data-needcname],[data-needport],[data-needcmd]")) needClearRunErr();
   needCheck();
+});
+document.addEventListener("paste", (ev) => {
+  if (!ui.need || ui.need.mode !== "custom" || !ev.target.closest?.("[data-needcmd]")) return;
+  setTimeout(() => needCheck(), 0);
 });
 document.addEventListener("change", (ev) => { if (ev.target.closest(".need")) needCheck(); });
 document.addEventListener("keydown", (ev) => {
@@ -8000,13 +9084,33 @@ document.addEventListener("click", (ev) => {
   const pop = ev.target.closest(".need"), b = ev.target.closest("button");
   if (!pop) { if (!ev.target.closest("[data-run]")) needClose(); return; }
   if (b?.matches("[data-needcancel]")) needClose();
+  else if (b?.matches("[data-needmode]")) needSetMode(b.dataset.needmode);
   else if (b?.matches("[data-needgo]")) {
-    const env = needEnv(), c = needContainer(), hp = needHostPort();
-    if (env === null || !c.ok || !hp.ok) return;
+    const env = needEnv();
+    if (env === null) return;
+    let name, port, command = "", extra = [];
+    let runExtra = null;
+    if ((p.mode || "default") === "custom") {
+      const c = needCustom();
+      if (!c.ok) return;
+      ({ name, port, command, env: extra } = c);
+      runExtra = {
+        target_port: c.target_port || 0,
+        binds: c.binds || [],
+        entrypoint: c.entrypoint || "",
+        restart: c.restart || "",
+        network: c.network || "",
+        start_command: c.start_command || "",
+      };
+    } else {
+      const c = needContainer(), hp = needHostPort();
+      if (!c.ok || !hp.ok) return;
+      name = c.name; port = hp.port;
+    }
     p.busy = true;
-    p.el.querySelectorAll("input, button").forEach((x) => (x.disabled = true));
+    p.el.querySelectorAll("input, textarea, button").forEach((x) => (x.disabled = true));
     b.innerHTML = `<i class="spin"></i>Starting…`;
-    runImage(p.image, env, c.name, hp.port);
+    runImage(p.image, [...env, ...extra], name, port, command, runExtra);
   } else if (b?.matches("[data-needeye]")) {
     ev.preventDefault();
     const f = b.previousElementSibling, show = f.type === "password";
@@ -8569,7 +9673,7 @@ function diagEvent(e) {
     case "diagsendcrash":
       dg.sending.delete(e.name);
       if (ui.crash?.name === e.name) { Object.assign(ui.crash, e.id ? { state: "sent", id: e.id, hidden: false } : { state: "error", error: e.error }); renderUpdate(); }
-      else if (e.error) toast("error", tr("Couldn't send the crash report: {error}", { error: e.error }));
+      else if (e.error) toast("error", tr("Couldn't send the crash report: {error}", { error: trErr(e.error) }));
       send("diagcrashes");
       break;
     case "diagsend":
@@ -8580,7 +9684,7 @@ function diagEvent(e) {
       break;
     case "diagreport":
       if (rp?.mode === "save") { if (e.path) rp.close(); else { Object.assign(rp, { state: "", error: e.error }); drawReport(); } }
-      if (e.path) toast("ok", tr("Saved the report to {path}", { path: e.path })); else if (!rp) toast("error", tr("Couldn't save the report: {error}", { error: e.error }));
+      if (e.path) toast("ok", tr("Saved the report to {path}", { path: e.path })); else if (!rp) toast("error", tr("Couldn't save the report: {error}", { error: trErr(e.error) }));
       break;
     case "lastcrash": ui.crash = { ...e, state: "", always: false }; renderUpdate(); break;
   }
@@ -8618,7 +9722,7 @@ window.kiri = {
         if (ui.openAfter && ui.containers.some((c) => c.Id === ui.openAfter)) { openDetail(ui.openAfter); ui.openAfter = null; openedTab(); }
         break;
       case "pull": pullEvent(e); break;
-      case "buildpruned": ui.bwPruning = false; toast(e.error ? "error" : "ok", e.error ? tr("Couldn't clear the build cache: {error}", { error: e.error }) : (e.freed ? tr("Build cache cleared: freed {size}", { size: size(e.freed) }) : tr("Build cache cleared"))); if (ui.view === "settings") render(); break;
+      case "buildpruned": ui.bwPruning = false; toast(e.error ? "error" : "ok", e.error ? tr("Couldn't clear the build cache: {error}", { error: trErr(e.error) }) : (e.freed ? tr("Build cache cleared: freed {size}", { size: size(e.freed) }) : tr("Build cache cleared"))); if (ui.view === "settings") render(); break;
       case "hub":
         (e.kind === "search" ? pp.search : pp.tags).set(e.key, e.error ? { error: e.error } : { items: e.items || [] });
         if (pp.open && pp.mode === "search" && e.kind === "search") ppList();
@@ -8629,14 +9733,15 @@ window.kiri = {
       case "notice":
         // Each pod a batch deletes says so; the batch's own toast already has.
         if (e.kind === "ok" && /^Deleting pod /.test(e.text) && ui.batches.some((b) => b.view === "pods" && b.phase === "going")) break;
+        if (ui.notes.saving && e.kind === "error") { ui.notes.saving = false; if (ui.view === "notes") renderNotes(); }
         if (e.kind === "ok" && e.image && e.open) { ui.launched.set(e.image, e.open); runHold(e.image, e.text, e.open, e.ms); break; }
         if (e.text === "daemon.json saved" || e.text === "Registry mirrors saved" || (e.kind === "error" && ui.mirrorsSaving)) {
           ui.mirrorsSaving = false;
-          ui.mirrorsMsg = e.kind === "ok" ? tr("daemon.json saved") : e.text;
+          ui.mirrorsMsg = e.kind === "ok" ? tr("daemon.json saved") : trErr(e.text);
           ui.mirrorsMsgKind = e.kind === "ok" ? "ok" : "err";
           if (ui.view === "settings" && prefs.tab === "network") render();
         }
-        toast(e.kind, tr(e.text), e.op, e.open, e.act); break;
+        toast(e.kind, e.kind === "error" ? trErr(e.text) : tr(e.text), e.op, e.open, e.act); break;
       case "listening":
         ui.listening.set(e.id, e.ports);
         if (shPublishListening(e)) break;
@@ -8647,8 +9752,8 @@ window.kiri = {
       case "ran":
         ui.running.delete(e.name);
         if (e.error) {
-          if (ui.need?.image === e.name) needRunFail(e.message || tr("Couldn't start"));
-          else toast("error", e.message || tr("Couldn't start"));
+          if (ui.need?.image === e.name) needRunFail(tr(e.message || "Couldn't start"));
+          else toast("error", tr(e.message || "Couldn't start"));
         } else if (ui.need?.image === e.name) {
           needClose(true);
         }
@@ -8698,9 +9803,59 @@ window.kiri = {
       case "updatestate": ui.updState = { ...e, checking: false }; if (ui.view === "settings" && prefs.tab === "about") render(); break;
       case "updateready": if (ui.upd?.phase === "ready" && ui.upd.version === e.version && ui.upd.hidden) break; ui.upd = { ...(ui.upd || {}), phase: "ready", version: e.version, hidden: false, error: "" }; renderUpdate(); break;
       case "updatecancelled": if (ui.upd) Object.assign(ui.upd, { phase: "available", hidden: true }); renderUpdate(); break;
-      case "updateerror": if (ui.upd) Object.assign(ui.upd, { phase: "available", hidden: false, error: e.error }); else toast("error", e.error); renderUpdate(); break;
+      case "updateerror": if (ui.upd) Object.assign(ui.upd, { phase: "available", hidden: false, error: e.error }); else toast("error", trErr(e.error)); renderUpdate(); break;
       case "enginestale": ui.engineStale = e.version; ui.staleHidden = false; renderUpdate(); break;
       case "tools": toolsBar(e); break;
+      case "notes":
+        ui.notes.items = e.items || [];
+        ui.notes.tree = e.tree || notesFlatTree(ui.notes.items);
+        if (ui.notes.id && !ui.notes.items.some((it) => it.id === ui.notes.id)) {
+          Object.assign(ui.notes, { id: "", title: "", body: "", dirty: false, saving: false, confirmDel: false });
+        }
+        // Open the newest note when nothing is selected yet.
+        if (!ui.notes.id && !ui.notes.dirty && ui.notes.items.length) {
+          const id = ui.notes.items[0].id;
+          Object.assign(ui.notes, { id, title: ui.notes.items[0].title || tr("Untitled"), body: "", collected: !!ui.notes.items[0].collected, mode: "preview", dirty: false, saving: false, confirmDel: false });
+          notesEnsureOpen(id);
+          send("noteread", { id });
+        }
+        if (ui.view === "notes") renderNotes();
+        break;
+      case "note":
+        if (e.id) {
+          Object.assign(ui.notes, { id: e.id, title: e.title || tr("Untitled"), body: e.body || "", collected: !!e.collected, dirty: false, saving: false, confirmDel: false });
+          notesEnsureOpen(e.id);
+          if (ui.view === "notes") renderNotes();
+        }
+        break;
+      case "notesaved":
+        ui.notes.saving = false;
+        ui.notes.dirty = false;
+        if (e.id) ui.notes.id = e.id;
+        if (e.title != null) ui.notes.title = e.title;
+        if (e.collected != null) ui.notes.collected = !!e.collected;
+        toast("ok", tr("Note saved"));
+        if (ui.view === "notes") renderNotes();
+        break;
+      case "notedeleted":
+        if (ui.notes.id === e.id) Object.assign(ui.notes, { id: "", title: "", body: "", collected: false, dirty: false, saving: false, confirmDel: false });
+        if (ui.view === "notes") renderNotes();
+        break;
+      case "notefolder":
+      case "noterename":
+      case "notemove":
+        ui.notes.creating = null;
+        if (e.newId && ui.notes.id === e.id) ui.notes.id = e.newId;
+        if (e.newId && (ui.notes.folder === e.id || (ui.notes.folder || "").startsWith(e.id + "/"))) {
+          ui.notes.folder = e.newId;
+        }
+        if (e.newId) {
+          notesEnsureOpen(e.newId);
+          if (e.type === "notemove" && e.newId.includes("/")) ui.notes.open[e.newId.split("/").slice(0, -1).join("/")] = true;
+        }
+        if (e.id && e.op === "mkdir") { ui.notes.open[e.id] = true; ui.notes.folder = e.id; }
+        if (ui.view === "notes") renderNotes();
+        break;
       case "share": case "shares": case "shareaccount": case "sharelogin": case "shareusage": case "sharetunnels": case "sharetraffic": shEvent(e); break;
       case "builds": {
         const b = ui.bl;
@@ -8723,9 +9878,11 @@ window.kiri = {
       }
       case "scanhistory": { const x = ui.scans.get(e.name) || {}; x.history = e.scans || []; x.histErr = e.error || null; ui.scans.set(e.name, x); rerenderScan(); break; }
       case "imagelayers": if (ui.imgd?.name === e.name) { ui.imgd.layers = e; if (ui.view === "images") render(); } break;
+      case "imgnotes": ui.imgNotes = new Set(e.names || []); if (ui.view === "images") render(); break;
+      case "imgnote": imgNoteApply(e.name, e.body || "", !!e.saved); break;
       case "buildlayers": if (ui.bl.sel?.id === e.id) { ui.bl.layers = e; if (ui.view === "builds") renderBuilds(); } break;
       case "build": if (ui.bl.sel?.id === e.id) { ui.bl.d = e; if (ui.view === "builds") renderBuilds(); } break;
-      case "usedcontext": if (e.error) toast("error", tr("Couldn't switch docker: {error}", { error: e.error })); break;
+      case "usedcontext": if (e.error) toast("error", tr("Couldn't switch docker: {error}", { error: trErr(e.error) })); break;
       case "importsources": ui.imp.sources = e.sources; { const s = e.sources.find((x) => x.id === ui.imp.source) || e.sources.find((x) => x.running && x.id === ui.status?.context) || e.sources.find((x) => x.running) || e.sources[0]; if (s) { ui.imp.source = s.id; if (s.running) send("inventory", { name: s.id }); } } if (ui.view === "settings") render(); break;
       case "inventory": ui.imp.inv = e; if (ui.view === "settings") render(); renderImportStrip(); drawImportModal(); break;
       case "importstep": ctxStep(e); ui.imp.steps[`${e.kind}/${e.name}`] = e; if (e.state !== "running") ui.imp.picked[e.kind].delete(e.name); if (ui.view === "settings") render(); drawImportModal(); break;
@@ -8740,7 +9897,7 @@ window.kiri = {
           ui.mirrorsMsg = tr("daemon.json saved");
           ui.mirrorsMsgKind = "ok";
         } else if (e.error && wasSaving) {
-          ui.mirrorsMsg = e.error;
+          ui.mirrorsMsg = trErr(e.error);
           ui.mirrorsMsgKind = "err";
         }
         if (ui.view === "settings") render();
@@ -8822,6 +9979,16 @@ $("content").addEventListener("click", (ev) => {
   else if ((el = t("[data-open]"))) send("open", { name: el.dataset.open });
   else if ((el = t("[data-ports]"))) openPorts(el.dataset.ports);
   else if (t("[data-envedit]")) envOpen();
+  else if ((el = t("[data-cmdcopy]"))) {
+    const pre = el.closest(".cmdbox")?.querySelector("pre");
+    if (pre) { send("copy", { name: pre.textContent || "" }); copiedBtn(el); }
+  } else if ((el = t("[data-cmdnote]"))) {
+    const box = el.closest(".cmdbox"), pre = box?.querySelector("pre");
+    const body = (pre?.textContent || "").trim();
+    if (!body) return;
+    const name = ui.detail?.name || "container";
+    notesCollect(tr("Command for {name}", { name }), "```bash\n" + body + "\n```");
+  }
   else if (t("[data-envcancel]")) { ui.detail.env = null; render(); }
   else if (t("[data-envapply]")) envApply();
   else if ((el = t("[data-envx]"))) {
@@ -8882,14 +10049,15 @@ $("content").addEventListener("click", (ev) => {
   else if ((el = t("[data-saveres]"))) send("setresources", { value: ui.resDraft });
   else if ((el = t("[data-vmpower]"))) { el.disabled = true; powerEngine(el.dataset.vmpower); }
   else if ((el = t("[data-restartvm]"))) { el.disabled = true; el.textContent = "Restarting…"; send("restartvm"); }
-  else if ((el = t("[data-detail]"))) openDetail(el.dataset.detail);
-  else if ((el = t("[data-img]"))) openImage(el.dataset.img);
   else if ((el = t("[data-copy]"))) {
+    // Before data-img / data-detail: the tag copy sits inside those openers.
     send("copy", { name: el.dataset.copy }); copiedBtn(el);
   }
-  // Anywhere else on a row opens its page, unless the click was on a control
+  else if ((el = t("[data-detail]")) && !t("button, .copy, [data-copy]")) openDetail(el.dataset.detail);
+  else if ((el = t("[data-img]")) && !t("button, .copy, [data-copy]")) openImage(el.dataset.img);
+  // Anywhere else on a row or card opens its page, unless the click was on a control
   // or ended a text selection (copying an ID shouldn't navigate).
-  else if ((el = t("tr[data-rowopen]")) && !t("button, a, input, select, label, .acts-row, .sh-ico, .shc") && !String(window.getSelection())) {
+  else if ((el = t("[data-rowopen]")) && !t("button, a, input, select, label, .acts-row, .gacts, .sh-ico, .shc, .ckbox, .gpick, .copy, [data-copy]") && !String(window.getSelection())) {
     if (el.dataset.rowopen === "detail") openDetail(el.dataset.key); else openImage(el.dataset.key);
   }
   else if ((el = t("[data-scan]"))) chooseScanner(el.dataset.scan);
@@ -8903,6 +10071,25 @@ $("content").addEventListener("click", (ev) => {
   else if ((el = t("[data-scanfix]"))) { ui.scanf.fix = el.checked; rerenderScan(); }
   else if ((el = t("[data-scanown]"))) { ui.scanf.own = el.checked; rerenderScan(); }
   else if ((el = t("[data-imgtab]"))) { ui.imgd.tab = el.dataset.imgtab; render(); }
+  else if ((el = t("[data-imgnote]"))) openImgNote(el.dataset.imgnote);
+  else if ((el = t("[data-mdcopy]")) && t(".img-remark, .imgnote-dlg")) {
+    const code = el.closest(".md-code")?.querySelector("code")?.textContent || "";
+    send("copy", { name: code }); copiedBtn(el);
+  }
+  else if ((el = t("[data-imgnotemode]"))) {
+    if (!ui.imgd) return;
+    if (ui.imgd.noteMode === "edit") ui.imgd.noteBody = $("img-note-body")?.value ?? ui.imgd.noteBody;
+    ui.imgd.noteMode = el.dataset.imgnotemode;
+    render();
+  }
+  else if (t("[data-imgnotesave]")) {
+    if (!ui.imgd || ui.imgd.noteSaving) return;
+    if (ui.imgd.noteMode === "edit") ui.imgd.noteBody = $("img-note-body")?.value ?? ui.imgd.noteBody;
+    ui.imgd.noteSaving = true;
+    ui.imgd.noteDirty = false;
+    send("imgnotesave", { name: ui.imgd.name, value: { body: ui.imgd.noteBody || "" } });
+    render();
+  }
   else if ((el = t("[data-back]"))) { closeDetail(); render(); }
   else if ((el = t("[data-dtab]"))) setTab(el.dataset.dtab);
   else if ((el = t("[data-dir]"))) browse(el.dataset.dir);
@@ -8919,6 +10106,7 @@ $("impstrip").addEventListener("click", (ev) => {
   else if (ev.target.closest("[data-impdismiss]")) dismissImportStrip();
 });
 $("statusbar").addEventListener("click", (ev) => {
+  if (ev.target.closest("[data-notesai]")) return toast("ok", tr("AI coming soon"));
   if (ev.target.closest("[data-htterm]")) return htToggle();
   if (ev.target.closest("[data-shstatus]")) return $("sh-modal") ? shCard(null) : shCard("list");
   if (ev.target.closest("[data-ctxswitch]")) return ctxDialog();
@@ -9069,7 +10257,7 @@ function k8sOn(e) {
       k8s.op = ""; k8s.opLine = ""; k8s.opAt = 0; k8s.sanDraft = null; k8s.portDraft = null;
       if (e.port) k8s.port = e.port;
       if (e.want_port) k8s.wantPort = e.want_port;
-      if (e.state === "error") toast("error", tr("Kubernetes: {error}", { error: e.error }));
+      if (e.state === "error") toast("error", tr("Kubernetes: {error}", { error: trErr(e.error) }));
       else if ((e.op === "start" || e.op === "set") && e.port) toast("ok", tr("Kubernetes is running · API on {api}", { api: `${k8sApi()}${k8sMoved()}` }));
       if (e.state !== "error" && e.op === "start") starMoment(tr("Kubernetes is running."));
       else toast("ok", { start: tr("Kubernetes is running: kubectl --context {ctx}", { ctx: e.context }), stop: tr("Kubernetes stopped. Its state is kept for the next start."),
@@ -9700,6 +10888,16 @@ $("title").addEventListener("click", (ev) => { if (ev.target.closest("[data-kbac
 $("content").addEventListener("paste", envPaste);
 $("content").addEventListener("input", (ev) => {
   if (ev.target.closest("[data-envi]")) return envInput(ev);
+  if (ev.target.id === "img-note-body" && ui.imgd) {
+    ui.imgd.noteBody = ev.target.value;
+    ui.imgd.noteDirty = true;
+    mdEdSync(ev.target);
+    const dirty = $("content").querySelector(".img-remark .dirty");
+    if (!dirty) $("content").querySelector(".img-remark .ihn-bar")?.insertAdjacentHTML("beforeend", `<span class="dirty">${tr("Unsaved changes")}</span>`);
+    const save = $("content").querySelector("[data-imgnotesave]");
+    if (save) save.disabled = false;
+    return;
+  }
   if (ev.target.id === "k8s-port") {
     k8s.portDraft = ev.target.value;
     const b = document.querySelector("[data-k8sport]");
@@ -9722,7 +10920,9 @@ document.querySelector("aside").addEventListener("click", (ev) => {
 $("k8s-settings").addEventListener("click", k8sSettings);
 k8sSide();
 
-$("theme-toggle").addEventListener("click", () => setPref("theme", darkNow() ? "light" : "dark"));
+const toggleTheme = () => setPref("theme", darkNow() ? "light" : "dark");
+$("theme-toggle").addEventListener("click", toggleTheme);
+$("strip-theme").addEventListener("click", toggleTheme);
 /* The sidebar folds to a rail of icons, and stays as it was left. Each icon
    says its name on hover; the VM's dot opens the sidebar again. */
 function setRail(on) {
@@ -9988,7 +11188,7 @@ function shEvent(e) {
       send("shareusage");
     }
   } else if (e.type === "sharelogin") {
-    if (e.error) { sh.login = null; $("sh-signin")?.remove(); toast("error", tr("Sign-in failed: {error}", { error: e.error })); } else { sh.login = { code: e.code, uri: e.uri }; shSignin(); }
+    if (e.error) { sh.login = null; $("sh-signin")?.remove(); toast("error", tr("Sign-in failed: {error}", { error: trErr(e.error) })); } else { sh.login = { code: e.code, uri: e.uri }; shSignin(); }
   } else if (e.type === "shareusage") { if (!e.error) sh.usage = e; }
   /* What each `kiri share` here has served, from its traffic file: the
      bars take what's new since the last look. */
@@ -10660,6 +11860,616 @@ function shClicks(ev) {
 }
 $("content").addEventListener("click", shClicks);
 
+/* --- Notes: personal Markdown under ~/.kiri/notes ------------------------------------ */
+function notesFlatTree(items) {
+  return (items || []).map((it) => ({ kind: "note", id: it.id, name: it.title, title: it.title, updated: it.updated, collected: !!it.collected }));
+}
+function notesEnsureOpen(id) {
+  if (!id || !id.includes("/")) return;
+  const parts = id.split("/");
+  for (let i = 1; i < parts.length; i++) ui.notes.open[parts.slice(0, i).join("/")] = true;
+}
+function notesFilterTree(nodes, q) {
+  if (!q) return nodes || [];
+  const out = [];
+  for (const n of nodes || []) {
+    if (n.kind === "folder") {
+      const kids = notesFilterTree(n.children || [], q);
+      if (kids.length || (n.name || "").toLowerCase().includes(q)) {
+        ui.notes.open[n.id] = true;
+        out.push({ ...n, children: kids.length ? kids : n.children });
+      }
+    } else if ((n.title || n.name || "").toLowerCase().includes(q) || (n.id || "").toLowerCase().includes(q)) {
+      out.push(n);
+    }
+  }
+  return out;
+}
+function notesCreateRowHtml(parent, depth) {
+  const N = ui.notes;
+  if (!N.creating || (N.creating.parent || "") !== (parent || "")) return "";
+  const pad = `style="padding-left:${6 + depth * 14}px"`;
+  return `<div class="notes-row creating" ${pad}>
+      <span class="twist leaf"></span>
+      <svg class="ic" viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.folder}"/></svg>
+      <input class="rename" id="note-create" value="${esc(N.creating.value)}" data-notecreate aria-label="${tr("Subfolder name")}">
+    </div>`;
+}
+function notesTreeHtml(nodes, depth) {
+  const N = ui.notes;
+  let html = "";
+  for (const n of nodes || []) {
+    const pad = `style="padding-left:${6 + depth * 14}px"`;
+    if (n.kind === "folder") {
+      const open = !!N.open[n.id] || (N.creating && N.creating.parent === n.id);
+      const renaming = N.renaming && N.renaming.id === n.id;
+      const selected = N.folder === n.id && !N.id;
+      const label = renaming
+        ? `<input class="rename" id="note-rename" value="${esc(N.renaming.value)}" data-noterename="${esc(n.id)}" data-notekind="folder" aria-label="${tr("Folder name")}">`
+        : `<span class="t" title="${esc(n.name)}">${esc(n.name)}</span>`;
+      html += `<div class="notes-row" data-notefolder="${esc(n.id)}" data-notedrop="${esc(n.id)}" draggable="true" data-notedrag="${esc(n.id)}" data-notekind="folder" aria-current="${selected}" ${pad}>
+        <button type="button" class="twist" data-notetwist="${esc(n.id)}" aria-expanded="${open}" aria-label="${tr("Show")}">${svgOf("caret")}</button>
+        <svg class="ic" viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.folder}"/></svg>
+        ${label}
+        <span class="acts">
+          ${ibtn("pencil", "Rename", `data-noterenameui="${esc(n.id)}" data-notekind="folder" data-notename="${esc(n.name)}"`)}
+          ${ibtn("trash", "Delete", `data-notermdir="${esc(n.id)}"`, "danger")}
+        </span>
+      </div>`;
+      if (open) {
+        html += notesCreateRowHtml(n.id, depth + 1);
+        html += notesTreeHtml(n.children || [], depth + 1);
+      }
+    } else {
+      const renaming = N.renaming && N.renaming.id === n.id;
+      const noteLabel = n.title || n.name || tr("Untitled");
+      const label = renaming
+        ? `<input class="rename" id="note-rename" value="${esc(N.renaming.value)}" data-noterename="${esc(n.id)}" data-notekind="note" aria-label="${tr("Name")}">`
+        : `<span class="t" title="${esc(noteLabel)}">${esc(noteLabel)}</span>`;
+      // Div (not button): nested action buttons are invalid inside a button and
+      // the parser splits them onto their own lines, breaking rename/delete clicks.
+      const star = n.collected
+        ? `<svg class="ic star" viewBox="0 0 256 256" aria-hidden="true" title="${tr("Collected note")}"><path d="${PH.starfill}"/></svg>`
+        : "";
+      html += `<div class="notes-row" role="button" tabindex="0" data-noteid="${esc(n.id)}" draggable="true" data-notedrag="${esc(n.id)}" data-notekind="note" aria-current="${n.id === N.id}" ${pad}${n.collected ? ` data-collected="1"` : ""}>
+        ${star}
+        <span class="twist leaf"></span>
+        <svg class="ic" viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.notepad}"/></svg>
+        ${label}
+        <span class="acts">
+          ${ibtn("pencil", "Rename", `type="button" data-noterenameui="${esc(n.id)}" data-notekind="note" data-notename="${esc(n.title || n.name || "")}"`)}
+          ${ibtn("trash", "Delete note", `type="button" data-notedeltree="${esc(n.id)}"`, "danger")}
+        </span>
+      </div>`;
+    }
+  }
+  return html;
+}
+function notesAnyFolderOpen(nodes) {
+  for (const n of nodes || []) {
+    if (n.kind === "folder") {
+      if (ui.notes.open[n.id]) return true;
+      if (notesAnyFolderOpen(n.children || [])) return true;
+    }
+  }
+  return false;
+}
+function notesCollectFolders(nodes, out) {
+  for (const n of nodes || []) {
+    if (n.kind === "folder") {
+      out.push(n.id);
+      notesCollectFolders(n.children || [], out);
+    }
+  }
+  return out;
+}
+function notesRootHtml(nodes) {
+  const N = ui.notes;
+  const selected = !N.folder && !N.id;
+  const deepOpen = notesAnyFolderOpen(nodes);
+  const toggleLabel = deepOpen ? tr("Collapse all") : tr("Expand all");
+  const toggleIcon = deepOpen ? "collapse" : "expand";
+  const kids = notesCreateRowHtml("", 1) + notesTreeHtml(nodes, 1);
+  return `<div class="notes-row root" data-notefolder="" data-notedrop="" data-notekind="root" aria-current="${selected}" style="padding-left:6px">
+      <span class="twist leaf"></span>
+      <svg class="ic" viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.folder}"/></svg>
+      <span class="t">${tr("Notes")}</span>
+      <button type="button" class="tree-toggle" data-notestreefold title="${toggleLabel}" aria-label="${toggleLabel}">${svgOf(toggleIcon)}</button>
+    </div>${kids}`;
+}
+function notesCtxEl() {
+  let el = document.getElementById("notes-ctx");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "notes-ctx";
+    el.className = "notes-ctx";
+    el.setAttribute("role", "menu");
+    el.hidden = true;
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function notesCloseCtx() {
+  const el = document.getElementById("notes-ctx");
+  if (el) el.hidden = true;
+  ui.notes.ctx = null;
+}
+function notesMi(act, label, icon, danger) {
+  return `<button type="button" class="mi${danger ? " danger" : ""}" data-ctx="${act}" role="menuitem">${svgOf(icon)}${tr(label)}</button>`;
+}
+function notesOpenCtx(ev, kind, id, name) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const items = [];
+  if (kind === "root" || kind === "folder") {
+    items.push(notesMi("newnote", "New note", "notepencil"));
+    items.push(notesMi("newfolder", "New subfolder", "folder"));
+    items.push(`<div class="sep"></div>`);
+    items.push(notesMi("reveal", "Open location", "open"));
+    if (kind === "folder") {
+      items.push(notesMi("rename", "Rename", "pencil"));
+      items.push(`<div class="sep"></div>`);
+      items.push(notesMi("rmdir", "Delete", "trash", true));
+    }
+  } else {
+    items.push(notesMi("open", "Open", "notepad"));
+    items.push(notesMi("reveal", "Open location", "open"));
+    items.push(notesMi("rename", "Rename", "pencil"));
+    items.push(`<div class="sep"></div>`);
+    items.push(notesMi("del", "Delete note", "trash", true));
+  }
+  ui.notes.ctx = { kind, id: id || "", name: name || "" };
+  const menu = notesCtxEl();
+  menu.innerHTML = items.join("");
+  menu.hidden = false;
+  const x = Math.min(ev.clientX, window.innerWidth - 200);
+  const y = Math.min(ev.clientY, window.innerHeight - (items.length * 30 + 20));
+  menu.style.left = `${Math.max(8, x)}px`;
+  menu.style.top = `${Math.max(8, y)}px`;
+}
+function notesCanDrop(parent, dragId, dragKind) {
+  if (!dragId) return false;
+  if (parent === dragId) return false;
+  if (dragKind === "folder" && parent && (parent === dragId || parent.startsWith(dragId + "/"))) return false;
+  const cur = dragId.includes("/") ? dragId.slice(0, dragId.lastIndexOf("/")) : "";
+  return parent !== cur;
+}
+function notesMoveTo(id, parent) {
+  send("notemove", { id, value: { parent: parent || "" } });
+}
+function renderNotes() {
+  if (held(renderNotes)) return;
+  const N = ui.notes;
+  // Page title is already "Notes"; skip a redundant "共 N 个" beside it.
+  $("subtitle").textContent = "";
+  const q = (ui.filter || "").toLowerCase();
+  const loading = N.items === null;
+  const tree = notesFilterTree(N.tree || notesFlatTree(N.items), q);
+  const emptyTree = !loading && !(N.tree || []).length && !(N.items || []).length;
+  $("hright").innerHTML = emptyTree
+    ? `<button class="btn primary" data-notenew>${svgOf("notepencil")}${tr("New note")}</button>`
+    : "";
+  const focus = document.activeElement, keep = focus && (focus.id === "note-title" || focus.id === "note-body" || focus.id === "note-rename" || focus.id === "note-create")
+    ? { id: focus.id, start: focus.selectionStart, end: focus.selectionEnd } : null;
+  let main;
+  if (loading) {
+    main = `<div class="notes-blank"><p>${tr("Loading…")}</p></div>`;
+  } else if (!N.id) {
+    if (emptyTree) {
+      main = `<div class="notes-empty"><svg class="art" viewBox="0 0 256 256"><path d="${PH.notepencil}"/></svg><h3>${tr("No notes yet")}</h3><p>${tr("Keep commands, startup scripts, login details and short runbooks here — handy next to your containers. Stored on this computer under ~/.kiri/notes.")}</p><button class="btn primary" data-notenew>${svgOf("notepencil")}${tr("New note")}</button></div>`;
+    } else {
+      // Folder or root selected — shortcut to start writing under it.
+      const folderName = N.folder
+        ? (N.folder.includes("/") ? N.folder.slice(N.folder.lastIndexOf("/") + 1) : N.folder)
+        : tr("Notes");
+      const hint = N.folder
+        ? tr("Create a note in “{folder}”.", { folder: esc(folderName) })
+        : tr("Create a note at the top level.");
+      main = `<div class="notes-empty"><svg class="art" viewBox="0 0 256 256"><path d="${PH.notepencil}"/></svg><h3>${esc(folderName)}</h3><p>${hint}</p><button class="btn primary" data-notenew>${svgOf("notepencil")}${tr("New note")}</button></div>`;
+    }
+  } else {
+    const del = N.confirmDel
+      ? `<button class="btn danger" data-notedelok>${tr("Confirm delete")}</button><button class="btn" data-notedelcancel>${tr("Cancel")}</button>`
+      : ibtn("trash", "Delete note", "data-notedel", "danger");
+    const bar = `<div class="notes-bar">
+      <input class="title" id="note-title" value="${esc(N.title)}" title="${esc(N.title)}" aria-label="${tr("Name")}" spellcheck="false">
+      <div class="seg" role="group" aria-label="${tr("Preview")}"><button type="button" data-notemode="edit" aria-pressed="${N.mode === "edit"}">${tr("Edit")}</button><button type="button" data-notemode="preview" aria-pressed="${N.mode === "preview"}">${tr("Preview")}</button></div>
+      ${N.dirty ? `<span class="dirty">${tr("Unsaved changes")}</span>` : ""}
+      <span class="acts">
+        <button class="btn primary" data-notesave${N.saving || !N.dirty ? " disabled" : ""}>${N.saving ? tr("Saving…") : tr("Save note")}</button>
+        ${ibtn("copy", "Copy body", "data-notecopy")}
+        ${del}
+      </span>
+    </div>`;
+    const emptyBody = !(N.body || "").trim();
+    const body = N.mode === "preview"
+      ? (emptyBody
+        ? `<div class="notes-blank" id="note-preview"><p>${tr("No content")}</p><button class="btn" data-notemode="edit">${tr("Edit")}</button></div>`
+        : `<div class="notes-preview" id="note-preview">${mdToHtml(N.body)}</div>`)
+      : `<textarea id="note-body" spellcheck="false" aria-label="${tr("Notes")}">${esc(N.body)}</textarea>`;
+    main = `${bar}<div class="notes-body">${body}</div>`;
+  }
+  const treeBody = loading
+    ? `<div class="notes-empty" style="min-height:80px;padding:16px"><p>${tr("Loading…")}</p></div>`
+    : (q && !tree.length
+      ? `<div class="notes-empty" style="min-height:80px;padding:16px"><p>${tr("Nothing matches “{q}”.", { q: esc(ui.filter) })}</p></div>`
+      : notesRootHtml(tree));
+  // Side header is actions only — page title + tree root already say "Notes".
+  // Create under the selected folder/root; a selected note cannot gain children.
+  const canCreate = !N.id;
+  const createParent = N.folder || "";
+  const side = `<div class="notes-side">
+    <div class="notes-side-h">
+      ${ibtn("folder", "New subfolder", `data-notemkdir="${esc(createParent)}"${canCreate ? "" : " disabled"}`)}
+      ${ibtn("notepencil", "New note", `data-notenew${canCreate ? "" : " disabled"}`)}
+    </div>
+    <div class="notes-tree" data-notestree>${treeBody}</div>
+  </div>`;
+  morph($("content"), `<div class="notes" data-key="notes">${side}<div class="notes-main" data-key="notes-main">${main}</div></div>`);
+  if (keep) {
+    const el = $(keep.id);
+    if (el) { el.focus(); try { el.setSelectionRange(keep.start, keep.end); } catch {} }
+  } else if (N.creating && $("note-create")) {
+    const el = $("note-create"); el.focus(); el.select();
+  } else if (N.renaming && $("note-rename")) {
+    const el = $("note-rename"); el.focus(); el.select();
+  }
+}
+function mdToHtml(src) {
+  const blocks = [];
+  let s = String(src || "").replace(/\r\n?/g, "\n");
+  s = s.replace(/```([\w+-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const i = blocks.length;
+    blocks.push(`<div class="md-code"><button type="button" class="md-copy" data-mdcopy>${tr("Copy")}</button><pre><code>${esc(code.replace(/\n$/, ""))}</code></pre></div>`);
+    return `\n\0B${i}\0\n`;
+  });
+  const inline = (t) => esc(t)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[\s(])\*([^*]+)\*(?=[\s).,!?:;]|$)/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" rel="noopener noreferrer">$1</a>');
+  const out = [];
+  for (const raw of s.split(/\n{2,}/)) {
+    const chunk = raw.trimEnd();
+    if (!chunk.trim()) continue;
+    const bm = chunk.trim().match(/^\0B(\d+)\0$/);
+    if (bm) { out.push(blocks[+bm[1]]); continue; }
+    const lines = chunk.split("\n");
+    if (lines.every((l) => /^[-*]\s+/.test(l))) {
+      out.push(`<ul>${lines.map((l) => `<li>${inline(l.replace(/^[-*]\s+/, ""))}</li>`).join("")}</ul>`);
+      continue;
+    }
+    if (lines.every((l) => /^\d+\.\s+/.test(l))) {
+      out.push(`<ol>${lines.map((l) => `<li>${inline(l.replace(/^\d+\.\s+/, ""))}</li>`).join("")}</ol>`);
+      continue;
+    }
+    if (lines.length === 1 && /^(#{1,3})\s+/.test(lines[0])) {
+      const m = lines[0].match(/^(#{1,3})\s+(.*)$/);
+      out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`);
+      continue;
+    }
+    if (lines.every((l) => /^>\s?/.test(l))) {
+      out.push(`<blockquote>${lines.map((l) => inline(l.replace(/^>\s?/, ""))).join("<br>")}</blockquote>`);
+      continue;
+    }
+    out.push(`<p>${lines.map(inline).join("<br>")}</p>`);
+  }
+  return out.join("");
+}
+function notesSelect(id) {
+  const N = ui.notes;
+  if (N.dirty && N.id && N.id !== id && !window.confirm(tr("Unsaved changes"))) return;
+  N.confirmDel = false;
+  N.renaming = null;
+  N.creating = null;
+  N.id = id;
+  // Keep folder as the create target only while a folder/root is selected.
+  N.folder = id.includes("/") ? id.slice(0, id.lastIndexOf("/")) : "";
+  N.mode = "preview";
+  N.dirty = false;
+  N.saving = false;
+  notesEnsureOpen(id);
+  send("noteread", { id });
+  renderNotes();
+}
+function notesSelectFolder(fid) {
+  const N = ui.notes;
+  if (N.dirty && N.id && !window.confirm(tr("Unsaved changes"))) return;
+  N.confirmDel = false;
+  N.renaming = null;
+  N.creating = null;
+  N.id = "";
+  N.title = "";
+  N.body = "";
+  N.mode = "preview";
+  N.dirty = false;
+  N.saving = false;
+  N.folder = fid || "";
+  if (fid) N.open[fid] = true;
+  renderNotes();
+}
+function notesNew(folder) {
+  const N = ui.notes;
+  if (N.dirty && !window.confirm(tr("Unsaved changes"))) return;
+  N.confirmDel = false;
+  N.renaming = null;
+  N.mode = "edit";
+  N.saving = true;
+  const parent = folder || "";
+  N.folder = parent;
+  if (parent) N.open[parent] = true;
+  const value = { title: tr("Untitled"), body: "" };
+  if (parent) value.folder = parent;
+  send("notesave", { id: "", value });
+  renderNotes();
+}
+/* Save a command (or any text) as a new note and open Notes. */
+function notesCollect(title, body) {
+  const N = ui.notes;
+  if (N.dirty && N.id && !window.confirm(tr("Unsaved changes"))) return;
+  N.confirmDel = false;
+  N.renaming = null;
+  N.creating = null;
+  N.mode = "preview";
+  N.saving = true;
+  N.dirty = false;
+  N.body = body;
+  N.title = title;
+  N.collected = true;
+  send("notesave", { id: "", value: { title, body, collected: true } });
+  show("notes");
+}
+function notesSave() {
+  const N = ui.notes;
+  if (!N.id || N.saving) return;
+  N.saving = true;
+  N.title = ($("note-title")?.value ?? N.title).trim() || tr("Untitled");
+  N.body = $("note-body")?.value ?? N.body;
+  send("notesave", { id: N.id, value: { title: N.title, body: N.body, collected: !!N.collected } });
+  renderNotes();
+}
+function notesMkdir(parent, fromCtx) {
+  const N = ui.notes;
+  // Side-header mkdir only when a folder/root is selected.
+  if (N.id && !fromCtx) return;
+  N.renaming = null;
+  notesCloseCtx();
+  if (N.dirty && N.id && !window.confirm(tr("Unsaved changes"))) return;
+  N.id = "";
+  N.title = "";
+  N.body = "";
+  N.dirty = false;
+  N.saving = false;
+  N.confirmDel = false;
+  N.creating = { parent: parent || "", value: tr("New subfolder") };
+  if (parent) N.open[parent] = true;
+  N.folder = parent || "";
+  renderNotes();
+}
+function notesCommitCreate() {
+  const N = ui.notes;
+  const el = $("note-create");
+  if (!N.creating || !el) { N.creating = null; renderNotes(); return; }
+  const name = el.value.trim();
+  const parent = N.creating.parent || "";
+  N.creating = null;
+  if (!name) { renderNotes(); return; }
+  if (parent) N.open[parent] = true;
+  send("notemkdir", { value: { parent, name } });
+  renderNotes();
+}
+function notesCommitRename() {
+  const N = ui.notes;
+  const el = $("note-rename");
+  if (!N.renaming || !el) { N.renaming = null; renderNotes(); return; }
+  const name = el.value.trim();
+  const { id, kind } = N.renaming;
+  N.renaming = null;
+  if (!name) { renderNotes(); return; }
+  send("noterename", { id, value: { name } });
+  if (kind === "note" && N.id === id) N.title = name;
+  renderNotes();
+}
+function notesClicks(ev) {
+  if (ui.view !== "notes" && !ev.target.closest("[data-notenew],[data-notenewin]")) return;
+  const t = (sel) => ev.target.closest(sel);
+  let el;
+  // Rename/create inputs sit inside the row; a click must not select the row
+  // (which clears renaming and destroys the input).
+  if (t("input.rename, #note-rename, #note-create")) return;
+  if ((el = t("[data-notenew]"))) { if (el.disabled) return; notesNew(ui.notes.folder || ""); }
+  else if ((el = t("[data-notenewin]"))) { ev.preventDefault(); ev.stopPropagation(); notesNew(el.dataset.notenewin); }
+  else if ((el = t("[data-notemkdir]"))) { if (el.disabled) return; ev.preventDefault(); ev.stopPropagation(); notesMkdir(el.dataset.notemkdir || ""); }
+  else if ((el = t("[data-notestreefold]"))) {
+    ev.preventDefault(); ev.stopPropagation();
+    const tree = ui.notes.tree || [];
+    const ids = notesCollectFolders(tree, []);
+    if (notesAnyFolderOpen(tree)) {
+      // Collapse to level-1: keep root visible, close every folder under it.
+      for (const id of ids) delete ui.notes.open[id];
+    } else {
+      for (const id of ids) ui.notes.open[id] = true;
+    }
+    renderNotes();
+  }
+  else if ((el = t("[data-notetwist]"))) {
+    ev.preventDefault(); ev.stopPropagation();
+    const id = el.dataset.notetwist;
+    if (id === "__root") return;
+    ui.notes.open[id] = !ui.notes.open[id];
+    renderNotes();
+  }
+  else if ((el = t("[data-noterenameui]"))) {
+    ev.preventDefault(); ev.stopPropagation();
+    ui.notes.renaming = { id: el.dataset.noterenameui, kind: el.dataset.notekind, value: el.dataset.notename || "" };
+    renderNotes();
+  }
+  else if ((el = t("[data-notermdir]"))) {
+    ev.preventDefault(); ev.stopPropagation();
+    notesAskDeleteFolder(el.dataset.notermdir);
+  }
+  else if ((el = t("[data-notedeltree]"))) {
+    ev.preventDefault(); ev.stopPropagation();
+    notesAskDeleteNote(el.dataset.notedeltree);
+  }
+  else if ((el = t("[data-notefolder]")) && !t("[data-noteid]")) {
+    notesSelectFolder(el.dataset.notefolder || "");
+  }
+  else if ((el = t("[data-noteid]"))) notesSelect(el.dataset.noteid);
+  else if ((el = t("[data-notemode]"))) { ui.notes.mode = el.dataset.notemode; ui.notes.confirmDel = false; renderNotes(); }
+  else if (t("[data-notesave]")) notesSave();
+  else if (t("[data-notecopy]")) { send("copy", { name: ui.notes.body || "" }); copiedBtn(t("[data-notecopy]")); }
+  else if (t("[data-notedel]")) { ui.notes.confirmDel = true; renderNotes(); }
+  else if (t("[data-notedelcancel]")) { ui.notes.confirmDel = false; renderNotes(); }
+  else if (t("[data-notedelok]")) { send("notedelete", { id: ui.notes.id }); }
+  else if (t("[data-mdcopy]")) {
+    const code = t("[data-mdcopy]").closest(".md-code")?.querySelector("code")?.textContent || "";
+    send("copy", { name: code }); copiedBtn(t("[data-mdcopy]"));
+  }
+}
+function notesCtxAction(act) {
+  const ctx = ui.notes.ctx;
+  notesCloseCtx();
+  if (!ctx || !act) return;
+  if (act === "newnote") notesNew(ctx.kind === "note" ? (ctx.id.includes("/") ? ctx.id.slice(0, ctx.id.lastIndexOf("/")) : "") : ctx.id);
+  else if (act === "newfolder") notesMkdir(ctx.id || "", true);
+  else if (act === "open" && ctx.id) notesSelect(ctx.id);
+  else if (act === "reveal") send("notereveal", { id: ctx.id || "" });
+  else if (act === "rename") {
+    ui.notes.renaming = { id: ctx.id, kind: ctx.kind === "folder" ? "folder" : "note", value: ctx.name || "" };
+    renderNotes();
+  }
+  else if (act === "rmdir") notesAskDeleteFolder(ctx.id);
+  else if (act === "del") notesAskDeleteNote(ctx.id);
+}
+function notesAskDeleteNote(id) {
+  if (!id) return;
+  const title = ui.notes.items?.find((it) => it.id === id)?.title || id;
+  confirmRemove(tr("Delete this note?"), esc(title), "Delete", () => send("notedelete", { id }));
+}
+function notesAskDeleteFolder(id) {
+  if (!id) return;
+  const name = id.includes("/") ? id.slice(id.lastIndexOf("/") + 1) : id;
+  confirmRemove(tr("Delete folder?"), esc(name), "Delete", () => {
+    send("notermdir", { id });
+    if (ui.notes.folder === id || (ui.notes.folder || "").startsWith(id + "/")) ui.notes.folder = "";
+  });
+}
+function notesInput(ev) {
+  if (ui.view !== "notes") return;
+  if (ev.target.id === "note-title") {
+    ui.notes.title = ev.target.value;
+    ui.notes.dirty = true;
+    ui.notes.confirmDel = false;
+    ev.target.title = ev.target.value;
+  }
+  else if (ev.target.id === "note-body") { ui.notes.body = ev.target.value; ui.notes.dirty = true; ui.notes.confirmDel = false; }
+  else return;
+  const save = $("content").querySelector("[data-notesave]");
+  if (save) { save.disabled = false; save.textContent = tr("Save note"); }
+  const dirty = $("content").querySelector(".notes-bar .dirty");
+  if (!dirty && $("content").querySelector(".notes-bar")) {
+    const bar = $("content").querySelector(".notes-bar");
+    const span = document.createElement("span");
+    span.className = "dirty";
+    span.textContent = tr("Unsaved changes");
+    bar.insertBefore(span, bar.querySelector(".acts"));
+  }
+}
+function notesKeys(ev) {
+  if (ui.view !== "notes") return;
+  if (ev.target.id === "note-rename") {
+    if (ev.key === "Enter") { ev.preventDefault(); notesCommitRename(); }
+    else if (ev.key === "Escape") { ev.preventDefault(); ui.notes.renaming = null; renderNotes(); }
+  } else if (ev.target.id === "note-create") {
+    if (ev.key === "Enter") { ev.preventDefault(); notesCommitCreate(); }
+    else if (ev.key === "Escape") { ev.preventDefault(); ui.notes.creating = null; renderNotes(); }
+  } else if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches?.("[data-noteid]") && !ev.target.closest("input, button")) {
+    ev.preventDefault();
+    notesSelect(ev.target.dataset.noteid);
+  }
+}
+$("content").addEventListener("click", notesClicks);
+$("hright").addEventListener("click", notesClicks);
+$("content").addEventListener("keydown", notesKeys);
+$("content").addEventListener("focusout", (ev) => {
+  if (ev.target?.id === "note-rename" && ui.notes.renaming) setTimeout(() => {
+    if (document.activeElement?.id !== "note-rename" && ui.notes.renaming) notesCommitRename();
+  }, 0);
+  if (ev.target?.id === "note-create" && ui.notes.creating) setTimeout(() => {
+    if (document.activeElement?.id !== "note-create" && ui.notes.creating) notesCommitCreate();
+  }, 0);
+});
+$("content").addEventListener("input", notesInput);
+$("content").addEventListener("contextmenu", (ev) => {
+  if (ui.view !== "notes") return;
+  if (ev.target.closest("input, textarea, .notes-main")) return;
+  const note = ev.target.closest("[data-noteid]");
+  if (note) {
+    const title = note.querySelector(".t")?.textContent || "";
+    return notesOpenCtx(ev, "note", note.dataset.noteid, title);
+  }
+  const folder = ev.target.closest("[data-notefolder]");
+  if (folder) {
+    const kind = folder.dataset.notekind === "root" || folder.dataset.notefolder === "" ? "root" : "folder";
+    const name = folder.querySelector(".t")?.textContent || "";
+    return notesOpenCtx(ev, kind, folder.dataset.notefolder || "", name);
+  }
+  if (ev.target.closest("[data-notestree], .notes-side")) return notesOpenCtx(ev, "root", "", tr("Notes"));
+});
+document.addEventListener("click", (ev) => {
+  if (ev.target.closest?.("#notes-ctx")) {
+    const btn = ev.target.closest("[data-ctx]");
+    if (btn) notesCtxAction(btn.dataset.ctx);
+    return;
+  }
+  notesCloseCtx();
+});
+$("content").addEventListener("dragstart", (ev) => {
+  if (ui.view !== "notes") return;
+  const row = ev.target.closest("[data-notedrag]");
+  if (!row) return;
+  const id = row.dataset.notedrag, kind = row.dataset.notekind || "note";
+  ui.notes.drag = { id, kind };
+  row.classList.add("dragging");
+  try { ev.dataTransfer.setData("text/plain", id); ev.dataTransfer.effectAllowed = "move"; } catch {}
+});
+$("content").addEventListener("dragend", () => {
+  ui.notes.drag = null;
+  $("content").querySelectorAll(".notes-row.drop, .notes-row.dragging").forEach((el) => el.classList.remove("drop", "dragging"));
+});
+$("content").addEventListener("dragover", (ev) => {
+  if (ui.view !== "notes" || !ui.notes.drag) return;
+  const drop = ev.target.closest("[data-notedrop]");
+  $("content").querySelectorAll(".notes-row.drop").forEach((el) => el.classList.remove("drop"));
+  if (!drop) return;
+  const parent = drop.dataset.notedrop || "";
+  if (!notesCanDrop(parent, ui.notes.drag.id, ui.notes.drag.kind)) return;
+  ev.preventDefault();
+  drop.classList.add("drop");
+  try { ev.dataTransfer.dropEffect = "move"; } catch {}
+});
+$("content").addEventListener("drop", (ev) => {
+  if (ui.view !== "notes" || !ui.notes.drag) return;
+  const drop = ev.target.closest("[data-notedrop]");
+  if (!drop) return;
+  const parent = drop.dataset.notedrop || "";
+  const { id, kind } = ui.notes.drag;
+  if (!notesCanDrop(parent, id, kind)) return;
+  ev.preventDefault();
+  if (parent) ui.notes.open[parent] = true;
+  notesMoveTo(id, parent);
+  ui.notes.drag = null;
+});
+document.addEventListener("keydown", (ev) => {
+  if (ui.view !== "notes") return;
+  if (ev.key === "Escape") notesCloseCtx();
+  if ((WIN ? ev.ctrlKey : ev.metaKey) && ev.key.toLowerCase() === "s") {
+    ev.preventDefault();
+    notesSave();
+  }
+});
+
 /* --- The list's head ------------------------------------------------------------------
    Containers, Images, Volumes, Networks, Builds, Pods and Services say what
    they hold in tabs beside the title (All · Running · Failed …): a tab
@@ -10752,11 +12562,15 @@ function pickAt(v, x) {
 }
 const CHECK = `<svg viewBox="0 0 256 256"><path d="${PH.check}"/></svg>`;
 const CK0 = '<td class="ck"></td>';
-function pickCell(v, x) {
+function pickMark(v, x) {
   const L = LISTS[v];
-  if (!L.bulk || (L.can && !L.can(x))) return CK0;
+  if (!L.bulk || (L.can && !L.can(x))) return "";
   const k = L.key(x);
-  return `<td class="ck"><span class="ckbox" data-rpick="${esc(k)}" role="checkbox" tabindex="0" aria-checked="${picks(v).has(k)}" aria-label="${tr("Select {name}", { name: esc(L.name(x)) })}" title="${tr("Select")}"><span class="cb" aria-hidden="true">${CHECK}</span></span></td>`;
+  return `<span class="ckbox" data-rpick="${esc(k)}" role="checkbox" tabindex="0" aria-checked="${picks(v).has(k)}" aria-label="${tr("Select {name}", { name: esc(L.name(x)) })}" title="${tr("Select")}"><span class="cb" aria-hidden="true">${CHECK}</span></span>`;
+}
+function pickCell(v, x) {
+  const mark = pickMark(v, x);
+  return mark ? `<td class="ck">${mark}</td>` : CK0;
 }
 /* The head's box: ticked when every row on screen is picked, a dash when some are. */
 function pickHead(v) {
@@ -10801,7 +12615,8 @@ function renderHead() {
   }
   const going = ui.batches.find((b) => b.view === v && b.phase === "going");
   const junk = L.junk && !going ? all.filter((x) => L.state(x) === L.junk.state && !(v === "containers" && isKiriK8s(x))) : [];
-  morph(right, (going ? `<span class="hbusy" role="status"><span class="hspin"></span><span>${tr("Removing <b>{gone} of {n}</b>…", { gone: going.gone, n: going.n })}</span></span>` : "")
+  morph(right, viewModeToggle(v)
+    + (going ? `<span class="hbusy" role="status"><span class="hspin"></span><span>${tr("Removing <b>{gone} of {n}</b>…", { gone: going.gone, n: going.n })}</span></span>` : "")
     + (junk.length ? `<button class="btn quiet" data-junk title="${esc(L.junk.tip(junk))}">${svgOf("broom").replace("<svg", '<svg class="cue"')}${L.junk.label(junk.length)}</button>` : "")
     + (L.primary ? L.primary() : ""));
   ppPlace();
@@ -10815,7 +12630,8 @@ $("ltabs").addEventListener("click", (ev) => {
 $("hright").addEventListener("click", (ev) => {
   const t = (q) => ev.target.closest(q), v = ui.view, L = LISTS[v];
   let el;
-  if (t("[data-ppopen]")) pp.open ? closePull() : openPull();
+  if ((el = t("[data-vmode]"))) setListLayout(v, el.dataset.vmode);
+  else if (t("[data-ppopen]")) pp.open ? closePull() : openPull();
   else if (t("[data-unpick]")) unpick();
   else if (t("[data-pickall]")) { for (const x of pickables(v)) ui.pick.keys.add(L.key(x)); render(); }
   else if (t("[data-junk]")) {
@@ -10838,7 +12654,7 @@ function unpick() { Object.assign(ui.pick, { last: "", cur: "" }); ui.pick.keys.
    rest of a row opens it, as its name does. A click below the rows lets the
    picks go. */
 const MOD = (ev) => (WIN ? ev.ctrlKey : ev.metaKey);
-const rowKeys = () => [...$("content").querySelectorAll("tr[data-pick]")].map((r) => r.dataset.pick);
+const rowKeys = () => [...$("content").querySelectorAll("[data-pick]")].map((r) => r.dataset.pick);
 function pickRow(k, how) {
   const pick = ui.pick, keys = pick.keys, order = rowKeys(), a = order.indexOf(pick.last), z = order.indexOf(k);
   if (how === "toggle") { if (keys.has(k)) keys.delete(k); else keys.add(k); pick.last = k; }
@@ -10882,7 +12698,7 @@ $("content").addEventListener("click", (ev) => {
 document.addEventListener("keydown", (ev) => {
   const v = ui.view, L = listPage() && LISTS[v], at = document.activeElement;
   if (!L?.bulk || ev.altKey || document.querySelector(".scrim, .menu") || pp.open || ev.target.closest?.("input, textarea, select, [contenteditable]")) return;
-  if (at && at !== document.body && !at.closest("#content table")) return;
+  if (at && at !== document.body && !at.closest("#content table, #content .ggrid")) return;
   const pick = ui.pick, k = ev.key;
   if (MOD(ev) && !ev.shiftKey && k.toLowerCase() === "a") {
     ev.preventDefault();
@@ -10895,7 +12711,7 @@ document.addEventListener("keydown", (ev) => {
     const next = order[i < 0 ? (down ? 0 : order.length - 1) : Math.max(0, Math.min(order.length - 1, i + (down ? 1 : -1)))];
     if (ev.shiftKey && !order.includes(pick.last)) pick.last = i < 0 ? next : pick.cur;
     pickRow(next, ev.shiftKey ? "range" : "one");
-    $("content").querySelector(`tr[data-pick="${CSS.escape(next)}"]`)?.scrollIntoView({ block: "nearest" });
+    $("content").querySelector(`[data-pick="${CSS.escape(next)}"]`)?.scrollIntoView({ block: "nearest" });
   } else if ((k === " " || k === "Enter") && at?.closest("button, a")) {
     return;
   } else if (k === " " && !MOD(ev) && (at?.dataset.rpick || at?.hasAttribute("data-pickhead") || pick.cur)) {
@@ -10903,7 +12719,7 @@ document.addEventListener("keydown", (ev) => {
     if (at?.hasAttribute("data-pickhead")) pickAll(v); else pickRow(at?.dataset.rpick || pick.cur, "toggle");
   } else if (k === "Enter" && pick.cur && !MOD(ev)) {
     ev.preventDefault();
-    openRow($("content").querySelector(`tr[data-pick="${CSS.escape(pick.cur)}"]`));
+    openRow($("content").querySelector(`[data-pick="${CSS.escape(pick.cur)}"]`));
   } else if ((k === "Delete" || k === "Backspace") && pick.keys.size) {
     ev.preventDefault();
     askDelete(v);
@@ -11275,7 +13091,7 @@ function pullEvent(e) {
     if (e.error) {
       Object.assign(p, { phase: "failed", error: e.error, kind: pullKind(e.error, e.name) });
       // Away from Images, its row isn't there to say so.
-      if (ui.view !== "images" || ui.imgd) toast("error", e.error, e.op);
+      if (ui.view !== "images" || ui.imgd) toast("error", trErr(e.error), e.op);
       if (p.kind === "notfound") hubAsk("search", split(e.name)[0].toLowerCase());
     } else Object.assign(p, { phase: "done", end: Date.now() });
   }
@@ -11313,7 +13129,7 @@ function pullCell(p) {
     return `<div class="pmsg"><span class="perr">${tr("Sign-in needed.")}</span> ${tr("{host} wants a sign-in for {path}.", { host: `<b>${esc(host)}</b>`, path: esc(path) })}${li ? tr("and {user} can't pull it", { user: esc(li.username || tr("the saved sign-in")) }) : ""}.</div>${signinForm(`pull:${p.name}`, host, tr("Sign in and pull"))}`;
   }
   if (p.kind === "network") return `<div class="pmsg"><span class="perr warn">${tr("Connection lost.")}</span> ${tr("Retry starts it again; the layers already here are kept.")}</div>`;
-  return `<div class="pmsg"><span class="perr">${tr("Didn't pull.")}</span> ${esc(p.error)}</div>`;
+  return `<div class="pmsg"><span class="perr">${tr("Didn't pull.")}</span> ${esc(trErr(p.error))}</div>`;
 }
 function pullRow(p) {
   const [repo, tag] = split(p.name), failed = p.phase === "failed", warn = failed && p.kind === "network", off = p.phase === "cancelled";

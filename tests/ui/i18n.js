@@ -150,6 +150,28 @@ t("Toast and pull-panel leftovers translate", () => {
   if (tr("Waiting for the first sample…") !== "正在等待第一次采样…") throw new Error("stats");
   if (!tr("Couldn't share {source}: {reason}", { source: "a", reason: "b" }).includes("a")) throw new Error("share toast");
 });
+t("Engine error fragments go through trErr()", () => {
+  prefs.lang = "zh";
+  const raw = "network error: registry mirrors failed (https://harbor.example:9090: pull access denied for rancher/k3s, repository does not exist or may require 'docker login'); docker.io: network error: timeout: connect";
+  const got = tr("Kubernetes: {error}", { error: trErr(raw) });
+  if (!got.startsWith("Kubernetes：")) throw new Error("prefix: " + got.slice(0, 40));
+  if (!got.includes("网络错误：")) throw new Error("network: " + got);
+  if (!got.includes("镜像加速失败")) throw new Error("mirrors: " + got);
+  if (!got.includes("拒绝拉取 rancher/k3s")) throw new Error("denied: " + got);
+  if (!got.includes("仓库不存在或可能需要 docker login")) throw new Error("repo: " + got);
+  if (!got.includes("连接超时")) throw new Error("timeout: " + got);
+  if (got.includes("network error") || got.includes("registry mirrors failed") || got.includes("pull access denied") || got.includes("timeout: connect"))
+    throw new Error("still English: " + got);
+  const find = trErr("Couldn't find an image called gall. Check the name; if it's private, sign in with docker login.");
+  if (!find.includes("gall") || !find.includes("找不到")) throw new Error(find);
+  const tag = trErr("alpine has no tag nope.");
+  if (tag !== "alpine 没有标签 nope。") throw new Error(tag);
+  prefs.lang = "zh-TW";
+  const tw = trErr("network error: timeout: connect");
+  if (tw !== "網絡錯誤：連接超時") throw new Error(tw);
+  prefs.lang = "en";
+  if (trErr(raw) !== raw) throw new Error("en should stay English");
+});
 t("Setup, terminal and registry leftovers translate", () => {
   prefs.lang = "zh";
   if (tr("Set up Kiri") !== "设置 Kiri") throw new Error("setup");
