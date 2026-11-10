@@ -44,7 +44,6 @@ pub fn serve(mut conn: File, paths: &Paths) -> io::Result<()> {
     // The published ports the kernel forwards, by container (on a Linux
     // host; in the VM, TCP ones reached over the NAT network).
     let mut published: Vec<(String, super::netlink::Dnat)> = Vec::new();
-    let host_dns = if host_process { super::transport::host_dns() } else { Vec::new() };
     let mut dhcp: Option<Dhcp> = if host_process {
         if let Err(e) = net::host_uplink() {
             eprintln!("kiri-init: no uplink: {e}");
@@ -231,7 +230,10 @@ pub fn serve(mut conn: File, paths: &Paths) -> io::Result<()> {
                 continue;
             }
             if dns.owns(pfd.fd) {
-                let upstream = dhcp.as_ref().and_then(|d| d.lease.as_ref()).map_or(&host_dns[..], |l| &l.dns);
+                // Fresh each query: WSL may replace a broken NAT nameserver
+                // in /etc/resolv.conf after the agent has started.
+                let host_dns = if host_process { super::transport::host_dns() } else { Vec::new() };
+                let upstream = dhcp.as_ref().and_then(|d| d.lease.as_ref()).map_or(host_dns.as_slice(), |l| l.dns.as_slice());
                 dns.on_readable(pfd.fd, upstream);
                 continue;
             }
@@ -343,10 +345,11 @@ pub fn serve(mut conn: File, paths: &Paths) -> io::Result<()> {
                         wait_for_lease(&mut dhcp, std::time::Duration::from_secs(3));
                     }
                     let join_pid = kiri_proto::net_opts::values(spec.net.opts, kiri_proto::net_opts::NETNS).next().and_then(|t| running_pid(&procs, t));
+                    let host_dns = if host_process { super::transport::host_dns() } else { Vec::new() };
                     container::spawn(
                     &spec,
                     paths,
-                    NetCtx { bridges: &mut bridges, dns: &mut dns, upstream_dns: dhcp.as_ref().and_then(|d| d.lease.as_ref()).map_or(&host_dns[..], |l| &l.dns), join_pid },
+                    NetCtx { bridges: &mut bridges, dns: &mut dns, upstream_dns: dhcp.as_ref().and_then(|d| d.lease.as_ref()).map_or(host_dns.as_slice(), |l| l.dns.as_slice()), join_pid },
                 )
                 } {
                     Ok(run) => {

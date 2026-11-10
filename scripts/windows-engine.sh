@@ -9,8 +9,11 @@ set -euo pipefail
 repo=$1 out=$2 arch=${3:-x86_64}
 case "$arch" in x86_64|aarch64) ;; *) echo "arch is x86_64 or aarch64, not $arch" >&2; exit 2;; esac
 target=$arch-unknown-linux-musl
+# Windows can leak HOME=C:\Users\... into WSL; rustup then looks in the wrong place.
+case "${HOME:-}" in /*) ;; *) export HOME=/root ;; esac
 # rustup's usual install; the rust image has cargo on PATH already.
 if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
+export PATH="${HOME}/.cargo/bin:${PATH:-/usr/bin:/bin}"
 venv=$HOME/.cache/kiri-zig
 # A venv whose install failed has python but no zig: made again.
 if ! "$venv/bin/python" -c 'import ziglang' 2>/dev/null; then

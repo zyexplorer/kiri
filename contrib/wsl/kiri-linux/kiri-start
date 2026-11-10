@@ -4,6 +4,24 @@
 # to it over `kiri bridge`.
 export HOME=/var/lib/kiri-daemon
 mkdir -p "$HOME" /var/log
+
+# WSL's default resolv.conf uses the NAT gateway as nameserver; that host
+# frequently does not answer, so every registry pull fails DNS. Prefer public
+# resolvers (AliDNS / DNSPod first, then Google) whenever the file still
+# points at that gateway, is a WSL-managed symlink, or is missing.
+fix_resolv() {
+  if [ -L /etc/resolv.conf ] || [ -e /etc/resolv.conf ]; then
+    rm -f /etc/resolv.conf
+  fi
+  printf '%s\n' 'nameserver 223.5.5.5' 'nameserver 119.29.29.29' 'nameserver 8.8.8.8' > /etc/resolv.conf
+  chmod 644 /etc/resolv.conf
+}
+gw=$(ip route 2>/dev/null | awk '/default/ { print $3; exit }')
+ns=$(awk '/^nameserver/ { print $2; exit }' /etc/resolv.conf 2>/dev/null)
+if [ -L /etc/resolv.conf ] || [ -z "$ns" ] || { [ -n "$gw" ] && [ "$ns" = "$gw" ]; }; then
+  fix_resolv
+fi
+
 pgrep -f '/usr/local/bin/kiri daemon' >/dev/null 2>&1 && exit 0
 rm -f "$HOME/.kiri/run/docker.sock"
 nohup /usr/local/bin/kiri daemon >>/var/log/kiri.log 2>&1 &

@@ -141,11 +141,18 @@ fn config() -> Config {
     config_path().ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
+/// Public resolvers for the node. WSL's NAT gateway DNS often fails inside
+/// the container (`lookup …: Try again`), so system pods never leave
+/// ContainerCreating; pin working servers on create.
+fn node_dns() -> &'static [&'static str] {
+    &["223.5.5.5", "8.8.8.8", "1.1.1.1"]
+}
+
 /// What of the settings a node is made with, as its label keeps them. The
 /// drives' folder is in it too, so a node made before it had it is made
-/// again at its next start.
+/// again at its next start. `"dns1"` marks nodes created with HostConfig.Dns.
 fn made_with(cfg: &Config) -> String {
-    serde_json::to_string(&(cfg.lan, &cfg.tls_san, cfg.api_port(), drives())).unwrap_or_default()
+    serde_json::to_string(&(cfg.lan, &cfg.tls_san, cfg.api_port(), drives(), "dns1")).unwrap_or_default()
 }
 
 /// Where WSL puts this PC's drives (`/mnt`, unless `[automount] root` in
@@ -491,16 +498,17 @@ fn start(say: &dyn Fn(&str)) -> io::Result<()> {
     let mut moved_to = None;
     if exists()? {
         let info = client::get(&format!("/containers/{NAME}/json"))?;
-        if info["State"]["Running"] != true {
-            // Settings changed while it was stopped (a node from before the label: its port).
-            let stale = match info["Config"]["Labels"][CONFIG_LABEL].as_str() {
-                Some(made) => made != made_with(&cfg),
-                None => bound_port(&info) != Some(want),
-            };
-            if stale {
-                say("applying the changed settings (the cluster's state is kept)…");
-                ok(client::request("DELETE", &format!("/containers/{NAME}?force=1"), None))?;
-            } else if let Some(held) = bound_port(&info).filter(|&p| !port_free(p, cfg.lan)) {
+        let running = info["State"]["Running"] == true;
+        // Settings / Dns label changed (cluster state lives in the volume).
+        let stale = match info["Config"]["Labels"][CONFIG_LABEL].as_str() {
+            Some(made) => made != made_with(&cfg),
+            None => bound_port(&info) != Some(want),
+        };
+        if stale {
+            say("applying the changed settings (the cluster's state is kept)…");
+            ok(client::request("DELETE", &format!("/containers/{NAME}?force=1"), None))?;
+        } else if !running {
+            if let Some(held) = bound_port(&info).filter(|&p| !port_free(p, cfg.lan)) {
                 let port = pick_port(want, cfg.lan)?;
                 say(&format!("port {held} is in use now; moving the API server to {port}…"));
                 ok(client::request("DELETE", &format!("/containers/{NAME}?force=1"), None))?;
@@ -533,6 +541,7 @@ fn start(say: &dyn Fn(&str)) -> io::Result<()> {
                 "Privileged": true,
                 "Tmpfs": {"/run": "", "/var/run": ""},
                 "Binds": binds(),
+                "Dns": node_dns(),
                 "PortBindings": {"6443/tcp": [{"HostIp": if cfg.lan { "0.0.0.0" } else { "127.0.0.1" }, "HostPort": port.to_string()}]},
                 "RestartPolicy": {"Name": "unless-stopped"},
             },

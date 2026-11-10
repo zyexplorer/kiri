@@ -114,8 +114,31 @@ pub fn dial_within(port: u32, timeout: std::time::Duration) -> io::Result<OwnedF
     }
 }
 
+/// Default IPv4 gateway from `/proc/net/route`, if any.
+fn default_gateway() -> Option<[u8; 4]> {
+    let text = std::fs::read_to_string("/proc/net/route").ok()?;
+    for line in text.lines().skip(1) {
+        let mut cols = line.split_whitespace();
+        let _iface = cols.next()?;
+        let dest = cols.next()?;
+        let gateway = cols.next()?;
+        if dest != "00000000" {
+            continue;
+        }
+        let g = u32::from_str_radix(gateway, 16).ok()?;
+        // Kernel writes the gateway in native (little-endian on x86/arm).
+        return Some(g.to_ne_bytes());
+    }
+    None
+}
+
 /// The host's own DNS servers, for a host process (no DHCP lease to ask).
 /// systemd-resolved's stub (127.0.0.53) is skipped for its upstreams.
+///
+/// WSL's auto `resolv.conf` often names the NAT gateway. That forwarder
+/// commonly fails from container network namespaces (`lookup …: Try again`),
+/// which leaves k3s system pods stuck in ContainerCreating. Drop the gateway
+/// and fall back to public resolvers when nothing else remains.
 pub fn host_dns() -> Vec<[u8; 4]> {
     let parse = |path: &str| -> Vec<[u8; 4]> {
         std::fs::read_to_string(path)
@@ -127,6 +150,16 @@ pub fn host_dns() -> Vec<[u8; 4]> {
             .map(|ip| ip.octets())
             .collect()
     };
-    let direct = parse("/etc/resolv.conf");
-    if direct.is_empty() { parse("/run/systemd/resolve/resolv.conf") } else { direct }
+    let gw = default_gateway();
+    let mut servers: Vec<[u8; 4]> = {
+        let direct = parse("/etc/resolv.conf");
+        if direct.is_empty() { parse("/run/systemd/resolve/resolv.conf") } else { direct }
+    }
+    .into_iter()
+    .filter(|ip| gw != Some(*ip))
+    .collect();
+    if servers.is_empty() {
+        servers = vec![[223, 5, 5, 5], [8, 8, 8, 8], [1, 1, 1, 1]];
+    }
+    servers
 }
