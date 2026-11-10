@@ -216,14 +216,28 @@ body.picking .ltabs { display: none; }
 .hright { display: flex; align-items: center; gap: 8px; }
 .hright .btn svg { width: 14px; height: 14px; fill: currentColor; flex: none; }
 .hright .vsep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
-/* Containers / Images: list ↔ grid toggle in the toolbar. */
-.hright .vmode { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex: none; }
+/* Containers / Images: list ↔ grid toggle — always last in the toolbar row. */
+.hright .vmode { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; flex: none; margin-left: auto; }
 .hright .vmode button { width: 30px; height: 30px; padding: 0; border: 0; border-left: 1px solid var(--line); background: var(--panel); color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 .hright .vmode button:first-child { border-left: 0; }
 .hright .vmode button[aria-pressed=true] { background: var(--blue); color: #fff; }
 .hright .vmode button svg { width: 14px; height: 14px; fill: currentColor; }
 /* Card grid for Containers and Images. */
+.ggrid-wrap { display: flex; flex-direction: column; gap: 8px; min-height: 0; outline: none; }
+.ggrid-tools { display: flex; align-items: center; gap: 8px; padding: 2px 20px 0; flex: none; }
+.ggrid-tools .ckbox { width: 24px; height: 24px; }
+.ggrid-tools .lab { color: var(--muted); font-size: var(--fs-small); }
 .ggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 14px; padding: 6px 20px 28px; align-content: start; outline: none; }
+.ggrid-wrap > .ggrid { padding-top: 0; }
+/* Images list: only Name / Repository open the page; other cells look pickable. */
+table.pin tr[data-imgrow] { cursor: default; }
+table.pin tr[data-imgrow] td[data-img] { cursor: pointer; }
+.gcard.img .gopen { display: grid; gap: 4px; min-width: 0; }
+.gcard.img .ghead[data-img] { cursor: pointer; }
+.gcard.img .ghead[data-img] .gtags { cursor: default; }
+.gcard.img[data-imgcard] { cursor: default; }
+.gcard.img[data-imgcard] .gbadge,
+.gcard.img[data-imgcard] .gstats { cursor: pointer; }
 .gcard { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 168px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); cursor: pointer; position: relative; box-sizing: border-box; transition: border-color .14s ease, background .14s ease, box-shadow .14s ease; }
 /* Hover fills the whole card like a selected row — solid wash, not just a rim. */
 .gcard:hover { background: color-mix(in srgb, var(--blue) 18%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 50%, var(--line)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 22%, transparent); }
@@ -268,6 +282,7 @@ body.picking .ltabs { display: none; }
 .gcard.img.chosen .gstats, .gcard.ctr.chosen .gstats { background: color-mix(in srgb, var(--blue) 10%, var(--bg)); border-color: color-mix(in srgb, var(--blue) 28%, var(--line)); }
 .gcard.img .ghead .tile, .gcard.ctr .ghead .tile { width: 40px; height: 40px; border-radius: 11px; }
 .gcard.img .ghead .tile svg, .gcard.ctr .ghead .tile svg { width: 22px; height: 22px; }
+.gcard.img .ghead .who .sub { color: var(--muted); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gcard.img .gtags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .gcard.img .gtags .tag { max-width: calc(100% - 28px); }
 .gcard.img .gtags .copy { opacity: .55; }
@@ -286,12 +301,15 @@ body.picking .ltabs { display: none; }
 .gcard.img .gstats .v.mono, .gcard.ctr .gstats .v.mono { font: 500 var(--fs-mono) var(--mono-font); color: var(--text); }
 .gcard.img .gstats .v .copy, .gcard.ctr .gstats .v .copy { vertical-align: -2px; }
 .gcard.img .gacts, .gcard.ctr .gacts { padding-top: 12px; border-top-color: color-mix(in srgb, var(--line) 85%, transparent); }
-.gcard.ctr .gstatus { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 24px; }
+/* Status alone; domain + Share share the next row (domain ellipsizes). */
+.gcard.ctr .gstatus { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
 .gcard.ctr .gstatus .pill { font-size: var(--fs-small); }
+.gcard.ctr .gstatus .greach { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; width: 100%; }
+.gcard.ctr .gstatus .greach > :not(.gaddr) { flex: none; }
 .gcard.ctr .gstatus .shc { height: 24px; }
 .gcard.ctr .gstats .v.ports { white-space: normal; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; overflow: visible; }
 .gcard.ctr .gstats .v.ports .port, .gcard.ctr .gstats .v.ports .port-more { font-size: var(--fs-small); }
-.gcard.ctr .gstatus .gaddr { max-width: 100%; height: 24px; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--blue) 10%, var(--raised)); color: var(--blue-light); font: 550 var(--fs-small) var(--ui-font); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcard.ctr .gstatus .gaddr { min-width: 0; flex: 1 1 auto; height: 24px; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--blue) 10%, var(--raised)); color: var(--blue-light); font: 550 var(--fs-small) var(--ui-font); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .gcard.ctr .gstatus .gaddr:hover { background: color-mix(in srgb, var(--blue) 16%, var(--raised)); border-color: color-mix(in srgb, var(--blue) 50%, var(--line)); }
 /* Quiet: no frame until the pointer is on it. */
 .btn.quiet { border-color: transparent; background: none; color: var(--muted); padding: 0 10px; }
@@ -453,10 +471,102 @@ tr.prow .btn svg { width: 12px; height: 12px; fill: currentColor; flex: none; }
 .toast.removed.undo .life { animation-duration: var(--life, 6s); }
 .toast.removed .linkish { font-weight: 600; }
 
-.content { flex: 1; overflow: auto; overflow-x: hidden; padding: 4px 24px 20px 20px; }
+.content { flex: 1; overflow: auto; padding: 4px 24px 20px 20px; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; }
 th { white-space: nowrap; text-align: left; font-size: var(--fs-small); font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .05em;
      padding: 6px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); }
+/* Images (and other .pin tables): checkbox + Name stick left, Actions stick right.
+   Soft hairline separators instead of heavy scroll shadows; opaque pin cells so
+   middle columns don't leak through. No overflow:hidden (breaks sticky). */
+table.pin {
+  --pin-pad-l: 16px; --pin-pad-r: 16px; --pin-ck: 34px;
+  --pin-edge: var(--line);
+  --pin-pick: color-mix(in srgb, var(--blue) 9%, var(--bg));
+  --pin-pick-hot: color-mix(in srgb, var(--blue) 13%, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.content:has(> table.pin) { padding-left: 0; padding-right: 0; }
+/* Full grid: horizontal + vertical rules stay visible even on selected rows. */
+table.pin th, table.pin td {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  transition: background-color .12s ease;
+}
+table.pin th:last-child, table.pin td:last-child { border-right: 0; }
+table.pin tbody tr:last-child > td { border-bottom: 0; }
+table.pin thead th {
+  background: color-mix(in srgb, var(--raised) 70%, var(--bg));
+}
+table.pin thead th:first-child { border-top-left-radius: 9px; }
+table.pin thead th:last-child { border-top-right-radius: 9px; }
+table.pin tbody tr:last-child > td:first-child { border-bottom-left-radius: 9px; }
+table.pin tbody tr:last-child > td:last-child { border-bottom-right-radius: 9px; }
+/* Sticky pins: column border doubles as the scroll edge (no extra grey wall). */
+table.pin th.ck, table.pin td.ck {
+  position: sticky; left: 0; z-index: 3;
+  width: var(--pin-ck); min-width: var(--pin-ck); max-width: var(--pin-ck);
+  padding-left: var(--pin-pad-l);
+  background-color: var(--bg);
+}
+table.pin thead th.ck { z-index: 6; background-color: color-mix(in srgb, var(--raised) 70%, var(--bg)); }
+table.pin th.ck + th, table.pin td.ck + td {
+  position: sticky; left: var(--pin-ck); z-index: 3;
+  background-color: var(--bg);
+  box-shadow: 4px 0 8px -6px rgba(15, 20, 25, .12);
+}
+table.pin thead th.ck + th { z-index: 6; background-color: color-mix(in srgb, var(--raised) 70%, var(--bg)); }
+table.pin th.actions, table.pin td.actions {
+  position: sticky; right: 0; z-index: 3;
+  padding-right: calc(10px + var(--pin-pad-r));
+  background-color: var(--bg);
+  box-shadow: -4px 0 8px -6px rgba(15, 20, 25, .12);
+}
+table.pin thead th.actions { z-index: 6; background-color: color-mix(in srgb, var(--raised) 70%, var(--bg)); }
+/* Row wash on every cell including sticky pins; keep grid borders as-is. */
+table.pin tbody tr.row:hover > td {
+  background-color: color-mix(in srgb, var(--text) 3.5%, var(--bg)) !important;
+}
+table.pin tbody tr.row.picked > td {
+  background-color: var(--pin-pick) !important;
+}
+table.pin tbody tr.row.chosen > td {
+  background-color: var(--pin-pick) !important;
+  border-right-color: var(--line) !important;
+  border-bottom-color: var(--line) !important;
+  box-shadow: none !important;
+}
+table.pin tbody tr.row.chosen:hover > td {
+  background-color: var(--pin-pick-hot) !important;
+}
+/* Keep soft scroll depth on Name / Actions only — never the global blue left stripe. */
+table.pin tbody tr.row.chosen > td.ck + td {
+  box-shadow: 4px 0 8px -6px rgba(15, 20, 25, .12) !important;
+}
+table.pin tbody tr.row.chosen > td.actions {
+  box-shadow: -4px 0 8px -6px rgba(15, 20, 25, .12) !important;
+}
+/* Keyboard focus: soft wash only — no left blue bar, no chunky ring. */
+table.pin tbody tr.row.cur > td {
+  border-radius: 0 !important;
+  border-right-color: var(--line) !important;
+  border-bottom-color: var(--line) !important;
+  background-color: color-mix(in srgb, var(--blue) 6%, var(--bg)) !important;
+  box-shadow: none !important;
+}
+table.pin tbody tr.row.cur > td.ck + td {
+  box-shadow: 4px 0 8px -6px rgba(15, 20, 25, .12) !important;
+}
+table.pin tbody tr.row.cur > td.actions {
+  box-shadow: -4px 0 8px -6px rgba(15, 20, 25, .12) !important;
+}
+table.pin tbody tr.row.cur.chosen > td {
+  background-color: var(--pin-pick-hot) !important;
+}
+/* Sticky Actions already opaque; drop the left fade so it doesn't fight the pin. */
+table.pin td.actions .acts-row,
+table.pin tr.row.chosen td.actions .acts-row,
+table.pin tr.row.chosen:hover td.actions .acts-row { background: none; padding-left: 0; }
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable:hover, th[aria-sort=ascending], th[aria-sort=descending] { color: var(--text); }
 th .arrow { display: inline-block; width: 10px; margin-left: 3px; color: var(--blue); }
@@ -686,17 +796,35 @@ tr[data-rowopen] .sel, .sel { cursor: text; -webkit-user-select: text; user-sele
 .logbar, .filebar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
 .logbar .field { width: 240px; }
 .toggle { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: var(--fs); cursor: pointer; }
-.console { background: #0A0E12; border: 1px solid var(--line); border-radius: 10px; font: var(--fs-log)/1.5 var(--mono-font); color: #D9DEE4;
-           height: calc(100vh - 260px); min-height: 220px; overflow: auto; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Dark by default; light theme softens the panel so it is less of a black hole. */
+:root { --console-bg: #0A0E12; }
+@media (prefers-color-scheme: light) { :root { --console-bg: #2F3640; } }
+/* Explicit text selection so drag-select / ⌘C work despite body { user-select: none }. */
+.console { background: var(--console-bg); border: 1px solid var(--line); border-radius: 10px; font: var(--fs-log)/1.5 var(--mono-font); color: #D9DEE4;
+           height: calc(100vh - 260px); min-height: 220px; overflow: auto; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; scroll-behavior: auto;
+           cursor: text; -webkit-user-select: text; user-select: text; }
+.console, .console * { -webkit-user-select: text; user-select: text; cursor: text; }
+.console.nowrap { white-space: pre; overflow-wrap: normal; }
 .console .err { color: #FF8C8C; }
 /* Each log line's number in a gutter; a wrapped line's rest stays clear of it.
    The numbers are generated content, so copying the log leaves them out. */
-.console.numbered > div { position: relative; padding-left: 54px; }
-.console.numbered > div::before { content: attr(data-n); position: absolute; left: 0; width: 42px; text-align: right; color: var(--faint); font-variant-numeric: tabular-nums; user-select: none; }
-.console .lvl-error { color: #FF8C8C; }
-.console .lvl-warn { color: var(--sun); }
-.console .lvl-debug { color: var(--faint); }
-.logcount { color: var(--faint); font-size: var(--fs); font-variant-numeric: tabular-nums; }
+.console.numbered > div { position: relative; padding-left: 54px; border-radius: 3px; }
+.console.numbered > div::before { content: attr(data-n); position: absolute; left: 0; width: 42px; text-align: right; color: #4E5864; font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none; }
+.console .lvl-error { color: #F5C4C4; background: rgba(255, 90, 90, .07); }
+.console .lvl-warn { color: #EBD7A4; background: rgba(230, 180, 60, .07); }
+.console .lvl-info { color: #D9DEE4; }
+.console .lvl-debug { color: #8B939E; }
+.console .log-ts { color: #6A7684; }
+.console .log-lv-error { color: #FF7A7A; font-weight: 650; }
+.console .log-lv-warn { color: #E6B84D; font-weight: 650; }
+.console .log-lv-info { color: #6CB6FF; font-weight: 650; }
+.console .log-lv-debug { color: #8B939E; font-weight: 650; }
+.console .log-hit { background: rgba(255, 196, 64, .32); color: inherit; border-radius: 2px; padding: 0 1px; }
+.console .log-hit.cur { background: rgba(255, 168, 40, .55); outline: 1px solid rgba(255, 190, 80, .85); }
+.console > div.log-cur { outline: 1px solid rgba(108, 182, 255, .35); background: rgba(108, 182, 255, .06); }
+.logcount { color: var(--faint); font-size: var(--fs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lognav { display: inline-flex; gap: 2px; align-items: center; }
+.lognav .btn { min-width: 28px; padding: 0 6px; }
 .logbar select { height: 30px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: var(--fs) var(--ui-font); }
 .console .hide { display: none; }
 .console .quiet { color: var(--faint); }
@@ -870,10 +998,16 @@ td.vol-mount-cell { max-width: 0; }
 .vol-mount .path { min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vol-mount .vol-line.guest .path { color: var(--faint); font-size: var(--fs-small); }
 .vol-mount .copy { flex: none; }
+/* Images → Repository: long path ellipsises; copy (repo:tag) stays visible. */
+td.repo-cell { max-width: 0; }
+.repo-line { display: flex; align-items: center; gap: 4px; min-width: 0; width: 100%; }
+.repo-line .path { min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-line .copy { flex: none; }
 .col-image { width: 14%; } .col-state { width: 14%; }
-@media (max-width: 1080px) { .col-created { display: none; } }
-/* Images' ID goes first, so Used by and the boxes' column fit beside the buttons. */
-@media (max-width: 1160px) { .col-id { display: none; } }
+@media (max-width: 1080px) { table:not(.pin) .col-created { display: none; } }
+/* Images' ID goes first, so Used by and the boxes' column fit beside the buttons.
+   Pin tables keep every middle column and scroll sideways instead. */
+@media (max-width: 1160px) { table:not(.pin) .col-id { display: none; } }
 .acts-row { display: flex; justify-content: flex-end; gap: 6px; }
 /* Buttons keep their size: the column grows to them (fitColumns), they never squeeze. */
 td.actions .acts-row > * { flex: none; }
@@ -2367,6 +2501,7 @@ main { position: relative; }
       <dt data-i18n="CPUs">CPUs</dt><dd id="vm-cpus">—</dd>
       <dt data-i18n="Memory">Memory</dt><dd id="vm-mem">—</dd>
       <div class="meter"><span id="vm-meter"></span></div>
+      <dt data-i18n="IP">IP</dt><dd id="vm-ip" class="mono sel">—</dd>
       <dt id="vm-k8s-l" data-i18n="Kubernetes" hidden>Kubernetes</dt><dd class="kside" id="vm-k8s" hidden></dd>
       <dt id="vm-sh-l" data-i18n="Shares" hidden>Shares</dt><dd class="kside" id="vm-sh" hidden></dd>
     </dl>
@@ -2455,7 +2590,7 @@ const ZH = {
   "Bad destination": "目标位置无效",
   "Note not found": "找不到便笺",
   "Linux VM": "Linux 虚拟机", "Engine": "引擎",
-  "Running": "运行中", "CPUs": "CPU", "Memory": "内存", "Asleep": "休眠",
+  "Running": "运行中", "CPUs": "CPU", "Memory": "内存", "IP": "IP", "Asleep": "休眠",
   "Start": "启动", "Stop": "停止", "Starting…": "正在启动…", "Stopping…": "正在停止…",
   "Off": "已关闭", "On": "开启", "Show": "显示", "Hide": "隐藏",
   "Save": "保存", "Cancel": "取消", "Close": "关闭", "Done": "完成", "Remove": "删除", "Delete": "删除",
@@ -2574,6 +2709,13 @@ const ZH = {
   "Window": "窗口", "CLI": "命令行",
   "Find in logs": "在日志中查找", "Follow": "跟随", "Live": "实时", "Paused": "已暂停",
   "Open logs folder": "打开日志文件夹",
+  "Open log file": "打开日志文件",
+  "No log file on disk": "磁盘上没有日志文件",
+  "Jump to latest": "跳到最新",
+  "Wrap lines": "自动换行",
+  "Previous match": "上一个匹配", "Next match": "下一个匹配",
+  "No matches": "无匹配",
+  "{n} of {m}": "{n} / {m}",
   "Create report…": "创建报告…", "Send to Kiri": "发送给 Kiri",
   "Looking for crash reports…": "正在查找崩溃报告…",
   "No crashes. Kiri keeps a report here if one of its parts ever stops unexpectedly.": "暂无崩溃。若 Kiri 某部分异常退出，报告会出现在这里。",
@@ -3714,6 +3856,7 @@ const ZH_TW = {
   "Running": "運行中",
   "CPUs": "CPU",
   "Memory": "內存",
+  "IP": "IP",
   "Asleep": "休眠",
   "Start": "啟動",
   "Stop": "停止",
@@ -3925,6 +4068,13 @@ const ZH_TW = {
   "Live": "實時",
   "Paused": "已暫停",
   "Open logs folder": "打開日誌文件夾",
+  "Open log file": "打開日誌文件",
+  "No log file on disk": "磁碟上沒有日誌文件",
+  "Jump to latest": "跳到最新",
+  "Wrap lines": "自動換行",
+  "Previous match": "上一個匹配", "Next match": "下一個匹配",
+  "No matches": "無匹配",
+  "{n} of {m}": "{n} / {m}",
   "Create report…": "創建報告…",
   "Send to Kiri": "發送給 Kiri",
   "Looking for crash reports…": "正在查找崩潰報告…",
@@ -5183,6 +5333,12 @@ function split(name) {
   const at = name.lastIndexOf(":");
   return at > name.lastIndexOf("/") ? [name.slice(0, at), name.slice(at + 1)] : [name, "latest"];
 }
+/* Last path segment of a repository (`harbor…/szda/mysql` → `mysql`), for the Name column and card title. */
+function repoName(repo) {
+  if (!repo || repo === "<none>") return repo || "";
+  const i = repo.lastIndexOf("/");
+  return i >= 0 ? repo.slice(i + 1) : repo;
+}
 /* A digest shows as its algorithm and first 8 hex (sha256:a1ed56cf), the whole one on hover. */
 const isBuildWorker = (c) => /^\/?buildx_buildkit_/.test(c.Names?.[0] || "");
 // The rest of docker build's machinery: the BuildKit image buildx runs (by the
@@ -5283,9 +5439,10 @@ function applyPrefs() {
   paintChrome();
 }
 /* A right-click gets no browser menu (Reload, Back, Inspect): this is an app,
-   not a web page. Text fields and selected text keep theirs, for Copy and Paste. */
+   not a web page. Text fields, the log console, and selected text keep theirs,
+   for Copy and Paste. */
 document.addEventListener("contextmenu", (ev) => {
-  const editable = ev.target.closest?.("input, textarea, [contenteditable], .md-ed, .img-remark .notes-preview, .imgnote-dlg .notes-preview");
+  const editable = ev.target.closest?.("input, textarea, [contenteditable], .md-ed, .img-remark .notes-preview, .imgnote-dlg .notes-preview, .console");
   if (!editable && !String(getSelection()).trim()) ev.preventDefault();
 });
 function setPref(name, value) {
@@ -5323,6 +5480,7 @@ function openDetail(id) {
   closeDetail();
   const name = c.Names[0].replace(/^\//, "");
   ui.detail = { id, name, tab: "overview", info: null, logsOn: false, follow: true, logFilter: "", logLevel: "",
+                logWrap: true, logHit: 0, logHits: 0,
                 term: { history: [], at: -1, user: "", host: "", cwd: "", probed: false }, files: { path: "/", entries: null, selected: null, preview: null } };
   logEl.textContent = "";
   termEl.querySelector("#term-out").textContent = "";
@@ -5420,7 +5578,8 @@ function closeDetail() {
 function setTab(tab) {
   const d = ui.detail;
   d.tab = tab;
-  if (tab === "logs" && !d.logsOn) { d.logsOn = true; logEl.textContent = ""; ui.partial = { false: "", true: "" }; ui.logN = 0; send("logs", { id: d.id }); }
+  if (tab === "logs" && !d.logsOn) { d.logsOn = true; logEl.textContent = ""; ui.partial = { false: "", true: "" }; ui.logN = 0; d.logHit = 0; d.logHits = 0; send("logs", { id: d.id }); }
+  if (tab === "logs" && !d.info) send("inspect", { id: d.id });
   if (tab === "files" && !d.files.entries) browse("/");
   if (tab === "overview") send("inspect", { id: d.id });
   watchStats();
@@ -5437,36 +5596,139 @@ function browse(path) {
 
 /* A line's level, from the words logs commonly use for it. */
 function levelOf(line) {
-  const l = line.slice(0, 200);
-  if (/\b(error|err|fatal|panic|crit(ical)?|emerg|alert|exception)\b/i.test(l)) return "error";
+  const l = line.slice(0, 240);
+  if (/\b(error|err|fatal|panic|crit(ical)?|emerg|alert|exception|severe)\b/i.test(l)) return "error";
   if (/\b(warn(ing)?)\b/i.test(l)) return "warn";
   if (/\b(debug|trace|verbose)\b/i.test(l)) return "debug";
   if (/\b(info|notice)\b/i.test(l)) return "info";
   return "";
 }
-const shown = (div, f, lvl) => (!f || div.textContent.toLowerCase().includes(f)) && (!lvl || div.dataset.lvl === lvl);
+const shown = (div, f, lvl) => (!f || (div.dataset.raw || div.textContent).toLowerCase().includes(f)) && (!lvl || div.dataset.lvl === lvl);
+const logEsc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/* Timestamp + level tokens coloured; optional find hits marked. */
+function paintLog(line, filter) {
+  let s = logEsc(line || " ");
+  s = s.replace(/(\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?\]?)/g, '<span class="log-ts">$1</span>');
+  s = s.replace(/\b(ERROR|FATAL|PANIC|CRIT(?:ICAL)?|EMERG|ALERT|SEVERE|Exception|ERR)\b/gi, '<span class="log-lv log-lv-error">$1</span>');
+  s = s.replace(/\b(WARN(?:ING)?)\b/gi, '<span class="log-lv log-lv-warn">$1</span>');
+  s = s.replace(/\b(INFO|NOTICE)\b/gi, '<span class="log-lv log-lv-info">$1</span>');
+  s = s.replace(/\b(DEBUG|TRACE|VERBOSE)\b/gi, '<span class="log-lv log-lv-debug">$1</span>');
+  if (filter) {
+    const q = filter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    s = s.replace(new RegExp(q, "gi"), (m) => `<mark class="log-hit">${m}</mark>`);
+  }
+  return s;
+}
+function styleLogLine(div, line, errStream) {
+  const lvl = levelOf(line);
+  div.dataset.raw = line || " ";
+  div.dataset.lvl = lvl || "none";
+  if (errStream) div.dataset.err = "1";
+  div.className = lvl ? `lvl-${lvl}` : (div.dataset.err === "1" ? "err" : "");
+  div.innerHTML = paintLog(line, (ui.detail?.logFilter || "").trim());
+}
+function logVisibleHits() {
+  return [...logEl.children].filter((x) => !x.classList.contains("hide") && x.querySelector(".log-hit"));
+}
 function logCount() {
   const el = $("log-count");
-  if (!el) return;
+  if (!el || !ui.detail) return;
   const all = logEl.childElementCount, d = ui.detail;
   const showing = d.logFilter || d.logLevel ? [...logEl.children].filter((x) => !x.classList.contains("hide")).length : all;
-  el.textContent = d.logFilter || d.logLevel ? `${showing.toLocaleString()} of ${all.toLocaleString()} lines` : `${all.toLocaleString()} lines`;
+  let text = d.logFilter || d.logLevel
+    ? `${showing.toLocaleString()} of ${all.toLocaleString()} lines`
+    : `${all.toLocaleString()} lines`;
+  if (d.logFilter && d.logHits > 0) text += ` · ${tr("{n} of {m}", { n: d.logHit + 1, m: d.logHits })}`;
+  else if (d.logFilter && showing === 0) text += ` · ${tr("No matches")}`;
+  el.textContent = text;
+  const prev = $("log-prev"), next = $("log-next");
+  if (prev) prev.disabled = !d.logHits;
+  if (next) next.disabled = !d.logHits;
+}
+function jumpLogHit(delta) {
+  const d = ui.detail;
+  if (!d) return;
+  const hits = logVisibleHits();
+  d.logHits = hits.length;
+  if (!hits.length) { d.logHit = 0; logCount(); return; }
+  d.logHit = ((d.logHit || 0) + delta + hits.length * 10) % hits.length;
+  logEl.querySelectorAll(".log-hit.cur").forEach((x) => x.classList.remove("cur"));
+  logEl.querySelectorAll(".log-cur").forEach((x) => x.classList.remove("log-cur"));
+  const row = hits[d.logHit];
+  row.classList.add("log-cur");
+  row.querySelector(".log-hit")?.classList.add("cur");
+  row.scrollIntoView({ block: "center", behavior: "smooth" });
+  logCount();
+}
+function filterLogs() {
+  const d = ui.detail;
+  if (!d) return;
+  const f = d.logFilter.toLowerCase().trim();
+  for (const div of logEl.children) {
+    const raw = div.dataset.raw || div.textContent;
+    styleLogLine(div, raw, div.dataset.err === "1");
+    div.classList.toggle("hide", !shown(div, f, d.logLevel));
+  }
+  const hits = logVisibleHits();
+  d.logHits = hits.length;
+  d.logHit = hits.length ? Math.min(d.logHit || 0, hits.length - 1) : 0;
+  if (hits.length) {
+    logEl.querySelectorAll(".log-hit.cur, .log-cur").forEach((x) => x.classList.remove("cur", "log-cur"));
+    hits[d.logHit].classList.add("log-cur");
+    hits[d.logHit].querySelector(".log-hit")?.classList.add("cur");
+  }
+  logCount();
+}
+let logFilterTimer = 0;
+function scheduleFilterLogs() {
+  clearTimeout(logFilterTimer);
+  logFilterTimer = setTimeout(filterLogs, 80);
 }
 
+function logSelecting() {
+  const sel = getSelection();
+  return !!(sel && !sel.isCollapsed && logEl.contains(sel.anchorNode));
+}
+const logVisibleLines = () => [...logEl.children].filter((x) => !x.classList.contains("hide"));
+/* ⌘A / Ctrl+A inside Logs: only the console, never the toolbar or the rest of the window. */
+function selectAllLogs() {
+  const lines = logVisibleLines();
+  if (!lines.length) return false;
+  logEl.focus({ preventScroll: true });
+  const sel = getSelection(), range = document.createRange();
+  range.setStartBefore(lines[0]);
+  range.setEndAfter(lines[lines.length - 1]);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  if (ui.detail?.follow) {
+    ui.detail.follow = false;
+    const box = $("log-follow");
+    if (box) box.checked = false;
+  }
+  return true;
+}
+/* Visible lines, or the current selection inside the console. Uses the
+   terminal's large clipboard path: plain `copy` caps at 4 KB. */
+function copyLogs(btn) {
+  const sel = getSelection();
+  let text = "";
+  if (sel && !sel.isCollapsed && logEl.contains(sel.anchorNode) && logEl.contains(sel.focusNode)) text = String(sel);
+  else text = logVisibleLines().map((x) => x.dataset.raw ?? x.textContent).join("\n");
+  if (!text) return;
+  send("term", { name: "copy", value: text });
+  if (btn) copiedBtn(btn);
+}
 function addLogs(parts) {
-  const atEnd = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
-  const filter = ui.detail.logFilter.toLowerCase(), level = ui.detail.logLevel;
+  const nearEnd = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 48;
+  const filter = (ui.detail.logFilter || "").toLowerCase().trim(), level = ui.detail.logLevel;
+  const selecting = logSelecting();
   const frag = document.createDocumentFragment();
   for (const p of parts) {
     const lines = (ui.partial[p.e] + p.t.replace(ansi, "").replace(/\r\n/g, "\n")).split("\n");
     ui.partial[p.e] = lines.pop();
     for (const line of lines) {
       const div = document.createElement("div");
-      const lvl = levelOf(line);
-      div.dataset.lvl = lvl || "none";
-      if (lvl && lvl !== "info") div.className = `lvl-${lvl}`;
-      else if (p.e) div.className = "err";
-      div.textContent = line || " ";
+      styleLogLine(div, line, !!p.e);
       div.dataset.n = ++ui.logN;
       if (!shown(div, filter, level)) div.classList.add("hide");
       frag.append(div);
@@ -5474,15 +5736,79 @@ function addLogs(parts) {
   }
   logEl.append(frag);
   while (logEl.childElementCount > LOG_MAX) logEl.firstElementChild.remove();
-  if (ui.detail.follow && atEnd || ui.detail.follow && parts.length > 50) logEl.scrollTop = logEl.scrollHeight;
+  // Don't yank the viewport (or clear a drag-select) while someone is copying.
+  if (ui.detail.follow && !selecting && (nearEnd || parts.length > 50)) logEl.scrollTop = logEl.scrollHeight;
+  if (filter) {
+    const hits = logVisibleHits();
+    ui.detail.logHits = hits.length;
+  }
   logCount();
 }
-
-function filterLogs() {
-  const d = ui.detail, f = d.logFilter.toLowerCase();
-  for (const div of logEl.children) div.classList.toggle("hide", !shown(div, f, d.logLevel));
-  logCount();
+function containerLogHostPath() {
+  const guest = ui.detail?.info?.LogPath || "";
+  if (!guest) return "";
+  // Windows: map the engine path inside WSL to Explorer's \\wsl$\… share.
+  // Mac/Linux: LogPath is already on the host (Application Support / data dir).
+  if (WIN) return volHostPath(guest) || "";
+  return guest;
 }
+function openContainerLog() {
+  const d = ui.detail;
+  if (!d) return;
+  const path = containerLogHostPath();
+  if (path) return send("hostreveal", { path });
+  // Inspect may still be in flight when Logs opens; retry once it lands.
+  if (!d.info) {
+    d.openLogPending = true;
+    send("inspect", { id: d.id });
+    return;
+  }
+  toast("error", tr("No log file on disk"));
+}
+logEl.addEventListener("scroll", () => {
+  const d = ui.detail;
+  if (!d || d.tab !== "logs") return;
+  const atEnd = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 48;
+  if (!atEnd && d.follow) {
+    d.follow = false;
+    const box = $("log-follow");
+    if (box) box.checked = false;
+  } else if (atEnd && !d.follow && $("log-follow")?.dataset.sticky !== "0") {
+    /* stay paused until the user checks Follow again */
+  }
+  const jump = $("log-jump");
+  if (jump) jump.hidden = atEnd;
+}, { passive: true });
+/* A drag-select pauses Follow so live lines don't scroll the selection away. */
+logEl.addEventListener("mousedown", (ev) => {
+  if (ev.button !== 0 || !ui.detail || ui.detail.tab !== "logs" || !ui.detail.follow) return;
+  const onUp = () => {
+    removeEventListener("mouseup", onUp);
+    if (!logSelecting()) return;
+    ui.detail.follow = false;
+    const box = $("log-follow");
+    if (box) box.checked = false;
+  };
+  addEventListener("mouseup", onUp);
+});
+/* ⌘A/C on the Mac, Ctrl+A/C on Windows and Linux: select only the log
+   console, and copy that selection (WebView2 has no browser Copy menu). */
+document.addEventListener("keydown", (ev) => {
+  const mod = WIN || LINUX ? ev.ctrlKey && !ev.metaKey : ev.metaKey && !ev.ctrlKey;
+  if (!mod || ev.altKey || ev.shiftKey) return;
+  const key = ev.key.toLowerCase();
+  if (key !== "a" && key !== "c") return;
+  if (ev.target.closest?.("input, textarea, select, [contenteditable]")) return;
+  if (ui.detail?.tab !== "logs" || !logEl.isConnected) return;
+  if (key === "a") {
+    ev.preventDefault();
+    selectAllLogs();
+    return;
+  }
+  if (!logSelecting()) return;
+  ev.preventDefault();
+  copyLogs();
+});
 
 /* The prompt, as a shell shows it: user@host:dir# (or $ for other users).
    Until the container has answered, it comes from the inspect data. */
@@ -5569,25 +5895,20 @@ termEl.querySelector("#term-in").addEventListener("keydown", (ev) => {
   ev.target.value = t.history[t.at] ?? "";
 });
 
-function renderDetail() {
-  const d = ui.detail;
-  const c = ui.containers.find((x) => x.Id === d.id);
-  if (!c) { closeDetail(); return render(); }
+/* Header + tabs above #dbody. Kept separate so a lists refresh can repaint
+   chrome without detaching the live log / terminal (which clears selection). */
+function detailChrome(c, d) {
   const project = c.Labels?.["com.docker.compose.project"];
   const running = c.State === "running";
   const up = running || c.State === "paused";
   const domain = running ? localUrl(c, d.name) : "";
   const reachable = domain && c.Ports?.length;
-  // The title row becomes the breadcrumb: Containers › name.
-  $("title").innerHTML = `<span class="crumb"><button data-back>${tr("Containers")}</button><span aria-hidden="true">›</span><span>${esc(d.name)}</span></span>`;
-  $("subtitle").textContent = "";
   const tabs = DTABS.map(([id, label]) => `<button data-dtab="${id}" aria-current="${d.tab === id}">${dtabLabel(label)}</button>`).join("");
-  // The name and its state on top; under it, what it's made of, labelled: Image, ID, Compose.
   const id = String(c.ImageID || "").startsWith("sha256:") ? c.ImageID : "";
   const facts = [[tr("Image"), `<span title="${esc(c.Image)}">${esc(refLabel(c.Image))}</span>`],
     id && [tr("ID"), `<span class="mono" title="${esc(id)}">sha256:${esc(id.slice(7, 19))}</span>${copyBtn(id, "image ID")}`],
     project && [tr("Compose"), `<span class="cproj"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.stack}"/></svg>${esc(project)}</span>`]].filter(Boolean);
-  $("content").innerHTML = `<div class="dhead">
+  return `<div class="dhead">
       <div class="tile-wrap">${tile(c.icon, "cube")}${reachable ? `<span class="kbadge" title="${tr("Reachable at {url}", { url: esc(domain) })}">${KDOT}</span>` : ""}</div>
       <div class="who"><b>${esc(d.name)}</b></div>
       ${statusPill(c)}
@@ -5607,34 +5928,102 @@ function renderDetail() {
       ? tr("{when} ago, when the VM's {mem} ran out.", { when: since(c.KiriFinishedAt), mem: memText(ui.mem?.ceiling || 0) })
       : tr("when the VM's {mem} ran out.", { mem: memText(ui.mem?.ceiling || 0) }),
       btn("Start again", `data-c="start" data-id="${c.Id}"`) + btn("More memory", "data-memmore")) : ""}
-    ${fixPanel(c)}
-    <div id="dbody"></div>`;
+    ${fixPanel(c)}`;
+}
+function paintDetailChrome(c, d, body) {
+  const tmp = document.createElement("div");
+  tmp.innerHTML = detailChrome(c, d);
+  const content = $("content");
+  while (content.firstChild && content.firstChild !== body) content.firstChild.remove();
+  while (tmp.firstChild) content.insertBefore(tmp.firstChild, body);
+}
+function bindLogBar(d) {
+  $("log-filter").addEventListener("input", (ev) => { d.logFilter = ev.target.value; d.logHit = 0; scheduleFilterLogs(); });
+  $("log-filter").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); jumpLogHit(ev.shiftKey ? -1 : 1); }
+    else if (ev.key === "F3") { ev.preventDefault(); jumpLogHit(ev.shiftKey ? -1 : 1); }
+    else if (ev.key === "Escape") { ev.target.value = ""; d.logFilter = ""; d.logHit = 0; filterLogs(); }
+  });
+  $("log-prev").addEventListener("click", () => jumpLogHit(-1));
+  $("log-next").addEventListener("click", () => jumpLogHit(1));
+  $("log-level").addEventListener("change", (ev) => { d.logLevel = ev.target.value; filterLogs(); });
+  $("log-wrap").addEventListener("change", (ev) => { d.logWrap = ev.target.checked; logEl.classList.toggle("nowrap", !d.logWrap); });
+  $("log-follow").addEventListener("change", (ev) => {
+    d.follow = ev.target.checked;
+    if (d.follow) { logEl.scrollTop = logEl.scrollHeight; const j = $("log-jump"); if (j) j.hidden = true; }
+  });
+  $("log-jump")?.addEventListener("click", () => {
+    d.follow = true;
+    const box = $("log-follow"); if (box) box.checked = true;
+    logEl.scrollTop = logEl.scrollHeight;
+    $("log-jump").hidden = true;
+  });
+}
+function syncLogBar(d) {
+  const follow = $("log-follow"); if (follow) follow.checked = !!d.follow;
+  const wrap = $("log-wrap"); if (wrap) wrap.checked = d.logWrap !== false;
+  logEl.classList.toggle("nowrap", d.logWrap === false);
+  const jump = $("log-jump");
+  if (jump) {
+    const atEnd = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 48;
+    jump.hidden = atEnd || d.follow;
+  }
+  logCount();
+}
+function renderDetail() {
+  const d = ui.detail;
+  const c = ui.containers.find((x) => x.Id === d.id);
+  if (!c) { closeDetail(); return render(); }
+  const running = c.State === "running";
+  // The title row becomes the breadcrumb: Containers › name.
+  $("title").innerHTML = `<span class="crumb"><button data-back>${tr("Containers")}</button><span aria-hidden="true">›</span><span>${esc(d.name)}</span></span>`;
+  $("subtitle").textContent = "";
   const body = $("dbody");
+  // Keep the live log / terminal mounted across list refreshes so text
+  // selection (and the terminal prompt) survive. Follow off or on — either way.
+  const keepLogs = d.tab === "logs" && body?.contains(logEl);
+  const keepTerm = d.tab === "terminal" && body?.contains(termEl);
+  if (keepLogs || keepTerm) {
+    paintDetailChrome(c, d, body);
+    watchStats();
+    if (keepLogs) syncLogBar(d);
+    else setPrompt();
+    return;
+  }
+  $("content").innerHTML = `${detailChrome(c, d)}<div id="dbody"></div>`;
+  const dbody = $("dbody");
   watchStats();
   if (d.focusFix && $("fix-val")) { d.focusFix = false; $("fix-val").focus(); }
   if (d.tab === "overview") {
-    body.innerHTML = overview(c, d.info);
-    if (running) { body.prepend(statsEl); if (!statsEl.childElementCount) drawStats(); }
+    dbody.innerHTML = overview(c, d.info);
+    if (running) { dbody.prepend(statsEl); if (!statsEl.childElementCount) drawStats(); }
   }
   else if (d.tab === "logs") {
     const levels = [["", "All levels"], ["error", "Error"], ["warn", "Warn"], ["info", "Info"], ["debug", "Debug"]];
-    body.innerHTML = `<div class="logbar"><input class="field" id="log-filter" placeholder="${tr("Find in logs")}" spellcheck="false" value="${esc(d.logFilter)}">
+    const atEnd = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 48;
+    logEl.classList.toggle("nowrap", d.logWrap === false);
+    dbody.innerHTML = `<div class="logbar"><input class="field" id="log-filter" placeholder="${tr("Find in logs")}" spellcheck="false" value="${esc(d.logFilter)}" autocomplete="off">
+      <span class="lognav"><button type="button" class="btn sm" id="log-prev" title="${tr("Previous match")}" aria-label="${tr("Previous match")}">↑</button>
+      <button type="button" class="btn sm" id="log-next" title="${tr("Next match")}" aria-label="${tr("Next match")}">↓</button></span>
       <select id="log-level" aria-label="${tr("Level")}">${levels.map(([v, l]) => `<option value="${v}"${d.logLevel === v ? " selected" : ""}>${tr(l)}</option>`).join("")}</select>
       <span class="logcount" id="log-count"></span>
       <span class="spacer" style="flex:1"></span>
-      <label class="toggle"><input type="checkbox" id="log-follow"${d.follow ? " checked" : ""}> ${tr("Follow")}</label>${btn("Clear", "data-logclear")}</div>`;
-    body.append(logEl);
+      <label class="toggle" title="${tr("Wrap lines")}"><input type="checkbox" id="log-wrap"${d.logWrap !== false ? " checked" : ""}> ${tr("Wrap lines")}</label>
+      <label class="toggle"><input type="checkbox" id="log-follow"${d.follow ? " checked" : ""}> ${tr("Follow")}</label>
+      <button type="button" class="btn sm" id="log-jump" data-logjump${atEnd || d.follow ? " hidden" : ""}>${tr("Jump to latest")}</button>
+      ${btn("Copy", "data-logcopy")}
+      ${btn("Clear", "data-logclear")}
+      <button type="button" class="btn sm" data-logopen title="${tr("Open log file")}" aria-label="${tr("Open log file")}"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.folder}"/></svg>${tr("Open log file")}</button></div>`;
+    dbody.append(logEl);
     logCount();
-    $("log-filter").addEventListener("input", (ev) => { d.logFilter = ev.target.value; filterLogs(); });
-    $("log-level").addEventListener("change", (ev) => { d.logLevel = ev.target.value; filterLogs(); });
-    $("log-follow").addEventListener("change", (ev) => { d.follow = ev.target.checked; if (d.follow) logEl.scrollTop = logEl.scrollHeight; });
+    bindLogBar(d);
     if (d.follow) logEl.scrollTop = logEl.scrollHeight;
   } else if (d.tab === "terminal") {
-    body.innerHTML = running
+    dbody.innerHTML = running
       ? `<div class="logbar"><span class="muted">${tr("Runs each command with <span class=\"mono\">sh -c</span> in {name}; <span class=\"mono\">cd</span> carries over. ↑ and ↓ go through earlier commands.", { name: esc(d.name) })}</span><span style="flex:1"></span>${btn("Open in Terminal", "data-terminal", "primary")}</div>`
       : `<div class="logbar"><span class="muted">${tr("Start the container to run commands in it.")}</span></div>`;
-    if (running) { body.append(termEl); setPrompt(); probePrompt(); }
-  } else body.innerHTML = filesView(d);
+    if (running) { dbody.append(termEl); setPrompt(); probePrompt(); }
+  } else dbody.innerHTML = filesView(d);
 }
 
 /* Pretty-print a stored docker run for display / copy. Flatten old `\`
@@ -6625,11 +7014,11 @@ function renderEmpty(view) {
 /* A column given a sort key ([label, class, key]) sorts on click, and again
    the other way; `view` names whose sort it is. */
 function table(head, rows, view, last) {
-  last ??= `<th class="r">${tr("Actions")}</th>`;
+  last ??= `<th class="r actions">${tr("Actions")}</th>`;
   const sort = ui.sort[view];
   // A column can say how it sizes ({ fixed: ch } for one whose longest value is known, { share } for
   // its part of the rest). A column that isn't fixed has a resize edge when one after it isn't either:
-  // it moves the line to that column.
+  // it moves the line to that column. `pref` is the pin-table floor before the pane scrolls.
   const flex = (i) => !head[i]?.[3]?.fixed;
   const grip = (i) => (flex(i) && head.some((_, k) => k > i && flex(k)) ? `<span class="col-resize" data-col="${i}" title="${tr("Drag to resize, double-click to reset")}"></span>` : "");
   const size = (o) => {
@@ -6637,6 +7026,7 @@ function table(head, rows, view, last) {
     let s = "";
     if (o?.share) s += ` data-share="${o.share}"`;
     if (o?.min) s += ` data-min="${o.min}"`;
+    if (o?.pref) s += ` data-pref="${o.pref}"`;
     return s;
   };
   const th = ([h, c, key, o], i) => {
@@ -6647,8 +7037,8 @@ function table(head, rows, view, last) {
   };
   // In place: a refresh or a button's change doesn't redraw the rows that stay.
   // A list whose rows can be picked starts with their boxes' column, and takes
-  // focus for its keys (⌘A, arrows, Space, Delete).
-  morph($("content"), `<table data-view="${view}"${LISTS[view]?.bulk ? ' tabindex="0"' : ""}><thead><tr>${LISTS[view]?.bulk ? pickHead(view) : ""}${head.map(th).join("")}${last}</tr></thead><tbody>${rows.join("")}</tbody></table>`);
+  // focus for its keys (⌘A, arrows, Space, Delete). Images pins checkbox/Name/Actions.
+  morph($("content"), `<table${view === "images" ? ' class="pin"' : ""} data-view="${view}"${LISTS[view]?.bulk ? ' tabindex="0"' : ""}><thead><tr>${LISTS[view]?.bulk ? pickHead(view) : ""}${head.map(th).join("")}${last}</tr></thead><tbody>${rows.join("")}</tbody></table>`);
   spanRows();
   fitColumns();
 }
@@ -6684,9 +7074,44 @@ function fitColumns() {
   // The heading's room includes its sort arrow (th .arrow: 10px wide, 3px margin) even when not sorted.
   const fixedPx = (th) => Math.ceil(Math.max(textWidth(tbl, th.dataset.fixed) + (+th.dataset.extra || 0), textWidth(tbl, th.firstChild?.textContent || "", th) + 14) + pad(th));
   const taken = cells.reduce((a, th) => a + (visible(th) && fixed(th) ? fixedPx(th) : 0), 0);
-  const room = tbl.parentElement.clientWidth - parseFloat(box.paddingLeft) - parseFloat(box.paddingRight) - lastW - ck - taken;
+  // Pin tables absorb .content's side padding into sticky ck/Actions, so the
+  // scrollport has no side gutters for middle cells to leak through.
+  const pinPadL = tbl.classList.contains("pin") ? (parseFloat(getComputedStyle(tbl).getPropertyValue("--pin-pad-l")) || 20) : 0;
+  const pinPadR = tbl.classList.contains("pin") ? (parseFloat(getComputedStyle(tbl).getPropertyValue("--pin-pad-r")) || 24) : 0;
+  const parentInner = tbl.parentElement.clientWidth - parseFloat(box.paddingLeft) - parseFloat(box.paddingRight);
+  const room = parentInner - lastW - ck - taken - (tbl.classList.contains("pin") ? pinPadR : 0);
   const share = (th, i) => (fixed(th) || !visible(th) ? 0 : w ? w.cols[i] : +th.dataset.share || 1);
   const total = cells.reduce((a, th, i) => a + share(th, i), 0) || 1;
+  // Pin tables: keep preferred middle widths; if they exceed the pane, widen the
+  // table and let .content scroll — sticky ck/Name/Actions stay on screen.
+  if (tbl.classList.contains("pin")) {
+    const ckW = Math.max(ck, 34 + pinPadL);
+    tbl.style.setProperty("--pin-ck", `${ckW}px`);
+    const prefs = cells.map((th) => {
+      if (fixed(th) || !visible(th)) return 0;
+      const m = Math.max(COL_MIN, +(th.dataset.min || 0) || COL_MIN);
+      const pref = +(th.dataset.pref || 0) || m;
+      return Math.max(m, pref);
+    });
+    const prefSum = prefs.reduce((a, b) => a + b, 0) || 1;
+    let widthsPx;
+    if (prefSum <= room) {
+      const extra = room - prefSum;
+      widthsPx = prefs.map((p, i) => p + Math.floor(extra * share(cells[i], i) / total));
+    } else if (w) {
+      widthsPx = cells.map((th, i) => (fixed(th) || !visible(th) ? 0 : Math.max(prefs[i], Math.floor(share(th, i) / total * prefSum))));
+    } else {
+      widthsPx = prefs;
+    }
+    cells.forEach((th, i) => {
+      if (fixed(th)) { th.style.width = `${fixedPx(th)}px`; return; }
+      th.style.width = `${widthsPx[i] || 0}px`;
+    });
+    last.style.width = `${lastW + pinPadR}px`;
+    const mid = cells.reduce((a, th, i) => a + (fixed(th) && visible(th) ? fixedPx(th) : (widthsPx[i] || 0)), 0);
+    tbl.style.width = `${Math.max(parentInner, ckW + lastW + pinPadR + mid)}px`;
+    return;
+  }
   // No column narrower than its min (default COL_MIN): the room it needs comes off the wider ones.
   const mins = cells.map((th) => (fixed(th) ? 0 : Math.max(COL_MIN, +(th.dataset.min || 0) || COL_MIN)));
   const px = cells.map((th, i) => share(th, i) / total * room);
@@ -6698,6 +7123,7 @@ function fitColumns() {
     th.style.width = `${Math.floor(fit)}px`;
   });
   last.style.width = `${lastW}px`;
+  tbl.style.width = "";
 }
 // How wide a text is in a row's cell (or in a heading, with its capitals and spacing).
 function textWidth(tbl, text, inside) {
@@ -6826,7 +7252,7 @@ function renderContainers() {
   if (!kept("containers").length) return renderEmpty("containers");
   if (!items.length) return noMatch();
   if (listLayout("containers") === "grid") {
-    morph($("content"), `<div class="ggrid" data-view="containers" tabindex="0">${items.map((c) => containerCard(c)).join("")}</div>`);
+    morph($("content"), `<div class="ggrid-wrap" data-view="containers" tabindex="0">${gridSelectBar("containers")}<div class="ggrid">${items.map((c) => containerCard(c)).join("")}</div></div>`);
     return;
   }
   // A Compose project shows where its newest container would, as one group.
@@ -6892,10 +7318,12 @@ function containerCard(c) {
   const starting = !up && ui.starting.has(c.Id), enter = up && ui.starting.delete(c.Id) ? "enter" : "";
   const img = refLabel(c.Image);
   // Always show the image under the name (same for running and stopped).
-  // A reachable local address sits with the status row, not in place of the image.
+  // Status on its own line; reachable address + Share share the next.
   const addr = reach
     ? `<button class="gaddr" data-open="${esc(domain)}" title="Open ${esc(domain)}">${esc(domain.replace(/^https?:\/\//, ""))}</button>`
     : "";
+  const share = shareOn() ? shareCell(c, name) : "";
+  const reachRow = (addr || share) ? `<div class="greach">${addr}${share}</div>` : "";
   const cell = (k, v, cls = "") => `<div class="cell"><span class="k">${tr(k)}</span><span class="v${cls ? ` ${cls}` : ""}">${v}</span></div>`;
   const portHtml = ports(c, 1) || '<span class="muted">—</span>';
   const imgCopy = `<button class="copy" data-copy="${esc(c.Image)}" title="${tr("Copy image:tag")}" aria-label="${tr("Copy image:tag")}"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.copy}"/></svg></button>`;
@@ -6903,7 +7331,7 @@ function containerCard(c) {
   return `<div class="gcard ctr${chosen("containers", c)}" role="button" tabindex="-1" data-rowopen="detail" data-key="${c.Id}"${pickAt("containers", c)}>
     <span class="gpick">${pickMark("containers", c)}</span>
     <div class="ghead">${tile(c.icon, "cube")}<div class="who" data-detail="${c.Id}" title="${esc(name)}"><div class="gtitle"><span class="link">${esc(name)}</span>${isKiriK8s(c) ? `<span class="k8s-mark" title="Kiri's Kubernetes cluster" aria-label="Kubernetes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${K8S_LOGO}"/></svg></span>` : ""}</div><div class="sub" title="${esc(c.Image)}"><span class="nm">${esc(img)}</span>${imgCopy}</div></div></div>
-    <div class="gstatus">${statusPill(c)}${addr}${shareOn() ? shareCell(c, name) : ""}</div>
+    <div class="gstatus">${statusPill(c)}${reachRow}</div>
     <div class="gstats">
       ${cell("ID", `<span class="mono sel" title="${esc(c.Id)}">${esc(short(c.Id))}</span>${copyBtn(c.Id, "container ID")}`)}
       ${cell("Ports", portHtml, "ports")}
@@ -7175,6 +7603,7 @@ function openPorts(id) {
 }
 
 const IMAGE_SORT = {
+  name: (i) => { const r = split(i.RepoTags?.[0] || "")[0]; return untagged(i) ? short(i.Id) : repoName(r); },
   repo: (i) => split(i.RepoTags?.[0] || "")[0], tag: (i) => split(i.RepoTags?.[0] || "")[1], id: (i) => i.Id,
   size: (i) => i.Size || 0, created: (i) => i.Created || 0, pulled: (i) => i.Pulled || 0, used: (i) => usersOf(i).length,
 };
@@ -7328,15 +7757,20 @@ function usedBrief(i, lit) {
 function imageCard(i, lit) {
   const name = imgKey(i);
   const [repo, tag] = untagged(i) ? ["<none>", ""] : split(name);
+  const label = untagged(i) ? short(i.Id) : repoName(repo);
   const picked = ui.picked && (i.RepoTags || []).some((t) => t === ui.picked || t === `${ui.picked}:latest`);
   const cell = (k, v) => `<div class="cell"><span class="k">${tr(k)}</span><span class="v">${v}</span></div>`;
   const tagCopy = `<button class="copy" data-copy="${esc(name)}" title="${tr("Copy image:tag")}" aria-label="${tr("Copy image:tag")}"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.copy}"/></svg></button>`;
   const tagRow = untagged(i)
     ? `<span class="tag none">${tr("untagged")}</span>`
     : `${tagPill(tag)}${tagCopy}`;
-  return `<div class="gcard img${picked ? " picked" : ""}${chosen("images", i)}" role="button" tabindex="-1" data-rowopen="img" data-key="${esc(name)}"${pickAt("images", i)}>
+  const path = !untagged(i) && repo && repo !== label
+    ? `<div class="sub" title="${esc(repo)}">${esc(repo)}</div>`
+    : "";
+  // Open from the header above tags (icon / name / repo); badge / stats / body toggle pick.
+  return `<div class="gcard img${picked ? " picked" : ""}${chosen("images", i)}" tabindex="-1" data-imgcard data-key="${esc(name)}"${pickAt("images", i)}>
     <span class="gpick">${pickMark("images", i)}</span>
-    <div class="ghead">${tile(i.icon)}<div class="who" data-img="${esc(name)}" title="${esc(repo)}"><span class="link">${esc(repo)}</span><div class="gtags">${tagRow}</div></div></div>
+    <div class="ghead" data-img="${esc(name)}">${tile(i.icon)}<div class="who" title="${esc(name)}"><div class="gopen"><span class="link">${esc(label)}</span>${path}</div><div class="gtags">${tagRow}</div></div></div>
     ${usedBrief(i, lit)}
     <div class="gstats">
       ${cell("ID", `<span class="mono sel">${esc(short(i.Id))}</span>${copyBtn(i.Id, "image ID")}`)}
@@ -7353,6 +7787,7 @@ function imgNoteBtn(name) {
 }
 function pullCard(p) {
   const [repo, tag] = split(p.name), failed = p.phase === "failed", warn = failed && p.kind === "network", off = p.phase === "cancelled";
+  const label = repoName(repo);
   const art = failed ? `<div class="tile ${warn ? "wrn" : "err"}">${svgOf(p.kind === "auth" ? "lock" : warn ? "warning" : "xcircle")}</div>`
     : off ? `<div class="tile">${svgOf("xcircle")}</div>`
     : `<div class="tile blue">${p.phase === "done" ? svgOf("check") : '<span class="hspin"></span>'}</div>`;
@@ -7360,8 +7795,9 @@ function pullCard(p) {
   const n = esc(p.name);
   const acts = pulling(p.name) ? ibtn("xcircle", "Cancel pull", `data-pcancel="${n}"`)
     : !failed ? "" : (["notfound", "notag"].includes(p.kind) || (p.kind === "auth" && loginsOn()) ? "" : `<button class="btn sm" data-pretry="${n}">${svgOf("restart")}${tr("Retry")}</button>`) + btn("Dismiss", `data-pdismiss="${n}"`, "quiet");
+  const path = repo !== label ? `<div class="sub" title="${esc(repo)}">${esc(repo)}</div>` : "";
   return `<div class="gcard prow${failed ? (warn ? " warn" : " bad") : off ? " off" : ""}" data-key="pull:${n}">
-    <div class="ghead">${art}<div class="who"><b>${esc(repo)}</b><div class="sub">${what} · ${tagPill(tag)}</div></div></div>
+    <div class="ghead">${art}<div class="who"><b>${esc(label)}</b>${path}<div class="sub">${what} · ${tagPill(tag)}</div></div></div>
     <div class="gpull" data-pcell="${n}">${pullCell(p)}</div>
     <div class="gacts">${acts}</div>
   </div>`;
@@ -7374,16 +7810,23 @@ function renderImages() {
   if (!items.length && !pulls.length) return noMatch();
   const lit = { n: 0 };
   if (listLayout("images") === "grid") {
-    morph($("content"), `<div class="ggrid" data-view="images" tabindex="0">${pulls.map(pullCard).join("")}${items.map((i) => imageCard(i, lit)).join("")}</div>`);
+    morph($("content"), `<div class="ggrid-wrap" data-view="images" tabindex="0">${gridSelectBar("images")}<div class="ggrid">${pulls.map(pullCard).join("")}${items.map((i) => imageCard(i, lit)).join("")}</div></div>`);
     return;
   }
   const rows = pulls.map(pullRow);
   for (const i of items) {
     const name = imgKey(i);
     const [repo, tag] = untagged(i) ? ["<none>", ""] : split(name);
+    const label = untagged(i) ? short(i.Id) : repoName(repo);
     const picked = ui.picked && (i.RepoTags || []).some((t) => t === ui.picked || t === `${ui.picked}:latest`);
-    rows.push(`<tr class="row${picked ? " picked" : ""}${chosen("images", i)}" data-rowopen="img" data-key="${esc(name)}"${pickAt("images", i)}>
-      ${pickCell("images", i)}<td class="clip"><div class="name" data-img="${esc(name)}" title="${esc(repo)}">${tile(i.icon)}<div><span class="link">${esc(repo)}</span></div></div></td>
+    const repoCopy = untagged(i) ? "" : `<button class="copy" data-copy="${esc(name)}" title="${tr("Copy image:tag")}" aria-label="${tr("Copy image:tag")}"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.copy}"/></svg></button>`;
+    // Name + Repository open the page; every other cell toggles the pick.
+    const repoCell = untagged(i)
+      ? `<td class="clip mono muted">—</td>`
+      : `<td class="clip repo-cell mono muted" data-img="${esc(name)}"><div class="repo-line" title="${esc(repo)}"><span class="path">${esc(repo)}</span>${repoCopy}</div></td>`;
+    rows.push(`<tr class="row${picked ? " picked" : ""}${chosen("images", i)}" data-imgrow data-key="${esc(name)}"${pickAt("images", i)}>
+      ${pickCell("images", i)}<td class="clip" data-img="${esc(name)}"><div class="name" title="${esc(name)}">${tile(i.icon)}<div><span class="link">${esc(label)}</span></div></div></td>
+      ${repoCell}
       <td class="clip">${untagged(i) ? `<span class="tag none">${tr("untagged")}</span>` : tagPill(tag)}</td>
       ${usedCell(i, lit)}
       <td class="mono muted col-id"><span class="sel">${esc(short(i.Id))}</span>${copyBtn(i.Id, "image ID")}</td>
@@ -7397,9 +7840,17 @@ function renderImages() {
         ${ibtn("trash", "Remove", `data-rmi="${esc(name)}"`, "danger")}
       </div></td></tr>`);
   }
-  // Shares like Containers: the table is always fixed-layout so a long repo or
-  // tag ellipsises instead of pushing Actions off the window.
-  table([["Repository", "", "repo", { share: 3 }], ["Tag", "", "tag", { share: 1.2 }], ["Used by", "", "used", { share: 1.4 }], ["ID", "col-id", "id", { share: 1 }], ["Size", "r", "size", { share: 0.8 }], ["Created", "col-created", "created", { share: 1 }], ["Pulled", "", "pulled", { share: 1 }]], rows, "images");
+  // Pin checkbox/Name/Actions; middle columns keep preferred widths and scroll.
+  table([
+    ["Name", "", "name", { share: 1.2, min: 140, pref: 160 }],
+    ["Repository", "", "repo", { share: 2.4, min: 220, pref: 280 }],
+    ["Tag", "", "tag", { share: 1.1, min: 120, pref: 140 }],
+    ["Used by", "", "used", { share: 1.3, min: 140, pref: 160 }],
+    ["ID", "col-id", "id", { share: 0.9, min: 120, pref: 130 }],
+    ["Size", "r", "size", { share: 0.7, min: 90, pref: 100 }],
+    ["Created", "col-created", "created", { share: 0.9, min: 100, pref: 110 }],
+    ["Pulled", "", "pulled", { share: 0.9, min: 100, pref: 110 }],
+  ], rows, "images");
 }
 
 // An image's page: Images › name, with its layers and settings read from Kiri's store.
@@ -8445,7 +8896,10 @@ function setVm(state, error) {
     renderStatus();
     paintEngine();
     if (ui.view === "settings" && prefs.tab === "resources") render();
-    if (state !== "running") ["vm-mem"].forEach((id) => ($(id).textContent = "—")), ($("vm-meter").style.width = "0");
+    if (state !== "running") {
+      ["vm-mem", "vm-ip"].forEach((id) => { $(id).textContent = "—"; $(id).title = ""; });
+      $("vm-meter").style.width = "0";
+    }
     if (state === "stopped" || was === "stopped") render();
   }
   if (error) toast("error", trErr(error));
@@ -9879,6 +10333,11 @@ window.kiri = {
         if ($("vm-mem").title !== memTitle()) $("vm-mem").title = memTitle();
         const meter = `${(ui.mem.used / e.ceiling_mib * 100).toFixed(1)}%`;
         if ($("vm-meter").style.width !== meter) $("vm-meter").style.width = meter;
+        {
+          const ip = e.awake && e.ip ? String(e.ip) : "";
+          setText($("vm-ip"), ip || "—");
+          $("vm-ip").title = ip;
+        }
         break;
       case "lists":
         // Run's look at an image's start script makes a container it never starts; and
@@ -10083,7 +10542,13 @@ window.kiri = {
           // Save and start: the environment is in; start it if the engine didn't.
           const fx = ui.detail.fixing;
           if (fx && !fx.started && e.info?.Config?.Env?.some((v) => v.startsWith(`${fx.name}=`))) { fx.started = true; if (!e.info.State?.Running) send("container", { action: "start", id: e.id }); }
-          render(); setPrompt();
+          if (ui.detail.openLogPending) {
+            ui.detail.openLogPending = false;
+            openContainerLog();
+          }
+          // Logs / terminal keep live DOM; rebuilding the toolbar would fight scroll and typing.
+          if (ui.detail.tab === "logs" || ui.detail.tab === "terminal") setPrompt();
+          else { render(); setPrompt(); }
         }
         break;
       case "needs": gotNeeds(e); break;
@@ -10226,7 +10691,15 @@ $("content").addEventListener("click", (ev) => {
     send("copy", { name: el.dataset.copy }); copiedBtn(el);
   }
   else if ((el = t("[data-detail]")) && !t("button, .copy, [data-copy]")) openDetail(el.dataset.detail);
-  else if ((el = t("[data-img]")) && !t("button, .copy, [data-copy]")) openImage(el.dataset.img);
+  else if ((el = t("[data-img]")) && !t("button, .copy, [data-copy], .gtags")) openImage(el.dataset.img);
+  // Images list: Name / Repository already handled; other cells toggle the pick.
+  else if ((el = t("tr[data-imgrow]")) && el.dataset.pick && !t("button, a, input, select, label, .acts-row, .ckbox, .copy, [data-copy], [data-img], td.ck") && !String(window.getSelection())) {
+    pickRow(el.dataset.pick, ev.shiftKey ? "add" : "toggle");
+  }
+  // Images grid: title above tags opens; badge / stats (not actions) toggle pick.
+  else if ((el = t("[data-imgcard]")) && el.dataset.pick && !t("button, a, .gacts, .ckbox, .gpick, .copy, [data-copy], [data-img], .gtags, .gopen") && !String(window.getSelection())) {
+    pickRow(el.dataset.pick, ev.shiftKey ? "add" : "toggle");
+  }
   // Anywhere else on a row or card opens its page, unless the click was on a control
   // or ended a text selection (copying an ID shouldn't navigate).
   else if ((el = t("[data-rowopen]")) && !t("button, a, input, select, label, .acts-row, .gacts, .sh-ico, .shc, .ckbox, .gpick, .copy, [data-copy]") && !String(window.getSelection())) {
@@ -10268,7 +10741,9 @@ $("content").addEventListener("click", (ev) => {
   else if ((el = t("[data-file]"))) { ui.detail.files.selected = el.dataset.file; ui.detail.files.preview = null; send("preview", { name: ui.detail.name, path: el.dataset.file }); render(); }
   else if ((el = t("[data-reveal]"))) send("reveal", { name: ui.detail.name, path: el.dataset.reveal });
   else if ((el = t("[data-terminal]"))) send("terminal", { name: ui.detail.name });
-  else if ((el = t("[data-logclear]"))) { logEl.textContent = ""; logCount(); }
+  else if ((el = t("[data-logcopy]"))) copyLogs(el);
+  else if ((el = t("[data-logclear]"))) { logEl.textContent = ""; if (ui.detail) { ui.detail.logHit = 0; ui.detail.logHits = 0; } logCount(); }
+  else if (t("[data-logopen]")) openContainerLog();
   else if ((el = t("[data-save]"))) send("download", { name: ui.detail.name, path: el.dataset.save });
 });
 $("impstrip").addEventListener("click", (ev) => {
@@ -10302,9 +10777,10 @@ $("gq").addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") { ev.target.value = ""; ui.filter = ""; ev.target.blur(); render(); }
 });
 document.addEventListener("keydown", (ev) => {
-  if ((WIN ? ev.ctrlKey : ev.metaKey) && !ev.altKey && !ev.shiftKey && (ev.key.toLowerCase() === "k" || ev.key.toLowerCase() === "f")) {
+  const mod = WIN || LINUX ? ev.ctrlKey && !ev.metaKey : ev.metaKey && !ev.ctrlKey;
+  if (mod && !ev.altKey && !ev.shiftKey && (ev.key.toLowerCase() === "k" || ev.key.toLowerCase() === "f")) {
     ev.preventDefault();
-    // In a container's logs, ⌘F finds in the logs.
+    // In a container's logs, ⌘F / Ctrl+F finds in the logs.
     const f = ev.key.toLowerCase() === "f" && $("log-filter")?.isConnected ? $("log-filter") : $("gq");
     f.focus(); f.select();
   }
@@ -11101,14 +11577,15 @@ function setRail(on) {
   document.body.classList.toggle("rail", on);
   try { localStorage.setItem("kiri.rail", on ? "1" : ""); } catch {}
   const b = $("rail-toggle"), what = `${on ? "Show" : "Fold"} the sidebar`;
-  b.title = `${what} (${WIN ? "Ctrl+B" : "⌘B"})`; b.setAttribute("aria-label", what); b.setAttribute("aria-pressed", !on);
+  b.title = `${what} (${WIN || LINUX ? "Ctrl+B" : "⌘B"})`; b.setAttribute("aria-label", what); b.setAttribute("aria-pressed", !on);
   document.querySelectorAll("nav button[data-view]").forEach((x) => (on ? (x.title = x.querySelector(".lbl")?.textContent || "") : x.removeAttribute("title")));
   document.querySelector(".vm").title = on ? `${VM}: ${$("vm-state").textContent}` : "";
 }
 $("rail-toggle").addEventListener("click", () => setRail(!document.body.classList.contains("rail")));
 document.querySelector(".vm").addEventListener("click", () => { if (document.body.classList.contains("rail")) setRail(false); });
 document.addEventListener("keydown", (ev) => {
-  if ((WIN ? ev.ctrlKey : ev.metaKey) && !ev.altKey && !ev.shiftKey && ev.key.toLowerCase() === "b" && !ev.target.closest?.("input, textarea, [contenteditable]")) {
+  const mod = WIN || LINUX ? ev.ctrlKey && !ev.metaKey : ev.metaKey && !ev.ctrlKey;
+  if (mod && !ev.altKey && !ev.shiftKey && ev.key.toLowerCase() === "b" && !ev.target.closest?.("input, textarea, [contenteditable]")) {
     ev.preventDefault();
     setRail(!document.body.classList.contains("rail"));
   }
@@ -11141,7 +11618,7 @@ setInterval(() => {
   document.body.classList.remove("sway");
   if (!document.hidden && document.hasFocus() && document.querySelector(".is-art")) requestAnimationFrame(() => document.body.classList.add("sway"));
 }, 20000);
-$("gkbd").textContent = WIN ? "Ctrl K" : "⌘K";
+$("gkbd").textContent = WIN || LINUX ? "Ctrl K" : "⌘K";
 $("strip-settings").addEventListener("click", () => show("settings"));
 
 /* Back and forward through the places opened: a view, a container's page
@@ -12636,7 +13113,8 @@ $("content").addEventListener("drop", (ev) => {
 document.addEventListener("keydown", (ev) => {
   if (ui.view !== "notes") return;
   if (ev.key === "Escape") notesCloseCtx();
-  if ((WIN ? ev.ctrlKey : ev.metaKey) && ev.key.toLowerCase() === "s") {
+  const mod = WIN || LINUX ? ev.ctrlKey && !ev.metaKey : ev.metaKey && !ev.ctrlKey;
+  if (mod && ev.key.toLowerCase() === "s") {
     ev.preventDefault();
     notesSave();
   }
@@ -12750,12 +13228,20 @@ function pickCell(v, x) {
   const mark = pickMark(v, x);
   return mark ? `<td class="ck">${mark}</td>` : CK0;
 }
-/* The head's box: ticked when every row on screen is picked, a dash when some are. */
-function pickHead(v) {
+/* Select-all control: table head cell, or the strip above a card grid. */
+function pickAllControl(v) {
   const L = LISTS[v], can = pickables(v), n = can.filter((x) => picks(v).has(L.key(x))).length;
-  if (!can.length) return '<th class="ck"></th>';
+  if (!can.length) return "";
   const st = !n ? "" : n === can.length ? "all" : "some", label = st === "all" ? tr("Clear the selection") : tr("Select all {n}", { n: can.length });
-  return `<th class="ck"><span class="ckbox" data-pickhead role="checkbox" tabindex="0" aria-checked="${st === "all" ? "true" : st ? "mixed" : "false"}" aria-label="${label}" title="${label}"><span class="cb ${st}" aria-hidden="true">${st === "all" ? CHECK : ""}</span></span></th>`;
+  return `<span class="ckbox" data-pickhead role="checkbox" tabindex="0" aria-checked="${st === "all" ? "true" : st ? "mixed" : "false"}" aria-label="${label}" title="${label}"><span class="cb ${st}" aria-hidden="true">${st === "all" ? CHECK : ""}</span></span>`;
+}
+function pickHead(v) {
+  const box = pickAllControl(v);
+  return box ? `<th class="ck">${box}</th>` : '<th class="ck"></th>';
+}
+function gridSelectBar(v) {
+  const box = pickAllControl(v);
+  return box ? `<div class="ggrid-tools">${box}<span class="lab">${tr("Select all")}</span></div>` : "";
 }
 // Picked, and the row the keys move from.
 const chosen = (v, x) => { const k = LISTS[v].key(x); return (picks(v).has(k) ? " chosen" : "") + (ui.pick.view === v && ui.pick.cur === k ? " cur" : ""); };
@@ -12781,22 +13267,24 @@ function renderHead() {
   if (!on.has(ui.pick.cur)) ui.pick.cur = "";
   if (!on.has(ui.pick.last)) ui.pick.last = "";
   document.body.classList.toggle("picking", keys.size > 0);
+  const mode = viewModeToggle(v);
   if (keys.size) {
     const xs = can.filter((x) => keys.has(L.key(x)));
+    // Bulk actions first; list/grid toggle always last so it never jumps.
     morph(right, `<div class="bulk" role="group" aria-label="${tr("selected")} ${L.noun}"><span class="bcount"><b>${keys.size}</b> ${tr("selected")}<button class="x" data-unpick title="${tr("Clear the selection")} (Esc)" aria-label="${tr("Clear the selection")}">×</button></span>
       ${keys.size < can.length ? `<button class="linkish" data-pickall>${tr("Select all {n}", { n: can.length })}</button>` : ""}<span class="vsep"></span>
       ${L.bulk.map(([label, icon, kind, fits], i) => {
         const m = xs.filter(fits).length;
         return `<button class="btn ${kind}" data-bulk="${i}"${m ? "" : " disabled"}${m < xs.length ? ` title="${tr("{n} of the {total} picked", { n: m, total: xs.length })}"` : ""}>${svgOf(icon)}${tr(label)}${m && m < xs.length ? ` ${m}` : ""}</button>`;
-      }).join("")}</div>`);
+      }).join("")}</div>${mode}`);
     return ppPlace();
   }
   const going = ui.batches.find((b) => b.view === v && b.phase === "going");
   const junk = L.junk && !going ? all.filter((x) => L.state(x) === L.junk.state && !(v === "containers" && isKiriK8s(x))) : [];
-  morph(right, viewModeToggle(v)
-    + (going ? `<span class="hbusy" role="status"><span class="hspin"></span><span>${tr("Removing <b>{gone} of {n}</b>…", { gone: going.gone, n: going.n })}</span></span>` : "")
+  morph(right, (going ? `<span class="hbusy" role="status"><span class="hspin"></span><span>${tr("Removing <b>{gone} of {n}</b>…", { gone: going.gone, n: going.n })}</span></span>` : "")
     + (junk.length ? `<button class="btn quiet" data-junk title="${esc(L.junk.tip(junk))}">${svgOf("broom").replace("<svg", '<svg class="cue"')}${L.junk.label(junk.length)}</button>` : "")
-    + (L.primary ? L.primary() : ""));
+    + (L.primary ? L.primary() : "")
+    + mode);
   ppPlace();
 }
 $("ltabs").addEventListener("click", (ev) => {
@@ -12831,7 +13319,8 @@ function unpick() { Object.assign(ui.pick, { last: "", cur: "" }); ui.pick.keys.
    last one clicked. The head's box picks every row on screen, or none. The
    rest of a row opens it, as its name does. A click below the rows lets the
    picks go. */
-const MOD = (ev) => (WIN ? ev.ctrlKey : ev.metaKey);
+/* Primary shortcut modifier: Ctrl on Windows and Linux, ⌘ on the Mac. */
+const MOD = (ev) => (WIN || LINUX ? ev.ctrlKey && !ev.metaKey : ev.metaKey && !ev.ctrlKey);
 const rowKeys = () => [...$("content").querySelectorAll("[data-pick]")].map((r) => r.dataset.pick);
 function pickRow(k, how) {
   const pick = ui.pick, keys = pick.keys, order = rowKeys(), a = order.indexOf(pick.last), z = order.indexOf(k);
@@ -12876,7 +13365,7 @@ $("content").addEventListener("click", (ev) => {
 document.addEventListener("keydown", (ev) => {
   const v = ui.view, L = listPage() && LISTS[v], at = document.activeElement;
   if (!L?.bulk || ev.altKey || document.querySelector(".scrim, .menu") || pp.open || ev.target.closest?.("input, textarea, select, [contenteditable]")) return;
-  if (at && at !== document.body && !at.closest("#content table, #content .ggrid")) return;
+  if (at && at !== document.body && !at.closest("#content table, #content .ggrid-wrap, #content .ggrid")) return;
   const pick = ui.pick, k = ev.key;
   if (MOD(ev) && !ev.shiftKey && k.toLowerCase() === "a") {
     ev.preventDefault();
@@ -12995,7 +13484,7 @@ const batchHas = (v, key) => ui.batches.some((b) => b.view === v && b.keys.has(k
    cache), a full reference to pull exactly that, then the tag. Each pull is a
    row at the top of the Images list with its progress, several at once; a
    failed one says why in its row. The status bar counts them. */
-const PP_KEY = WIN ? "Ctrl+Shift+P" : "⌘⇧P", HUB = "Docker Hub";
+const PP_KEY = WIN || LINUX ? "Ctrl+Shift+P" : "⌘⇧P", HUB = "Docker Hub";
 const pp = { open: false, mode: "search", q: "", sel: 0, items: [], status: "", repo: "", tag: "", hub: null, tagList: [], search: new Map(), tags: new Map(), asked: new Set(), timer: 0, signin: false };
 const SEARCH_SVG = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="7" cy="7" r="4.8"/><path d="M10.6 10.6L14 14"/></svg>`;
 function hubAsk(kind, key) {
@@ -13202,7 +13691,8 @@ $("pp").addEventListener("click", (ev) => {
 document.addEventListener("pointerdown", (ev) => { if (pp.open && !ev.target.closest("#pp, [data-ppopen]")) closePull(); }, true);
 window.addEventListener("keydown", (ev) => {
   const k = ev.key;
-  if ((WIN ? ev.ctrlKey : ev.metaKey) && ev.shiftKey && !ev.altKey && k.toLowerCase() === "p") {
+  const mod = WIN || LINUX ? ev.ctrlKey && !ev.metaKey : ev.metaKey && !ev.ctrlKey;
+  if (mod && ev.shiftKey && !ev.altKey && k.toLowerCase() === "p") {
     ev.preventDefault(); ev.stopImmediatePropagation();
     return pp.open ? closePull() : openPull();
   }
@@ -13311,6 +13801,7 @@ function pullCell(p) {
 }
 function pullRow(p) {
   const [repo, tag] = split(p.name), failed = p.phase === "failed", warn = failed && p.kind === "network", off = p.phase === "cancelled";
+  const label = repoName(repo);
   const art = failed ? `<div class="tile ${warn ? "wrn" : "err"}">${svgOf(p.kind === "auth" ? "lock" : warn ? "warning" : "xcircle")}</div>`
     : off ? `<div class="tile">${svgOf("xcircle")}</div>`
     : `<div class="tile blue">${p.phase === "done" ? svgOf("check") : '<span class="hspin"></span>'}</div>`;
@@ -13318,7 +13809,9 @@ function pullRow(p) {
   const n = esc(p.name);
   const acts = pulling(p.name) ? ibtn("xcircle", "Cancel pull", `data-pcancel="${n}"`)
     : !failed ? "" : (["notfound", "notag"].includes(p.kind) || (p.kind === "auth" && loginsOn()) ? "" : `<button class="btn sm" data-pretry="${n}">${svgOf("restart")}${tr("Retry")}</button>`) + btn("Dismiss", `data-pdismiss="${n}"`, "quiet");
-  return `<tr class="row prow${failed ? (warn ? " warn" : " bad") : off ? " off" : ""}" data-key="pull:${n}">${CK0}<td><div class="name">${art}<div><b>${esc(repo)}</b><div class="sub-name">${what}</div></div></div></td>
+  const repoCopy = `<button class="copy" data-copy="${n}" title="${tr("Copy image:tag")}" aria-label="${tr("Copy image:tag")}"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.copy}"/></svg></button>`;
+  return `<tr class="row prow${failed ? (warn ? " warn" : " bad") : off ? " off" : ""}" data-key="pull:${n}">${CK0}<td><div class="name">${art}<div><b>${esc(label)}</b><div class="sub-name">${what}</div></div></div></td>
+    <td class="clip repo-cell mono muted"><div class="repo-line" title="${esc(repo)}"><span class="path">${esc(repo)}</span>${repoCopy}</div></td>
     <td>${tagPill(tag)}</td><td colspan="5" data-fill data-pcell="${n}">${pullCell(p)}</td><td class="actions"><div class="acts-row">${acts}</div></td></tr>`;
 }
 /* Progress, a few times a second: the row's bar and the status bar, in place. */

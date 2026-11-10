@@ -15,7 +15,7 @@ const row = (k) => document.querySelector(`#content tr[data-key="${k}"]`);
 const cell = (k) => row(k).querySelector("td.used");
 const groups = (k) => [...cell(k).querySelectorAll(".l2 > span")].map((s) => [s.querySelector(".cube").classList[1], s.textContent.trim()]);
 t("a Used by column sits between Tag and ID", () => {
-  eq([...document.querySelectorAll("#content thead th:not(.ck)")].map((th) => th.textContent.trim()).slice(0, 4), ["Repository", "Tag", "Used by", "ID"], "head");
+  eq([...document.querySelectorAll("#content thead th:not(.ck)")].map((th) => th.textContent.trim()).slice(0, 5), ["Name", "Repository", "Tag", "Used by", "ID"], "head");
 });
 t("the top line counts the containers, the second a box and count per state", () => {
   eq(cell("kiri-test/mix:1").querySelector(".l1").textContent, "6 containers", "top line");

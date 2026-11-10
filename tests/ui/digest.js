@@ -14,9 +14,10 @@ t("split takes a digest reference apart at the @", () => {
   eq(split("kindest/node:v1.29@" + D), ["kindest/node", D], "tag and digest");
   eq(split("localhost:5000/app:1"), ["localhost:5000/app", "1"], "a host's port isn't a tag");
 });
-t("the row: Repository kindest/node, the tag the digest's first 8 hex, the whole one on hover", () => {
+t("the row: Name is the last path segment, Repository the full path, digest tag short", () => {
   const r = row(REF);
-  eq(r.querySelector(".name .link").textContent, "kindest/node", "repository");
+  eq(r.querySelector(".name .link").textContent, "node", "name");
+  eq(r.cells[r.querySelector("td.ck") ? 2 : 1].textContent.trim(), "kindest/node", "repository");
   const tag = r.querySelector(".tag");
   eq([tag.textContent, tag.title, tag.classList.contains("mono")], ["sha256:a1ed56cf", D, true], "tag");
 });
