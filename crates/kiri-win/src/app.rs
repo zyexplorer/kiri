@@ -14,21 +14,26 @@ use std::sync::{Mutex, PoisonError};
 
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment, ICoreWebView2NavigationStartingEventArgs, ICoreWebView2NewWindowRequestedEventArgs, ICoreWebView2WebMessageReceivedEventArgs,
+    ICoreWebView2_3, COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW,
 };
 use webview2_com::{
     AddScriptToExecuteOnDocumentCreatedCompletedHandler, CoTaskMemPWSTR, CreateCoreWebView2ControllerCompletedHandler,
     CreateCoreWebView2EnvironmentCompletedHandler, ExecuteScriptCompletedHandler, NavigationCompletedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler,
     WebMessageReceivedEventHandler,
 };
-use windows::core::{w, Interface, HSTRING, PCWSTR, PWSTR};
+use windows::core::{w, GUID, Interface, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Globalization::GetUserDefaultUILanguage;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW};
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
-use windows::Win32::UI::Shell::{ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW};
+use windows::Win32::UI::Shell::{
+    ShellExecuteW, Shell_NotifyIconW, NIF_GUID, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NOTIFYICONDATAW,
+    NOTIFYICON_VERSION_4,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, BringWindowToTop, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, FindWindowW, GetClientRect,
     GetCursorPos, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowThreadProcessId, IsWindowVisible, IsZoomed, KillTimer, SM_CXSCREEN, SM_CYSCREEN, SW_MAXIMIZE, SW_SHOWNORMAL, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SendMessageW,
@@ -59,6 +64,64 @@ pub fn in_setup() -> bool {
 fn page_html() -> String {
     if SETUP.load(Ordering::SeqCst) { SETUP_PAGE.to_owned() } else { crate::assemble::page(PAGE) }
 }
+
+/// Virtual host for the assembled main page. NavigateToString is capped at
+/// 2 MB of the wide string; personal i18n + xterm exceeds that and paints a
+/// blank WebView2. Mapping a folder and Navigating to https://app.kiri.local/
+/// has no such cap. Mac/Linux never take this path.
+const PAGE_HOST: &str = "app.kiri.local";
+const PAGE_URL: &str = "https://app.kiri.local/index.html";
+
+fn main_page_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri").join("webview"))
+}
+
+fn write_main_page() -> std::io::Result<std::path::PathBuf> {
+    let dir = main_page_dir().ok_or_else(|| std::io::Error::other("LOCALAPPDATA is not set"))?;
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("index.html");
+    let html = crate::assemble::page(PAGE);
+    let tmp = path.with_extension("html.tmp");
+    std::fs::write(&tmp, html.as_bytes())?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(dir)
+}
+
+/// Load setup via NavigateToString (small); the main page via a virtual host.
+fn navigate_page(wv: &ICoreWebView2) {
+    if SETUP.load(Ordering::SeqCst) {
+        let page = CoTaskMemPWSTR::from(SETUP_PAGE);
+        // SAFETY: a live webview, on its own thread.
+        let _ = unsafe { wv.NavigateToString(*page.as_ref().as_pcwstr()) };
+        return;
+    }
+    let Ok(dir) = write_main_page() else {
+        crate::serve::log("webview: could not write the page; falling back to NavigateToString");
+        let page = CoTaskMemPWSTR::from(page_html().as_str());
+        let _ = unsafe { wv.NavigateToString(*page.as_ref().as_pcwstr()) };
+        return;
+    };
+    // SAFETY: a live webview, on its own thread.
+    let mapped = unsafe {
+        wv.cast::<ICoreWebView2_3>().and_then(|wv3| {
+            wv3.SetVirtualHostNameToFolderMapping(
+                &HSTRING::from(PAGE_HOST),
+                &HSTRING::from(dir.to_string_lossy().as_ref()),
+                COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW,
+            )
+        })
+    };
+    if let Err(e) = mapped {
+        crate::serve::log(&format!("webview virtual host: {e}; falling back to NavigateToString"));
+        let page = CoTaskMemPWSTR::from(page_html().as_str());
+        let _ = unsafe { wv.NavigateToString(*page.as_ref().as_pcwstr()) };
+        return;
+    }
+    let uri = CoTaskMemPWSTR::from(PAGE_URL);
+    if let Err(e) = unsafe { wv.Navigate(*uri.as_ref().as_pcwstr()) } {
+        crate::serve::log(&format!("webview Navigate: {e}"));
+    }
+}
 /// Kiri's icon cropped to its artwork for Windows (brand/windows-icons.ps1),
 /// by size: the Mac's has Apple's margin and looks small in the taskbar.
 const ICONS: [(i32, &[u8]); 8] = [
@@ -75,16 +138,26 @@ const ICONS: [(i32, &[u8]); 8] = [
 /// Before the page's own scripts: its `webkit.messageHandlers.kiri` on WebView2.
 /// It can run before there is a root element (WebView2 122, as Windows 11
 /// ships it), so the class waits for one. Script errors go to the log: a
-/// page that fails to run shows no other sign of it.
-const SHIM: &str = r#"window.KIRI_OS = "windows";
-window.webkit = { messageHandlers: { kiri: { postMessage: m =>
-  window.chrome.webview.postMessage(typeof m === "string" ? m : JSON.stringify(m)) } } };
+/// page that fails to run shows no other sign of it. `KIRI_WSL` is the distro
+/// name so volume Mount can show `\\wsl$\…` host paths.
+fn shim() -> String {
+    let distro = crate::setup::saved_distro()
+        .or_else(crate::engine::distro)
+        .unwrap_or_else(|| crate::setup::KIRI_DISTRO.to_owned());
+    let distro = serde_json::to_string(&distro).unwrap_or_else(|_| "\"kiri\"".into());
+    format!(
+        r#"window.KIRI_OS = "windows";
+window.KIRI_WSL = {distro};
+window.webkit = {{ messageHandlers: {{ kiri: {{ postMessage: m =>
+  window.chrome.webview.postMessage(typeof m === "string" ? m : JSON.stringify(m)) }} }} }};
 if (document.documentElement) document.documentElement.classList.add("windows");
-else new MutationObserver((_, o) => {
-  if (document.documentElement) { document.documentElement.classList.add("windows"); o.disconnect(); }
-}).observe(document, { childList: true });
+else new MutationObserver((_, o) => {{
+  if (document.documentElement) {{ document.documentElement.classList.add("windows"); o.disconnect(); }}
+}}).observe(document, {{ childList: true }});
 window.addEventListener("error", e => window.chrome.webview.postMessage(JSON.stringify(
-  { cmd: "jserror", name: `${e.message} (line ${e.lineno}:${e.colno})` })));"#;
+  {{ cmd: "jserror", name: `${{e.message}} (line ${{e.lineno}}:${{e.colno}})` }})));"#
+    )
+}
 
 /// The tray menu: what the engine last reported, kept for the next right-click.
 #[derive(Debug, Clone, Default)]
@@ -263,9 +336,7 @@ impl Ui {
         self.loaded = false;
         self.pending.clear();
         if let Some(w) = &self.webview {
-            let page = CoTaskMemPWSTR::from(page_html().as_str());
-            // SAFETY: a live webview, on its own thread.
-            let _ = unsafe { w.NavigateToString(*page.as_ref().as_pcwstr()) };
+            navigate_page(w);
         }
     }
 
@@ -362,7 +433,9 @@ pub fn run(show: bool, setup: bool, on_message: impl Fn(String) + 'static, on_tr
         }
     }
     UI.with(|u| *u.borrow_mut() = Some(Ui { hwnd, webview: None, controller: None, pending: Vec::new(), loaded: false, started: false, menu: Menu::default(), on_message: Rc::new(on_message) }));
-    tray(hwnd, small, NIM_ADD);
+    // GUID identity: drop any ghost left by a previous process that was killed
+    // mid-rebuild, then add ours. HWND+uID alone cannot remove another process's icon.
+    tray_install(hwnd, small);
     if show {
         self::show();
     }
@@ -376,7 +449,7 @@ pub fn run(show: bool, setup: bool, on_message: impl Fn(String) + 'static, on_tr
             DispatchMessageW(&msg);
         }
     }
-    tray(hwnd, small, NIM_DELETE);
+    tray(hwnd, None, NIM_DELETE);
     Ok(())
 }
 
@@ -434,18 +507,94 @@ fn icon(size: i32) -> Option<HICON> {
     unsafe { CreateIconFromResourceEx(png, true, 0x0003_0000, px, px, LR_DEFAULTCOLOR).ok() }
 }
 
-fn tray(hwnd: HWND, icon: Option<HICON>, op: windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE) {
-    let mut nid = NOTIFYICONDATAW { cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32, hWnd: hwnd, uID: 1, uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP, uCallbackMessage: WM_TRAY, ..Default::default() };
+/// Stable identity for the tray icon across process restarts. Explorer keeps
+/// GUID icons even after a crash; the next launch deletes/adds the same GUID
+/// so ghosts from `Stop-Process` / rebuilds do not pile up until hover.
+const TRAY_GUID: GUID = GUID::from_u128(0x4b49_5249_5769_6e54_7261_7949_636f_6e01);
+
+fn tray_nid(hwnd: HWND, icon: Option<HICON>) -> NOTIFYICONDATAW {
+    let mut nid = NOTIFYICONDATAW {
+        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: 1,
+        uFlags: NIF_MESSAGE | NIF_TIP | NIF_GUID,
+        uCallbackMessage: WM_TRAY,
+        guidItem: TRAY_GUID,
+        ..Default::default()
+    };
     if let Some(i) = icon {
         nid.hIcon = i;
+        nid.uFlags |= NIF_ICON;
     }
     for (d, s) in nid.szTip.iter_mut().zip("Kiri".encode_utf16()) {
         *d = s;
     }
-    // SAFETY: a filled-in NOTIFYICONDATAW for our window.
+    nid
+}
+
+fn tray(hwnd: HWND, icon: Option<HICON>, op: windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE) {
+    let nid = tray_nid(hwnd, icon);
+    // SAFETY: a filled-in NOTIFYICONDATAW for our window / GUID.
     unsafe {
         let _ = Shell_NotifyIconW(op, &nid);
     }
+}
+
+/// Remove any leftover icon for our GUID, then add a fresh one.
+fn tray_install(hwnd: HWND, icon: Option<HICON>) {
+    tray(hwnd, None, NIM_DELETE);
+    tray(hwnd, icon, NIM_ADD);
+    let mut nid = tray_nid(hwnd, None);
+    // SAFETY: union write of uVersion for NIM_SETVERSION.
+    unsafe {
+        nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+        let _ = Shell_NotifyIconW(NIM_SETVERSION, &nid);
+    }
+}
+
+/// Language for native tray strings: Settings → Appearance, else the Windows UI language.
+fn tray_lang() -> &'static str {
+    match crate::engine::prefs()["lang"].as_str().unwrap_or("system") {
+        "zh" | "zh-CN" => "zh",
+        "zh-TW" => "zh-TW",
+        "system" | "" => {
+            // SAFETY: plain system query.
+            let id = unsafe { GetUserDefaultUILanguage() };
+            match id {
+                0x0804 | 0x1004 => "zh",             // zh-CN, zh-SG
+                0x0404 | 0x0c04 | 0x1404 => "zh-TW", // zh-TW, zh-HK, zh-MO
+                _ => "en",
+            }
+        }
+        // Tray catalog is zh / zh-TW only; en and other UI langs keep English labels.
+        _ => "en",
+    }
+}
+
+/// Tray / menu-bar strings, keyed like the page's `tr()` catalog (zh / zh-TW inline).
+fn tray_tr(en: &str) -> String {
+    let s = match (tray_lang(), en) {
+        ("zh", "Open Kiri") => "打开 Kiri",
+        ("zh", "Start") => "启动",
+        ("zh", "Stop") => "停止",
+        ("zh", "Running") => "运行中",
+        ("zh", "Stopped") => "已停止",
+        ("zh", "Asleep") => "休眠",
+        ("zh", "Not running") => "未运行",
+        ("zh", "Check for Updates…") => "检查更新…",
+        ("zh", "Quit Kiri") => "退出 Kiri",
+        ("zh-TW", "Open Kiri") => "打開 Kiri",
+        ("zh-TW", "Start") => "啟動",
+        ("zh-TW", "Stop") => "停止",
+        ("zh-TW", "Running") => "運行中",
+        ("zh-TW", "Stopped") => "已停止",
+        ("zh-TW", "Asleep") => "休眠",
+        ("zh-TW", "Not running") => "未運行",
+        ("zh-TW", "Check for Updates…") => "檢查更新…",
+        ("zh-TW", "Quit Kiri") => "結束 Kiri",
+        _ => en,
+    };
+    s.to_owned()
 }
 
 /// The tray's right-click menu, as the Mac's menu bar menu: the VM's state,
@@ -453,24 +602,25 @@ fn tray(hwnd: HWND, icon: Option<HICON>, op: windows::Win32::UI::Shell::NOTIFY_I
 fn tray_menu(hwnd: HWND) {
     let mut menu = Menu::default();
     with_ui(|ui| menu = ui.menu.clone());
+    let vm = if menu.vm.is_empty() { "…".to_owned() } else { tray_tr(&menu.vm) };
     // SAFETY: a popup menu made, shown and destroyed here, for our window.
     unsafe {
         let Ok(m) = CreatePopupMenu() else { return };
         let item = |flags, id: usize, text: &str| {
             let _ = AppendMenuW(m, flags, id, &HSTRING::from(text));
         };
-        item(MF_STRING, ID_OPEN, "Open Kiri");
+        item(MF_STRING, ID_OPEN, &tray_tr("Open Kiri"));
         item(MF_SEPARATOR, 0, "");
-        item(MF_STRING | MF_GRAYED, 0, &format!("Kiri: {}", if menu.vm.is_empty() { "…" } else { &menu.vm }));
+        item(MF_STRING | MF_GRAYED, 0, &format!("Kiri: {vm}"));
         for (i, (_, name)) in menu.running.iter().enumerate().take(20) {
             item(MF_STRING, ID_CONTAINER + i, &format!("    {name}"));
         }
         item(MF_SEPARATOR, 0, "");
-        item(MF_STRING, ID_START, "Start");
-        item(MF_STRING, ID_STOP, "Stop");
+        item(MF_STRING, ID_START, &tray_tr("Start"));
+        item(MF_STRING, ID_STOP, &tray_tr("Stop"));
         item(MF_SEPARATOR, 0, "");
-        item(MF_STRING, ID_UPDATE, "Check for Updates…");
-        item(MF_STRING, ID_QUIT, "Quit Kiri");
+        item(MF_STRING, ID_UPDATE, &tray_tr("Check for Updates…"));
+        item(MF_STRING, ID_QUIT, &tray_tr("Quit Kiri"));
         let mut p = POINT::default();
         let _ = GetCursorPos(&mut p);
         // The menu closes when clicking elsewhere only if we are foreground.
@@ -521,7 +671,7 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             WM_RBUTTONUP | WM_CONTEXTMENU => tray_menu(hwnd),
             _ => {}
         },
-        m if m == taskbar_created() => tray(hwnd, icon(16), NIM_ADD),
+        m if m == taskbar_created() => tray_install(hwnd, icon(16)),
         // SAFETY: the default handling for everything else.
         _ => return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
@@ -611,7 +761,11 @@ fn webview_ready(hwnd: HWND, ctl: ICoreWebView2Controller) -> windows::core::Res
                     let mut uri = PWSTR::null();
                     let ours = a.Uri(&mut uri).is_ok() && {
                         let u = CoTaskMemPWSTR::from(uri).to_string();
-                        u.is_empty() || u.starts_with("about:") || u.starts_with("data:")
+                        // about:/data: for NavigateToString (setup); our virtual host for the main page.
+                        u.is_empty()
+                            || u.starts_with("about:")
+                            || u.starts_with("data:")
+                            || u.starts_with("https://app.kiri.local/")
                     };
                     if !ours {
                         let _ = a.SetCancel(true);
@@ -633,11 +787,9 @@ fn webview_ready(hwnd: HWND, ctl: ICoreWebView2Controller) -> windows::core::Res
             })),
             &mut token,
         )?;
-        let shim = CoTaskMemPWSTR::from(SHIM);
+        let shim = CoTaskMemPWSTR::from(shim().as_str());
         wv.AddScriptToExecuteOnDocumentCreated(*shim.as_ref().as_pcwstr(), &AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(|_, _| Ok(()))))?;
-        let page = page_html();
-        let page = CoTaskMemPWSTR::from(page.as_str());
-        wv.NavigateToString(*page.as_ref().as_pcwstr())?;
+        navigate_page(&wv);
         let theme = crate::engine::prefs()["theme"].as_str().unwrap_or("").to_owned();
         with_ui(|ui| {
             ui.controller = Some(ctl.clone());
