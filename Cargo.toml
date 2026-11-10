@@ -3,9 +3,9 @@ resolver = "3"
 members = ["crates/*", "xtask"]
 
 [workspace.package]
-# Not a release number: a release takes its version from its tag (v0.2.0),
-# set by the release build. Builds from a checkout say 0.0.0.
-version = "0.0.0"
+# Personal / fork release version for distributable Windows builds.
+# Upstream checkouts normally stay at 0.0.0 until a tagged release build.
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = false

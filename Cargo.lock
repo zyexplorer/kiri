@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "kiri"
-version = "0.0.0"
+version = "0.2.0"
 dependencies = [
  "dispatch2",
  "gtk",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "kiri-image"
-version = "0.0.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -760,7 +760,7 @@ dependencies = [
 
 [[package]]
 name = "kiri-init"
-version = "0.0.0"
+version = "0.2.0"
 dependencies = [
  "flate2",
  "kiri-proto",
@@ -771,11 +771,11 @@ dependencies = [
 
 [[package]]
 name = "kiri-proto"
-version = "0.0.0"
+version = "0.2.0"
 
 [[package]]
 name = "kiri-share-proto"
-version = "0.0.0"
+version = "0.2.0"
 dependencies = [
  "hmac",
  "sha2",
@@ -783,7 +783,7 @@ dependencies = [
 
 [[package]]
 name = "kiri-vmm"
-version = "0.0.0"
+version = "0.2.0"
 dependencies = [
  "block2",
  "dispatch2",
@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "kiri-win"
-version = "0.0.0"
+version = "0.2.0"
 dependencies = [
  "embed-resource",
  "kiri-share-proto",
@@ -2045,7 +2045,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.0.0"
+version = "0.2.0"
 
 [[package]]
 name = "yasna"
