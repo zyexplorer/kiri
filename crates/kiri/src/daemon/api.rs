@@ -346,7 +346,7 @@ fn route(
                     w,
                     engine
                         .volume_get(name)
-                        .map(|v| volume_json(&v))
+                        .map(|v| volume_json(engine, &v))
                         .ok_or_else(|| Error::NotFound(format!("get {name}: no such volume"))),
                     200,
                 );
@@ -1575,15 +1575,26 @@ fn mounts(body: &Value, engine: &Engine, image: &kiri_image::Image) -> Result<Mo
     Ok(out)
 }
 
-fn volume_json(v: &super::volumes::Volume) -> Value {
+fn volume_json(engine: &Engine, v: &super::volumes::Volume) -> Value {
+    // Prefer a bind's host path when the local driver was given `device=…`
+    // (Compose `driver_opts`); otherwise the volume's data directory in the
+    // engine. UsageData.RefCount matches `docker system df -v` so the window
+    // can mark unused volumes.
+    let mountpoint = v
+        .options
+        .get("device")
+        .filter(|d| !d.is_empty())
+        .cloned()
+        .unwrap_or_else(|| super::volumes::guest_path(&v.name));
     json!({
         "Name": v.name,
         "Driver": "local",
-        "Mountpoint": super::volumes::guest_path(&v.name),
+        "Mountpoint": mountpoint,
         "CreatedAt": time::rfc3339(std::time::UNIX_EPOCH + Duration::from_nanos(v.created_ns)),
         "Labels": if v.labels.is_object() { v.labels.clone() } else { json!({}) },
         "Scope": "local",
         "Options": v.options,
+        "UsageData": {"Size": -1, "RefCount": engine.volume_users(&v.name).len()},
     })
 }
 
@@ -1603,7 +1614,7 @@ fn volume_create(req: &Request, engine: &Engine) -> Result<Value, Error> {
     };
     let options = super::volumes::local_options(&body["DriverOpts"]).map_err(Error::BadRequest)?;
     let v = engine.volume_ensure_with(&name, body["Labels"].clone(), options)?;
-    Ok(volume_json(&v))
+    Ok(volume_json(engine, &v))
 }
 
 /// Docker's default prune: anonymous volumes no container uses.
@@ -1637,7 +1648,7 @@ fn volumes(req: &Request, engine: &Engine) -> Result<Value, Error> {
                 && f.bool("dangling")
                     .is_none_or(|d| d == engine.volume_users(&v.name).is_empty())
         })
-        .map(volume_json)
+        .map(|v| volume_json(engine, v))
         .collect();
     Ok(json!({"Volumes": list, "Warnings": []}))
 }

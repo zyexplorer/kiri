@@ -142,11 +142,34 @@ body.rail[data-vm=running] .vm .dot::after { content: ""; position: absolute; in
 [data-vm=stopped] .mark .eyes, [data-vm=asleep] .mark .eyes { transform: scaleY(.25); transform-origin: 46px 29px; }
 .navlabel { font-size: var(--fs); font-weight: 600; color: var(--faint); padding: 10px 8px 4px; text-transform: uppercase; letter-spacing: .06em; }
 nav button { display: flex; align-items: center; gap: 9px; width: 100%; height: 31px; padding: 0 8px; border: 0; border-radius: 7px;
-             background: transparent; color: var(--muted); font: 500 var(--fs) var(--ui-font); cursor: pointer; text-align: left; }
+             background: transparent; color: var(--muted); font: 500 var(--fs) var(--ui-font); cursor: pointer; text-align: left;
+             --nav-ico: var(--muted); }
 nav button:hover { background: var(--row-hover); color: var(--text); }
-nav button[aria-current=page] { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
-nav button[aria-current=page] svg { color: var(--blue); }
-nav svg.i { width: 17px; height: 17px; }
+nav button[aria-current=page] { background: color-mix(in srgb, var(--nav-ico) 14%, var(--raised)); color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nav-ico) 28%, var(--line)); }
+nav svg.i { width: 17px; height: 17px; color: var(--nav-ico); }
+/* A colour per view so the rail isn't a grey column of the same stroke. */
+nav button[data-view="containers"] { --nav-ico: #5B9CF5; }
+nav button[data-view="images"] { --nav-ico: #2DD4BF; }
+nav button[data-view="volumes"] { --nav-ico: #E8A317; }
+nav button[data-view="networks"] { --nav-ico: #A78BFA; }
+nav button[data-view="builds"] { --nav-ico: #FB923C; }
+nav button[data-view="pods"] { --nav-ico: #60A5FA; }
+nav button[data-view="services"] { --nav-ico: #F472B6; }
+nav button[data-view="share"] { --nav-ico: var(--moss); }
+/* Same --blue as .notes-row.root / selected note icons in the tree. */
+nav button[data-view="notes"] { --nav-ico: var(--blue); }
+nav button[data-view="settings"] { --nav-ico: #818CF8; }
+@media (prefers-color-scheme: light) {
+  nav button[data-view="containers"] { --nav-ico: #2563EB; }
+  nav button[data-view="images"] { --nav-ico: #0F766E; }
+  nav button[data-view="volumes"] { --nav-ico: #B45309; }
+  nav button[data-view="networks"] { --nav-ico: #7C3AED; }
+  nav button[data-view="builds"] { --nav-ico: #C2410C; }
+  nav button[data-view="pods"] { --nav-ico: #1D4ED8; }
+  nav button[data-view="services"] { --nav-ico: #DB2777; }
+  nav button[data-view="settings"] { --nav-ico: #4F46E5; }
+}
 nav .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 nav .count { margin-left: auto; font-size: var(--fs); color: var(--faint); font-variant-numeric: tabular-nums; }
 
@@ -839,6 +862,14 @@ tr[data-rowopen] .sel, .sel { cursor: text; -webkit-user-select: text; user-sele
 td.actions { width: 1%; white-space: nowrap; text-align: right; }
 /* Long values shorten so the actions column always fits the window. */
 td.clip { max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Volumes → Mount: each path line has a label + ellipsised path + its own copy. */
+td.vol-mount-cell { max-width: 0; }
+.vol-mount { display: flex; flex-direction: column; gap: 2px; min-width: 0; width: 100%; }
+.vol-mount .vol-line { display: flex; align-items: center; gap: 4px; min-width: 0; width: 100%; }
+.vol-mount .vol-lbl { flex: none; color: var(--faint); font: var(--fs-small) var(--ui-font); }
+.vol-mount .path { min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vol-mount .vol-line.guest .path { color: var(--faint); font-size: var(--fs-small); }
+.vol-mount .copy { flex: none; }
 .col-image { width: 14%; } .col-state { width: 14%; }
 @media (max-width: 1080px) { .col-created { display: none; } }
 /* Images' ID goes first, so Used by and the boxes' column fit beside the buttons. */
@@ -973,9 +1004,9 @@ td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px
 #onb .onb-rs p { color: var(--muted); font-size: var(--fs-small); margin: 2px 0 8px; }
 #onb .onb-rs .a { display: flex; gap: 6px; }
 .scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); display: grid; place-items: center; z-index: 8; }
-.dialog { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: min(460px, calc(100% - 32px)); display: grid; gap: 14px; }
-.dialog h3 { font-size: var(--fs-head); }
-.dialog p { color: var(--muted); font-size: var(--fs); }
+.dialog { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: min(460px, calc(100% - 32px)); display: grid; gap: 14px; min-width: 0; }
+.dialog h3 { font-size: var(--fs-head); min-width: 0; overflow-wrap: anywhere; }
+.dialog p { color: var(--muted); font-size: var(--fs); min-width: 0; overflow-wrap: anywhere; }
 /* An alert: what kind it is as a symbol on the left, in its colour, centred on
    the title's first line; the words and buttons line up beside it. */
 .dialog.alert { grid-template-columns: 28px minmax(0, 1fr); column-gap: 14px; row-gap: 6px; padding: 20px 20px 16px; }
@@ -2678,6 +2709,27 @@ const ZH = {
   "Nothing matches “{q}” in {tab}.": "在「{tab}」中没有匹配 “{q}” 的结果。",
   "not in use": "未使用",
   "Not in use: no container was made from it": "未使用：没有容器基于此镜像创建",
+  "Not in use: no container mounts this volume": "未使用：没有容器挂载此卷",
+  "Mount": "挂载路径",
+  "Host:": "本机:",
+  "VM:": "VM:",
+  "Remove {n} unused": "删除 {n} 个未使用",
+  "Removes the {n} volume no container mounts. Its data is deleted for good.": "删除 1 个无容器挂载的卷。数据将永久删除。",
+  "Removes the {n} volumes no container mounts. Their data is deleted for good.": "删除 {n} 个无容器挂载的卷。数据将永久删除。",
+  "Removed {name}": "已删除 {name}",
+  "Removed {n} {what}": "已删除 {n} 个{what}",
+  "Removed {gone} of {n} {what}": "已删除 {gone}/{n} 个{what}",
+  "Frees {size}": "释放 {size}",
+  "Freed {size}": "已释放 {size}",
+  "Gone from Kiri": "已从 Kiri 移除",
+  "Untagged; another tag still uses it": "已取消标记；仍有其他标签在使用",
+  "Undo brings it back": "撤销可恢复",
+  "Undo brings them back": "撤销可恢复它们",
+  "unused volumes": "未使用的卷",
+  "failed containers": "失败的容器",
+  "untagged images": "未标记镜像",
+  "failed builds": "失败的构建",
+
   "{n} container": "{n} 个容器", "{n} containers": "{n} 个容器",
   "{n} running containers": "{n} 个运行中的容器",
   "{n} stopped containers": "{n} 个已停止的容器",
@@ -4038,6 +4090,27 @@ const ZH_TW = {
   "Nothing matches “{q}” in {tab}.": "在「{tab}」中沒有匹配 “{q}” 的結果。",
   "not in use": "未使用",
   "Not in use: no container was made from it": "未使用：沒有容器基於此鏡像創建",
+  "Not in use: no container mounts this volume": "未使用：沒有容器掛載此卷",
+  "Mount": "掛載路徑",
+  "Host:": "本機:",
+  "VM:": "VM:",
+  "Remove {n} unused": "刪除 {n} 個未使用",
+  "Removes the {n} volume no container mounts. Its data is deleted for good.": "刪除 1 個無容器掛載的卷。資料將永久刪除。",
+  "Removes the {n} volumes no container mounts. Their data is deleted for good.": "刪除 {n} 個無容器掛載的卷。資料將永久刪除。",
+  "Removed {name}": "已刪除 {name}",
+  "Removed {n} {what}": "已刪除 {n} 個{what}",
+  "Removed {gone} of {n} {what}": "已刪除 {gone}/{n} 個{what}",
+  "Frees {size}": "釋放 {size}",
+  "Freed {size}": "已釋放 {size}",
+  "Gone from Kiri": "已從 Kiri 移除",
+  "Untagged; another tag still uses it": "已取消標記；仍有其他標籤在使用",
+  "Undo brings it back": "撤銷可恢復",
+  "Undo brings them back": "撤銷可恢復它們",
+  "unused volumes": "未使用的卷",
+  "failed containers": "失敗的容器",
+  "untagged images": "未標記鏡像",
+  "failed builds": "失敗的構建",
+
   "{n} container": "{n} 個容器",
   "{n} containers": "{n} 個容器",
   "{n} running containers": "{n} 個運行中的容器",
@@ -6559,7 +6632,13 @@ function table(head, rows, view, last) {
   // it moves the line to that column.
   const flex = (i) => !head[i]?.[3]?.fixed;
   const grip = (i) => (flex(i) && head.some((_, k) => k > i && flex(k)) ? `<span class="col-resize" data-col="${i}" title="${tr("Drag to resize, double-click to reset")}"></span>` : "");
-  const size = (o) => (o?.fixed ? ` data-fixed="${esc(o.fixed)}" data-extra="${o.extra || 0}"` : o?.share ? ` data-share="${o.share}"` : "");
+  const size = (o) => {
+    if (o?.fixed) return ` data-fixed="${esc(o.fixed)}" data-extra="${o.extra || 0}"`;
+    let s = "";
+    if (o?.share) s += ` data-share="${o.share}"`;
+    if (o?.min) s += ` data-min="${o.min}"`;
+    return s;
+  };
   const th = ([h, c, key, o], i) => {
     const label = tr(h);
     if (!key) return `<th class="${c || ""}"${size(o)}>${label}${grip(i)}</th>`;
@@ -6608,13 +6687,14 @@ function fitColumns() {
   const room = tbl.parentElement.clientWidth - parseFloat(box.paddingLeft) - parseFloat(box.paddingRight) - lastW - ck - taken;
   const share = (th, i) => (fixed(th) || !visible(th) ? 0 : w ? w.cols[i] : +th.dataset.share || 1);
   const total = cells.reduce((a, th, i) => a + share(th, i), 0) || 1;
-  // No column narrower than COL_MIN: the room it needs comes off the wider ones.
+  // No column narrower than its min (default COL_MIN): the room it needs comes off the wider ones.
+  const mins = cells.map((th) => (fixed(th) ? 0 : Math.max(COL_MIN, +(th.dataset.min || 0) || COL_MIN)));
   const px = cells.map((th, i) => share(th, i) / total * room);
-  const short = px.reduce((a, v) => a + (v && v < COL_MIN ? COL_MIN - v : 0), 0);
-  const spare = px.reduce((a, v) => a + (v > COL_MIN ? v - COL_MIN : 0), 0) || 1;
+  const short = px.reduce((a, v, i) => a + (v && v < mins[i] ? mins[i] - v : 0), 0);
+  const spare = px.reduce((a, v, i) => a + (v > mins[i] ? v - mins[i] : 0), 0) || 1;
   cells.forEach((th, i) => {
     if (fixed(th)) { th.style.width = `${fixedPx(th)}px`; return; }
-    const v = px[i], fit = !v ? 0 : v < COL_MIN ? COL_MIN : v - (v - COL_MIN) / spare * short;
+    const v = px[i], m = mins[i], fit = !v ? 0 : v < m ? m : v - (v - m) / spare * short;
     th.style.width = `${Math.floor(fit)}px`;
   });
   last.style.width = `${lastW}px`;
@@ -7598,15 +7678,55 @@ function imgNoteApply(name, body, fromSave) {
   } else if (ui.view === "images" && !ui.imgd) render();
 }
 
+/* A volume no container mounts (UsageData from the engine, else Mounts on the list). */
+const volUsers = (v) => {
+  const n = v.UsageData?.RefCount;
+  if (typeof n === "number") return n;
+  return ui.containers.filter((c) => (c.Mounts || []).some((m) => m.Type === "volume" && m.Name === v.Name)).length;
+};
+const volAnon = (v) => /^[0-9a-f]{64}$/.test(v.Name || "");
+/* Where the volume's files live inside the engine / Linux VM (or a bind's device). */
+const volGuestPath = (v) => (v.Options && v.Options.device) || v.Mountpoint || "";
+/* On Windows, the same place as Explorer sees it: \\wsl$\… or a drive letter. */
+function volHostPath(guest) {
+  if (!WIN || !guest || guest[0] !== "/") return "";
+  // Explorer's address bar needs UNC backslashes (`\\wsl$\…`); `//wsl$/…` won't open.
+  const drive = guest.match(/^\/mnt\/([A-Za-z])\/(.*)$/);
+  if (drive) return `${drive[1].toUpperCase()}:\\${drive[2].replace(/\//g, "\\")}`;
+  const distro = window.KIRI_WSL || "kiri";
+  return `\\\\wsl$\\${distro}${guest.replace(/\//g, "\\")}`;
+}
+const volPath = (v) => {
+  const guest = volGuestPath(v), host = volHostPath(guest);
+  return host && host !== guest ? `${host} ${guest}` : guest;
+};
 function renderVolumes() {
   const items = listed("volumes");
   if (!kept("volumes").length) return renderEmpty("volumes");
   if (!items.length) return noMatch();
-  table([["Name"], ["Driver"], ["Created"]], items.map((v) => `<tr class="row${chosen("volumes", v)}" data-key="${esc(v.Name)}"${pickAt("volumes", v)}>
-    ${pickCell("volumes", v)}<td><div class="name">${tile(null, "database")}<span class="${v.Name.length > 40 ? "mono" : ""}">${esc(v.Name.length > 40 ? short(v.Name) : v.Name)}</span></div></td>
-    <td class="muted">${esc(v.Driver)}</td>
+  // Name's floor fits icon + short id + anonymous tag; Mount takes the rest so
+  // host and guest paths stay readable.
+  table([["Name", "clip", "", { share: 1.1, min: 200 }], ["Mount", "vol-mount-cell", "", { share: 3.6 }], ["Status", "", "", { share: 0.9 }], ["Driver", "", "", { share: 0.7 }], ["Created", "", "", { share: 0.8 }]], items.map((v) => {
+    const used = volUsers(v), anon = volAnon(v), guest = volGuestPath(v), host = volHostPath(guest);
+    const label = anon ? short(v.Name) : v.Name;
+    const status = used
+      ? `<span class="moss">${tr(used === 1 ? "{n} container" : "{n} containers", { n: used })}</span>`
+      : `<span class="off" title="${tr("Not in use: no container mounts this volume")}">${tr("not in use")}</span>`;
+    const volLine = (lbl, path, cls = "") =>
+      `<div class="vol-line${cls ? ` ${cls}` : ""}" title="${esc(path)}">${lbl ? `<span class="vol-lbl">${esc(lbl)}</span>` : ""}<span class="sel path">${esc(path)}</span>${copyBtn(path, "mount path")}</div>`;
+    const mount = host && guest && host !== guest
+      ? `<div class="vol-mount">${volLine(tr("Host:"), host)}${volLine(tr("VM:"), guest, "guest")}</div>`
+      : guest
+      ? `<div class="vol-mount">${volLine("", guest)}</div>`
+      : "—";
+    return `<tr class="row${chosen("volumes", v)}" data-key="${esc(v.Name)}"${pickAt("volumes", v)}>
+    ${pickCell("volumes", v)}<td class="clip"><div class="name">${tile(null, "database")}<div><span class="${anon ? "mono" : ""}" title="${esc(v.Name)}">${esc(label)}</span>${anon ? ` <span class="tag none">${tr("anonymous")}</span>` : ""}</div></div></td>
+    <td class="mono muted vol-mount-cell">${mount}</td>
+    <td class="muted">${status}</td>
+    <td class="muted">${esc(v.Driver || "local")}</td>
     <td class="muted">${v.CreatedAt ? ago(Date.parse(v.CreatedAt) / 1000) : ""}</td>
-    <td class="actions"><div class="acts-row">${ibtn("trash", "Remove", `data-rmvol="${esc(v.Name)}"`, "danger")}</div></td></tr>`), "volumes");
+    <td class="actions"><div class="acts-row">${ibtn("trash", "Remove", `data-rmvol="${esc(v.Name)}"`, "danger")}</div></td></tr>`;
+  }), "volumes");
 }
 
 function renderNetworks() {
@@ -9359,12 +9479,12 @@ function starCheck() {
 /* After a remove: the box is hoisted off the stack, with the space it gave back. */
 function removedToast(e) {
   const img = ui.images.find((i) => i.RepoTags?.includes(e.name));
-  const freed = e.deleted && img ? `Freed <em>${size(img.Size)}</em>` : e.deleted ? "Gone from Kiri" : "Untagged; another tag still uses it";
+  const freed = e.deleted && img ? tr("Freed {size}", { size: `<em>${size(img.Size)}</em>` }) : e.deleted ? tr("Gone from Kiri") : tr("Untagged; another tag still uses it");
   const el = document.createElement("div");
   el.className = "toast removed";
   el.setAttribute("role", "status");
   el.innerHTML = `<div class="yard" aria-hidden="true"><i></i><i></i><i class="box"></i></div>
-    <div class="txt"><b>Removed ${esc(e.name)}</b><span class="sub">${freed}</span></div><div class="life"></div>`;
+    <div class="txt"><b>${tr("Removed {name}", { name: esc(e.name) })}</b><span class="sub">${freed}</span></div><div class="life"></div>`;
   $("toasts").append(el);
   retire(el, 3500);
 }
@@ -12512,8 +12632,14 @@ const LISTS = {
     primary: () => `<button class="btn primary" data-ppopen aria-haspopup="dialog" aria-expanded="${pp.open}" title="${tr("Pull image")} (${PP_KEY})">${svgOf("pull")}${tr("Pull image")}</button>`,
   },
   volumes: {
-    all: () => ui.volumes || [], key: (v) => v.Name, name: (v) => v.Name, hit: (v) => match(v.Name), noun: "volumes",
-    remove: (v) => send("rmvol", { name: v.Name }), bulk: [["Delete", "trash", "danger", () => true]],
+    all: () => ui.volumes || [], key: (v) => v.Name, name: (v) => v.Name, hit: (v) => match(v.Name, volPath(v)), noun: "volumes",
+    state: (v) => (volUsers(v) ? "inuse" : "unused"),
+    tabs: [["inuse", "In use", "moss"], ["unused", "Unused", "", true]],
+    junk: { state: "unused", label: (n) => tr("Remove {n} unused", { n }), what: "unused volumes",
+      tip: (xs) => tr(xs.length === 1 ? "Removes the {n} volume no container mounts. Its data is deleted for good." : "Removes the {n} volumes no container mounts. Their data is deleted for good.", { n: xs.length }) },
+    remove: (v) => send("rmvol", { name: v.Name }),
+    // In-use volumes refuse delete unless forced; leave those out of bulk Delete.
+    bulk: [["Delete", "trash", "danger", (v) => !volUsers(v)]],
   },
   networks: {
     all: () => ui.networks, key: (n) => n.Id, name: (n) => n.Name, hit: (n) => match(n.Name), noun: "networks", can: (n) => !BUILTIN_NETS.has(n.Name),
@@ -12769,9 +12895,9 @@ function holdRemove(v, xs, what) {
   el.setAttribute("role", "status");
   el.style.setProperty("--life", "6s");
   el.innerHTML = `<div class="yard" aria-hidden="true"><i></i><i></i><i class="box"></i></div>
-    <div class="txt"><b></b><span class="sub">${freed ? `Frees <em>${size(freed)}</em>` : `Undo brings ${xs.length === 1 ? "it" : "them"} back`}</span></div>
-    <button class="linkish" data-undo>Undo</button><div class="life"></div>`;
-  el.querySelector("b").textContent = xs.length === 1 ? `Removed ${L.name(xs[0])}` : `Removed ${xs.length} ${what || L.noun}`;
+    <div class="txt"><b></b><span class="sub">${freed ? tr("Frees {size}", { size: `<em>${size(freed)}</em>` }) : tr(xs.length === 1 ? "Undo brings it back" : "Undo brings them back")}</span></div>
+    <button class="linkish" data-undo>${tr("Undo")}</button><div class="life"></div>`;
+  el.querySelector("b").textContent = xs.length === 1 ? tr("Removed {name}", { name: L.name(xs[0]) }) : tr("Removed {n} {what}", { n: xs.length, what: tr(what || L.noun) });
   $("toasts").append(el);
   const leave = retire(el, 6000, () => (b.undone ? dropBatch(b) : goBatch(b)));
   el.querySelector("[data-undo]").addEventListener("click", () => { b.undone = true; leave(); });
@@ -12798,7 +12924,7 @@ function batchTick() {
 function goneToast(b) {
   const L = LISTS[b.view], keys = new Set(L.all().map(L.key)), gone = b.items.filter((x) => !keys.has(L.key(x)));
   if (!gone.length) return;
-  const freed = L.size ? gone.reduce((a, x) => a + (L.size(x) || 0), 0) : 0, what = b.what || L.noun;
+  const freed = L.size ? gone.reduce((a, x) => a + (L.size(x) || 0), 0) : 0, what = tr(b.what || L.noun);
   const el = document.createElement("div");
   el.className = `toast removed${gone.length > 1 ? " many" : ""}`;
   el.setAttribute("role", "status");
@@ -13385,9 +13511,24 @@ const htFont = () => prefs.termFont || getComputedStyle(document.documentElement
 function htTheme() {
   const css = getComputedStyle(document.documentElement), v = (n) => css.getPropertyValue(n).trim();
   const dark = darkNow();
+  // ANSI 16: PowerShell / PSReadLine paint commands yellow, strings cyan, etc.
+  // xterm's defaults are tuned for a black screen — on light theme they wash out
+  // (yellow `docker` on white). Keep dark near-defaults; use inkier hues for light.
+  const ansi = dark
+    ? { black: "#0B0F13", red: "#F87171", green: "#3FB68B", yellow: "#E3B341",
+        blue: "#6EA8FE", magenta: "#C4B5FD", cyan: "#56D4DD", white: "#D7DCE1",
+        brightBlack: "#66707C", brightRed: "#FCA5A5", brightGreen: "#6EE7B7",
+        brightYellow: "#F5D67B", brightBlue: "#93C5FD", brightMagenta: "#DDD6FE",
+        brightCyan: "#A5F3FC", brightWhite: "#F2F0EB" }
+    : { black: "#1F2328", red: "#CF222E", green: "#1A7F37", yellow: "#9A6700",
+        blue: "#0550AE", magenta: "#8250DF", cyan: "#0550AE", white: "#6E7781",
+        brightBlack: "#656D76", brightRed: "#A40E26", brightGreen: "#116329",
+        brightYellow: "#7D4E00", brightBlue: "#0A66C2", brightMagenta: "#6639BA",
+        brightCyan: "#0A66C2", brightWhite: "#1F2328" };
   return { background: v("--term-bg") || (dark ? "#0B0F13" : "#FFFFFF"), foreground: v("--term-fg") || (dark ? "#D7DCE1" : "#1F2328"),
     cursor: dark ? "#D7DCE1" : "#1F2328", cursorAccent: dark ? "#0B0F13" : "#FFFFFF",
-    selectionBackground: dark ? "rgba(110,168,254,.35)" : "rgba(13,110,253,.22)" };
+    selectionBackground: dark ? "rgba(110,168,254,.35)" : "rgba(13,110,253,.22)",
+    ...ansi };
 }
 let htToastT;
 function htToast(text) {
