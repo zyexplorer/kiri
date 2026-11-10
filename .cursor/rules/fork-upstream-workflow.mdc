@@ -1,0 +1,41 @@
+---
+description: Fork vs upstream — personal branch vs contribution PRs; never push mixed/conflicting work to libracoder
+alwaysApply: true
+---
+
+# Fork / upstream contribution workflow
+
+Remotes: `origin` = upstream (`libracoder/kiri`); `fork` = your GitHub (`zyexplorer/kiri`).
+
+## Branches
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Fast-forward only to `origin/main`. No personal commits. |
+| `personal` (or similar long-lived name) | Your customizations; push only to `fork`. |
+| Short-lived `fix/…`, `ui/…`, `feat/…` | **One** upstream-bound change each; branched from **latest** `origin/main`. |
+
+## Agent must never
+
+- Open or push a PR to `libracoder` / `origin` unless the user **explicitly** asks in that turn.
+- Open a PR from `personal` or any branch that mixes unrelated themes.
+- Open a PR that is not mergeable: always `git fetch origin` and confirm a clean merge into `origin/main` first (rebase/cherry-pick onto latest `main` if needed).
+- `git push origin` for feature work (push contributions to `fork`, then PR `fork` → `libracoder`).
+- Force-push or rewrite history on `origin` branches.
+
+## Contribution flow (when user asks to contribute)
+
+1. `git fetch origin && git checkout -B <topic> origin/main`
+2. Bring **only** the intended commits/files (cherry-pick or minimal patch)—not the whole personal line.
+3. Run the checks the author requires (`CONTRIBUTING.md`: fmt/clippy/tests/`ui-test.py` as relevant).
+4. Push to `fork` with `-u`; create the PR only after the user confirms (or they said “开 PR / 提交给作者” clearly).
+5. After upstream merges: update local `main`, then merge/rebase `origin/main` into `personal`.
+
+## Personal / preview work
+
+- Stay on `personal` (or a throwaway branch off it). Push to `fork` only.
+- Do not use contribution branches as a dumping ground for i18n dumps, experiments, or unrelated engine knobs.
+
+## If unsure
+
+Ask before any `gh pr create` or push that could affect upstream review. Prefer a closed local commit over a dirty PR.
