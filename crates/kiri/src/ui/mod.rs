@@ -967,7 +967,18 @@ fn status_event() -> String {
     } else {
         context
     };
-    serde_json::json!({"type": "status", "version": env!("CARGO_PKG_VERSION"), "dev": crate::flavor::dev(), "share": true, "app": crate::flavor::APP.get(), "ours": crate::flavor::CONTEXT.get(), "context": context.unwrap_or_else(|| "default".into())}).to_string()
+    // Mac: absolute Finder mount (`~/Kiri` / `~/Kiri Dev`) so Volumes can show
+    // a host path for named volumes through a running container's folder.
+    // Always the intended path (not only while mounted): the page still needs
+    // it to build Host lines the way Windows builds `\\wsl$\…`.
+    #[cfg(target_os = "macos")]
+    let files = crate::daemon::nfs::mount_point()
+        .ok()
+        .map(|p| p.display().to_string());
+    #[cfg(not(target_os = "macos"))]
+    let files: Option<String> = None;
+    let home = std::env::var_os("HOME").map(|h| h.to_string_lossy().into_owned());
+    serde_json::json!({"type": "status", "version": env!("CARGO_PKG_VERSION"), "dev": crate::flavor::dev(), "share": true, "app": crate::flavor::APP.get(), "ours": crate::flavor::CONTEXT.get(), "context": context.unwrap_or_else(|| "default".into()), "files": files, "home": home}).to_string()
 }
 
 /// Which names containers answer at now.

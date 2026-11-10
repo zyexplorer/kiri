@@ -7685,19 +7685,70 @@ const volUsers = (v) => {
   return ui.containers.filter((c) => (c.Mounts || []).some((m) => m.Type === "volume" && m.Name === v.Name)).length;
 };
 const volAnon = (v) => /^[0-9a-f]{64}$/.test(v.Name || "");
+/* Bind sources under these come from the Mac (matches the engine's MAC_SHARES). */
+const MAC_SHARES = ["/Users", "/Volumes", "/private", "/tmp", "/var/folders"];
+const macShared = (p) => MAC_SHARES.some((s) => p === s || p.startsWith(`${s}/`));
 /* Where the volume's files live inside the engine / Linux VM (or a bind's device). */
-const volGuestPath = (v) => (v.Options && v.Options.device) || v.Mountpoint || "";
-/* On Windows, the same place as Explorer sees it: \\wsl$\… or a drive letter. */
+const volGuestPath = (v) => {
+  const raw = (v.Options && v.Options.device) || v.Mountpoint || "";
+  // On Mac a bind's device is the Mac path; the guest sees it under /mnt/mac.
+  if (!WIN && !LINUX && raw && macShared(raw)) return `/mnt/mac${raw}`;
+  return raw;
+};
+/* Host path Finder / Explorer can open: Windows `\\wsl$\…`, Mac `/Users/…`. */
 function volHostPath(guest) {
-  if (!WIN || !guest || guest[0] !== "/") return "";
-  // Explorer's address bar needs UNC backslashes (`\\wsl$\…`); `//wsl$/…` won't open.
-  const drive = guest.match(/^\/mnt\/([A-Za-z])\/(.*)$/);
-  if (drive) return `${drive[1].toUpperCase()}:\\${drive[2].replace(/\//g, "\\")}`;
-  const distro = window.KIRI_WSL || "kiri";
-  return `\\\\wsl$\\${distro}${guest.replace(/\//g, "\\")}`;
+  if (!guest || guest[0] !== "/") return "";
+  if (WIN) {
+    // Explorer's address bar needs UNC backslashes (`\\wsl$\…`); `//wsl$/…` won't open.
+    const drive = guest.match(/^\/mnt\/([A-Za-z])\/(.*)$/);
+    if (drive) return `${drive[1].toUpperCase()}:\\${drive[2].replace(/\//g, "\\")}`;
+    const distro = window.KIRI_WSL || "kiri";
+    return `\\\\wsl$\\${distro}${guest.replace(/\//g, "\\")}`;
+  }
+  if (!LINUX) {
+    if (guest === "/mnt/mac" || guest.startsWith("/mnt/mac/")) return guest.slice("/mnt/mac".length) || "/";
+    if (macShared(guest)) return guest;
+  }
+  return "";
+}
+/* Finder mount root: status.files, else ~/Kiri (Dev: ~/Kiri Dev). */
+function volFilesRoot() {
+  if (ui.status?.files) return ui.status.files;
+  const home = ui.status?.home;
+  if (!home) return "";
+  const app = ui.status?.app || (document.body.classList.contains("dev") ? "Kiri Dev" : "Kiri");
+  return `${home}/${app}`;
+}
+/* Mac named volumes live in the VM; Finder reaches them through a running
+   container's folder under ~/Kiri, as Windows uses \\wsl$\…. */
+function volFinderHost(v) {
+  const root = volFilesRoot();
+  if (WIN || LINUX || !root || !v?.Name) return "";
+  for (const c of ui.containers || []) {
+    if (c.State !== "running") continue;
+    const m = (c.Mounts || []).find((x) => x.Type === "volume" && x.Name === v.Name && String(x.Destination || "").startsWith("/"));
+    if (!m) continue;
+    const cname = String(c.Names?.[0] || "").replace(/^\//, "");
+    if (!cname || cname.includes("/") || cname.startsWith(".")) continue;
+    return `${root}/${cname}${m.Destination}`;
+  }
+  return "";
+}
+/* Host path for the Mount column: bind shares, else Finder via a container,
+   else (named volume) a stable ~/Kiri/volumes/<name> line like Windows' \\wsl$\…. */
+function volMacHost(v) {
+  const guest = volGuestPath(v);
+  const bind = volHostPath(guest);
+  if (bind) return bind;
+  if (WIN || LINUX) return "";
+  const via = volFinderHost(v);
+  if (via) return via;
+  const root = volFilesRoot();
+  const m = /^\/var\/lib\/kiri\/volumes\/([^/]+)/.exec(guest);
+  return root && m ? `${root}/volumes/${m[1]}` : "";
 }
 const volPath = (v) => {
-  const guest = volGuestPath(v), host = volHostPath(guest);
+  const guest = volGuestPath(v), host = volMacHost(v);
   return host && host !== guest ? `${host} ${guest}` : guest;
 };
 function renderVolumes() {
@@ -7707,7 +7758,7 @@ function renderVolumes() {
   // Name's floor fits icon + short id + anonymous tag; Mount takes the rest so
   // host and guest paths stay readable.
   table([["Name", "clip", "", { share: 1.1, min: 200 }], ["Mount", "vol-mount-cell", "", { share: 3.6 }], ["Status", "", "", { share: 0.9 }], ["Driver", "", "", { share: 0.7 }], ["Created", "", "", { share: 0.8 }]], items.map((v) => {
-    const used = volUsers(v), anon = volAnon(v), guest = volGuestPath(v), host = volHostPath(guest);
+    const used = volUsers(v), anon = volAnon(v), guest = volGuestPath(v), host = volMacHost(v);
     const label = anon ? short(v.Name) : v.Name;
     const status = used
       ? `<span class="moss">${tr(used === 1 ? "{n} container" : "{n} containers", { n: used })}</span>`
