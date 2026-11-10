@@ -1597,6 +1597,7 @@ fn vm_panel(connected: &mut bool) {
                     "cpus": info["NCPU"],
                     "cpu_pct": info["KiriCpuPercent"],
                     "daemon_kib": info["KiriAgentMemory"].as_u64().unwrap_or(0) >> 10,
+                    "ip": info["KiriVmIp"].as_str().unwrap_or(""),
                 })
                 .to_string(),
             );
@@ -2747,6 +2748,16 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         "reveal" => {
             if let Err(e) = detail::reveal(&msg.name, &msg.path) {
                 emit(notice("error", &e.to_string()));
+            }
+            Ok(())
+        }
+        // Absolute host path for a container's log file (inspect `LogPath`).
+        "hostreveal" => {
+            let path = std::path::PathBuf::from(&msg.path);
+            if path.is_absolute() && !msg.path.contains('\0') {
+                reveal(&path);
+            } else {
+                emit(notice("error", "That path cannot be opened from here"));
             }
             Ok(())
         }

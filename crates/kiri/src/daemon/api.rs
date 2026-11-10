@@ -491,9 +491,43 @@ fn info(engine: &Engine) -> Value {
         "KiriMemoryStall": engine.memory_trouble().0,
         "KiriOomKills": engine.memory_trouble().1,
         "KiriCpuPercent": engine.cpu_percent(),
+        // The Linux environment's IPv4 (Mac VM uplink, or WSL/Linux host eth0).
+        "KiriVmIp": vm_ip(engine),
         "RegistryConfig": super::daemon_cfg::registry_config(),
         "Warnings": [],
     })
+}
+
+/// The address to show on the sidebar's VM panel: the guest's NAT uplink on
+/// a Mac, else this host's outbound IPv4 (WSL2 / a Linux install).
+fn vm_ip(engine: &Engine) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        engine
+            .vm()
+            .ok()
+            .and_then(|vm| vm.uplink().ok())
+            .map(|(ip, _)| super::network::ip_str(ip))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = engine;
+        primary_outbound_ipv4()
+    }
+}
+
+/// IPv4 of the interface used for outbound traffic (UDP connect trick).
+#[cfg(not(target_os = "macos"))]
+fn primary_outbound_ipv4() -> Option<String> {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    // No packet needs to arrive; the kernel still picks a local source.
+    sock.connect(SocketAddr::from((Ipv4Addr::new(1, 1, 1, 1), 80)))
+        .ok()?;
+    match sock.local_addr().ok()?.ip() {
+        IpAddr::V4(ip) if !ip.is_loopback() && !ip.is_unspecified() => Some(ip.to_string()),
+        _ => None,
+    }
 }
 
 pub(super) fn filters(req: &Request, known: &[&str]) -> Result<Filters, Error> {

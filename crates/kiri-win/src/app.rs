@@ -832,10 +832,11 @@ pub fn open_url(url: &str) {
 }
 
 /// Shows a file selected in Explorer, as the Mac reveals it in Finder.
-pub fn reveal(path: &std::path::Path) {
+/// Returns whether Explorer was started; callers may toast on failure.
+pub fn reveal(path: &std::path::Path) -> bool {
     let mut cmd = crate::win::tool("explorer.exe");
     std::os::windows::process::CommandExt::raw_arg(&mut cmd, format!("/select,\"{}\"", path.display()));
-    let _ = cmd.spawn();
+    cmd.spawn().is_ok()
 }
 
 /// The installed font families, sorted; `mono` only the fixed-pitch ones.

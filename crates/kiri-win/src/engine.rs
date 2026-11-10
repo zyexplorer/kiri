@@ -406,6 +406,7 @@ fn vm_panel() {
                 "used_mib": mib("KiriMemoryUsed"),
                 "running": info["ContainersRunning"], "cpus": cpus,
                 "daemon_kib": info["KiriAgentMemory"].as_u64().unwrap_or(0) >> 10,
+                "ip": info["KiriVmIp"].as_str().unwrap_or(""),
             })
             .to_string());
             // Stopped (Stop in the window): off until Start, unlike asleep.
@@ -985,6 +986,26 @@ fn set_pref(name: &str, value: Value) {
     }
 }
 
+/// A host path the page may open in Explorer: a drive letter, or WSL's UNC share.
+fn host_path_ok(path: &str) -> bool {
+    let p = path.trim();
+    if p.is_empty() || p.contains('\0') || p.contains('\n') || p.contains('\r') {
+        return false;
+    }
+    let bytes = p.as_bytes();
+    // `C:\…` or `C:/…`
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+    {
+        return true;
+    }
+    // `\\wsl$\Distro\…` (Explorer needs backslashes)
+    let lower = p.to_ascii_lowercase();
+    lower.starts_with(r"\\wsl$\") || lower.starts_with(r"\\wsl.localhost\")
+}
+
 /// A page link: only Kiri's own addresses, as on the Mac.
 fn allowed_url(url: &str) -> bool {
     if url == "https://kiri.canestack.com" || url == "https://learn.microsoft.com/windows/wsl/about" || url == "https://github.com/libracoder/kiri/issues/new" || url == "https://github.com/libracoder/kiri" {
@@ -1004,7 +1025,7 @@ fn allowed_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::allowed_url;
+    use super::{allowed_url, host_path_ok};
 
     #[test]
     fn only_kiris_own_urls_open() {
@@ -1018,6 +1039,17 @@ mod tests {
         assert!(!allowed_url("http://evil.example\\x.kiri.localhost"));
         assert!(!allowed_url("https://evil.example/#.kiri.localhost"));
         assert!(!allowed_url("ftp://localhost/"));
+    }
+
+    #[test]
+    fn host_reveal_only_local_paths() {
+        assert!(host_path_ok(r"C:\Users\a\Kiri"));
+        assert!(host_path_ok(r"\\wsl$\Ubuntu\var\lib\kiri\containers\x\container.log"));
+        assert!(host_path_ok(r"\\wsl.localhost\Ubuntu\var\lib\kiri\x"));
+        assert!(!host_path_ok(""));
+        assert!(!host_path_ok("http://evil.example/"));
+        assert!(!host_path_ok("cmd.exe"));
+        assert!(!host_path_ok("C:noslash"));
     }
 }
 
@@ -1203,6 +1235,15 @@ pub fn on_message(msg: &str) {
         "preview" => detail::preview(c.name, c.path),
         "download" => detail::download(c.name, c.path),
         "reveal" => emit(notice("error", "Container files are not on Windows' disk: use Save to Downloads")),
+        // Host path the page already mapped (\\wsl$\… or a drive letter): open in Explorer.
+        "hostreveal" => {
+            let path = c.path;
+            if !host_path_ok(&path) {
+                emit(notice("error", "That path cannot be opened from here"));
+            } else if !crate::app::reveal(std::path::Path::new(&path)) {
+                emit(notice("error", "Could not open that path in Explorer"));
+            }
+        }
         "terminal" => detail::terminal(&c.name, &env().pipe),
         "open" => {
             if allowed_url(&c.name) {

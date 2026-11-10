@@ -53,6 +53,11 @@ pub fn resolve(name: &str) -> PathBuf {
     if name.eq_ignore_ascii_case("powershell.exe") || name.eq_ignore_ascii_case("powershell") {
         return dir.join("WindowsPowerShell").join("v1.0").join("powershell.exe");
     }
+    // Explorer lives in Windows\, not System32 — resolving it under System32
+    // makes every Reveal / Open log file click fail silently (spawn ENOENT).
+    if name.eq_ignore_ascii_case("explorer.exe") || name.eq_ignore_ascii_case("explorer") {
+        return dir.parent().unwrap_or(dir.as_path()).join("explorer.exe");
+    }
     let mut leaf = name.to_owned();
     if !leaf.to_ascii_lowercase().ends_with(".exe") {
         leaf.push_str(".exe");
@@ -222,5 +227,12 @@ mod tests {
         let m = super::mismatch("x64", "arm64").unwrap();
         assert!(m.contains(&format!("Kiri-{}-arm64.msi", env!("CARGO_PKG_VERSION"))), "{m}");
         assert!(super::mismatch("arm64", "x64").unwrap().ends_with("-x86_64.msi instead."));
+    }
+
+    #[test]
+    fn explorer_resolves_beside_windows_not_system32() {
+        let p = super::resolve("explorer.exe");
+        assert!(p.ends_with(r"Windows\explorer.exe"), "{}", p.display());
+        assert!(p.is_file(), "missing {}", p.display());
     }
 }
