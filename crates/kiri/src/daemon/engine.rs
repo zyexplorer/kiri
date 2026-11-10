@@ -50,14 +50,18 @@ pub fn memory_ceiling() -> u64 {
     (physical_memory() / 2).clamp(2 << 30, 8 << 30)
 }
 
-/// The VM's CPUs: `KIRI_CPUS`, else Settings → Resources, else 2.
+/// The VM's CPUs: `KIRI_CPUS`, else Settings → Resources, else a default.
+/// On Mac the host creates the guest with this many CPUs (default 2). On
+/// Linux (including WSL on Windows) the daemon runs inside that machine, so
+/// the default is how many CPUs it can see — Windows Settings writes
+/// `.wslconfig`, which changes `nproc`, not `vm.json`.
 pub fn vm_cpus() -> usize {
     let max = max_cpus();
     std::env::var("KIRI_CPUS")
         .ok()
         .and_then(|v| v.parse().ok())
         .or_else(|| resources()["cpus"].as_u64().map(|c| c as usize))
-        .unwrap_or(2)
+        .unwrap_or(if cfg!(target_os = "macos") { 2 } else { max })
         .clamp(1, max)
 }
 

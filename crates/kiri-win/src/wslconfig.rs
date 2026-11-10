@@ -92,7 +92,7 @@ fn physical_mib() -> u64 {
 /// What the running VM has: CPUs, and memory in MiB as Linux reports it
 /// (MemTotal; see `as_set`). None while Kiri's engine isn't running, so
 /// that Settings never starts WSL.
-fn running() -> Option<(u64, u64)> {
+pub(crate) fn running() -> Option<(u64, u64)> {
     if !crate::client::alive() {
         return None;
     }
@@ -122,12 +122,20 @@ fn as_set(running_mib: u64, set_mib: u64) -> u64 {
     }
 }
 
-fn event() -> Value {
+/// CPUs and memory from `.wslconfig` (what Settings → Resources saved).
+pub(crate) fn configured() -> (u64, u64) {
     let text = path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
     let max_cpus = std::thread::available_parallelism().map_or(1, |n| n.get() as u64);
     let max_mib = physical_mib();
     let cpus = get(&text, "processors").and_then(|v| v.parse().ok()).unwrap_or(max_cpus).clamp(1, max_cpus);
     let memory = get(&text, "memory").and_then(|v| mib(&v)).unwrap_or(max_mib / 2);
+    (cpus, memory)
+}
+
+fn event() -> Value {
+    let (cpus, memory) = configured();
+    let max_cpus = std::thread::available_parallelism().map_or(1, |n| n.get() as u64);
+    let max_mib = physical_mib();
     let now = running();
     json!({
         "type": "resources",

@@ -394,11 +394,17 @@ fn vm_panel() {
             let mib = |k: &str| info[k].as_u64().unwrap_or(0) >> 20;
             let target = if info["KiriMemoryTarget"].is_null() { info["MemTotal"].as_u64().unwrap_or(0) >> 20 } else { mib("KiriMemoryTarget") };
             let ceiling = if info["KiriMemoryCeiling"].is_null() { info["MemTotal"].as_u64().unwrap_or(0) >> 20 } else { mib("KiriMemoryCeiling") };
+            // Prefer live `nproc`, else `.wslconfig`: the engine's NCPU can
+            // stay at the old Linux default (2) when Settings only changed
+            // `.wslconfig`, which does not update the daemon's vm.json.
+            let cpus = crate::wslconfig::running()
+                .map(|(c, _)| c)
+                .unwrap_or_else(|| crate::wslconfig::configured().0);
             emit(json!({
                 "type": "vm", "awake": awake, "target_mib": target, "ceiling_mib": ceiling,
                 // Missing from an engine older than the field: 0, not NaN on the page.
                 "used_mib": mib("KiriMemoryUsed"),
-                "running": info["ContainersRunning"], "cpus": info["NCPU"],
+                "running": info["ContainersRunning"], "cpus": cpus,
                 "daemon_kib": info["KiriAgentMemory"].as_u64().unwrap_or(0) >> 10,
             })
             .to_string());
@@ -924,11 +930,53 @@ pub fn prefs() -> Value {
 }
 
 fn set_pref(name: &str, value: Value) {
-    if !matches!(name, "font" | "mono" | "scale" | "termH" | "termFs" | "termFont" | "domainsAsked" | "theme" | "accent" | "lang" | "starAsked" | "updateAuto") {
+    // Keep in step with crates/kiri/src/ui/mod.rs::set_pref (Mac/Linux): personal
+    // UI needs listLayout, columnWidths, lang, etc. to stick on Windows too.
+    if !matches!(
+        name,
+        "font"
+            | "mono"
+            | "scale"
+            | "termH"
+            | "termFs"
+            | "termFont"
+            | "domainsAsked"
+            | "theme"
+            | "accent"
+            | "lang"
+            | "importSeen"
+            | "updateAuto"
+            | "updateSkip"
+            | "updateSnoozeUntil"
+            | "columnWidths"
+            | "listLayout"
+            | "crashReports"
+            | "ctxSnooze"
+            | "ctxBack"
+            | "logSize"
+            | "starAsked"
+            | "setupSkip"
+    ) {
         return;
     }
     let Some(path) = prefs_path() else { return };
     let mut p = prefs();
+    if !p.is_object() {
+        p = json!({});
+    }
+    // Same as Mac: crash reports only cover crashes from when they were turned on.
+    if name == "crashReports" {
+        if value != true {
+            if let Some(o) = p.as_object_mut() {
+                o.remove("crashReportsSince");
+            }
+        } else if p[name] != true {
+            p["crashReportsSince"] = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+                .into();
+        }
+    }
     p[name] = value;
     let tmp = path.with_extension("json.tmp");
     let saved = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&tmp, p.to_string())).and_then(|()| std::fs::rename(&tmp, &path));
@@ -1176,6 +1224,14 @@ pub fn on_message(msg: &str) {
             let body = c.value;
             std::thread::spawn(move || proxy(Some(body)));
         }
+        // Settings → Network: registry mirrors (`daemon.json`), same as Mac ui/mod.rs.
+        "daemon" => {
+            std::thread::spawn(|| daemon(None));
+        }
+        "setdaemon" => {
+            let body = c.value;
+            std::thread::spawn(move || daemon(Some(body)));
+        }
         // Settings → Resources: WSL's CPUs and memory, in .wslconfig.
         "resources" => crate::wslconfig::resources(None),
         "setresources" => crate::wslconfig::resources(Some(c.value)),
@@ -1282,8 +1338,10 @@ pub fn on_message(msg: &str) {
             crate::diag::handle(cmd, c.name, c.id, &c.value);
         }
         "importsources" => emit(json!({"type": "importsources", "sources": []}).to_string()),
-        // Personal Markdown notes under %LOCALAPPDATA%\Kiri\notes.
-        "notes" | "noteread" | "notesave" | "notedelete" | "notemkdir" | "notermdir" | "noterename" | "notemove" => {
+        // Personal Markdown notes under %LOCALAPPDATA%\Kiri\notes, plus
+        // per-image remarks — same command set as crates/kiri/src/ui/mod.rs.
+        "notes" | "noteread" | "notesave" | "notedelete" | "notemkdir" | "notermdir" | "noterename" | "notemove" | "notereveal"
+        | "imgnotes" | "imgnote" | "imgnotesave" => {
             let (cmd, id, value) = (c.cmd.clone(), if c.id.is_empty() { c.name.clone() } else { c.id.clone() }, c.value);
             std::thread::spawn(move || {
                 let state = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri"));
@@ -1351,6 +1409,39 @@ fn proxy(set: Option<Value>) {
             v
         }
         Err(e) => json!({"type": "proxy", "error": e.to_string()}),
+    };
+    emit(ev.to_string());
+}
+
+/// How long Settings → Network waits on `/kiri/daemon`. Without a deadline a
+/// dead WSL bridge leaves the page on “Saving…” forever (no notice, no event).
+const DAEMON_WAIT: Duration = Duration::from_secs(30);
+
+/// Settings → Network: registry mirrors / daemon.json (same as Mac ui/mod.rs).
+fn daemon(set: Option<Value>) {
+    // Wake the engine first: asleep or mid-bridge-restart, an untimed POST hangs.
+    if let Err(e) = ensure_daemon() {
+        if set.is_some() {
+            emit(notice("error", &format!("Could not save daemon.json: {e}")));
+        }
+        emit(json!({"type": "daemon", "error": e.to_string()}).to_string());
+        return;
+    }
+    if let Some(body) = set {
+        match client::request_within("POST", "/kiri/daemon", Some(&body), false, Some(DAEMON_WAIT)) {
+            Ok(r) if r.ok() => emit(notice("ok", "daemon.json saved")),
+            Ok(r) => emit(notice("error", &r.error())),
+            Err(e) => emit(notice("error", &format!("Could not save daemon.json: {e}"))),
+        }
+    }
+    let ev = match client::request_within("GET", "/kiri/daemon", None, false, Some(DAEMON_WAIT)) {
+        Ok(r) if r.ok() => {
+            let mut v = r.json();
+            v["type"] = json!("daemon");
+            v
+        }
+        Ok(r) => json!({"type": "daemon", "error": r.error()}),
+        Err(e) => json!({"type": "daemon", "error": e.to_string()}),
     };
     emit(ev.to_string());
 }
