@@ -631,10 +631,16 @@ fn image_remove(engine: &Engine, name: &str) -> Result<Value, Error> {
         .images()?
         .iter()
         .any(|o| o.config_digest == i.config_digest && o.name != i.name);
+    // Last tag: refuse while any container was made from it (by config digest,
+    // or by name when image_id was never recorded). Other tags may still untag.
     let in_use = if other_tags {
         Vec::new()
     } else {
-        engine.each(|c| (c.spec.image_id == i.config_digest).then(|| c.short_id().to_owned()))
+        engine.each(|c| {
+            let by_id = !c.spec.image_id.is_empty() && c.spec.image_id == i.config_digest;
+            let by_name = c.spec.image_id.is_empty() && c.spec.image == i.name;
+            (by_id || by_name).then(|| c.short_id().to_owned())
+        })
     };
     if let Some(c) = in_use.first() {
         return Err(Error::Conflict(format!(

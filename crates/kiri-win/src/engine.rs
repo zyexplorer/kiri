@@ -45,7 +45,9 @@ pub(crate) enum Cmd {
     Stop,
     Refresh,
     Pull(String),
-    RemoveImage(String),
+    /// Image name/tag, and stopped containers made from it to remove first
+    /// (the page's "Remove both" / "Remove all"). Empty when unused.
+    RemoveImage(String, Vec<String>),
     /// Image, env from the Run popover, container name, an optional host
     /// port (None = PublishAllPorts only), and optional command line that
     /// replaces the image's `CMD` (empty keeps the image default; stored as
@@ -201,15 +203,39 @@ fn engine(rx: &Receiver<Cmd>, tx: Sender<Cmd>) {
                 let message = result.as_ref().err().map(std::string::ToString::to_string);
                 emit(json!({"type": "ran", "name": name, "error": message.is_some(), "message": message}).to_string());
             }
-            Ok(Cmd::RemoveImage(name)) => match client::request("DELETE", &format!("/images/{}", path_escape(&name)), None) {
-                Ok(r) if r.ok() => {
-                    // Only untagged when another name still points at it: nothing freed.
-                    let deleted = r.json().as_array().is_some_and(|a| a.iter().any(|v| v.get("Deleted").is_some()));
-                    emit(json!({"type": "removed", "name": name, "deleted": deleted}).to_string());
+            Ok(Cmd::RemoveImage(name, with)) => {
+                // The stopped containers made from it go first, never forced: a
+                // running one refuses, and then the image stays too.
+                let mut blocked = None;
+                for id in &with {
+                    match client::request("DELETE", &format!("/containers/{}", path_escape(id)), None) {
+                        Ok(r) if r.ok() || r.status == 404 => {}
+                        Ok(r) => {
+                            blocked = Some(format!(
+                                "Kept {name}: {} couldn't be removed ({})",
+                                container_name(id),
+                                r.error()
+                            ))
+                        }
+                        Err(e) => blocked = Some(format!("Kept {name}: {e}")),
+                    }
+                    if blocked.is_some() {
+                        break;
+                    }
                 }
-                Ok(r) => emit(notice("error", &r.error())),
-                Err(e) => emit(notice("error", &e.to_string())),
-            },
+                match blocked {
+                    Some(why) => emit(notice("error", &why)),
+                    None => match client::request("DELETE", &format!("/images/{}", path_escape(&name)), None) {
+                        Ok(r) if r.ok() => {
+                            // Only untagged when another name still points at it: nothing freed.
+                            let deleted = r.json().as_array().is_some_and(|a| a.iter().any(|v| v.get("Deleted").is_some()));
+                            emit(json!({"type": "removed", "name": name, "deleted": deleted}).to_string());
+                        }
+                        Ok(r) => emit(notice("error", &image_refusal(&name, &r.error()))),
+                        Err(e) => emit(notice("error", &e.to_string())),
+                    },
+                }
+            }
             Ok(Cmd::Container { action, id }) => {
                 let (method, path) = match action.as_str() {
                     "remove" => ("DELETE", format!("/containers/{id}?force=1&v=1")),
@@ -258,6 +284,28 @@ fn watch(tx: Sender<Cmd>) {
 pub fn expect_ok(r: io::Result<client::Response>) -> io::Result<()> {
     let r = r?;
     if r.ok() { Ok(()) } else { Err(io::Error::other(r.error())) }
+}
+
+/// A container's name, for messages; its short id if it has none.
+fn container_name(id: &str) -> String {
+    client::get(&format!("/containers/{}/json", path_escape(id)))
+        .ok()
+        .and_then(|c| c["Name"].as_str().map(|n| n.trim_start_matches('/').to_owned()))
+        .unwrap_or_else(|| id.chars().take(12).collect())
+}
+
+/// Docker's "unable to remove repository reference … (must force) - container
+/// X is using its referenced image", in plain words with the container's name.
+fn image_refusal(name: &str, error: &str) -> String {
+    match error
+        .split("container ")
+        .nth(1)
+        .and_then(|r| r.split_whitespace().next())
+        .filter(|_| error.contains("is using"))
+    {
+        Some(id) => format!("{name} is still used by the container {}. Remove the container first.", container_name(id)),
+        None => error.to_owned(),
+    }
 }
 
 fn act(result: io::Result<()>) {
@@ -1065,8 +1113,6 @@ mod tests {
     }
 }
 
-/// Handles one message from the page, on the window's thread: quick things
-/// here, the rest on the engine thread or a thread of their own.
 /// Whether a page command's id/name may be handled. Docker-facing ids stay
 /// ASCII tokens; notes and image remarks allow path/ref characters.
 fn page_cmd_tokens_ok(cmd: &str, id: &str, name: &str) -> bool {
@@ -1092,6 +1138,8 @@ fn page_cmd_tokens_ok(cmd: &str, id: &str, name: &str) -> bool {
     plain(id) && (!matches!(cmd, "files" | "preview" | "download" | "terminal") || plain(name))
 }
 
+/// Handles one message from the page, on the window's thread: quick things
+/// here, the rest on the engine thread or a thread of their own.
 pub fn on_message(msg: &str) {
     let Ok(c) = serde_json::from_str::<PageCmd>(msg) else { return };
     // Ids and container names are plain tokens; anything else is not from
@@ -1154,7 +1202,10 @@ pub fn on_message(msg: &str) {
         // Pull image's suggestions, from Docker Hub through a cache.
         "hubsearch" => crate::hub::ask(crate::hub::Kind::Search, c.name, emit),
         "hubtags" => crate::hub::ask(crate::hub::Kind::Tags, c.name, emit),
-        "rmi" => send(Cmd::RemoveImage(c.name)),
+        "rmi" => {
+            let with = c.value.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+            send(Cmd::RemoveImage(c.name, with));
+        }
         "run" => {
             let env = c.value.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
             let host_port = u16::try_from(c.port).ok().filter(|&p| p > 0);

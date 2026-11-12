@@ -2925,6 +2925,8 @@ const ZH = {
   "{name} is in use": "{name} 正在使用中",
   "{list} is running from this image. Stop it first, then remove the image.": "{list} 正基于此镜像运行。请先停止它，再删除镜像。",
   "{list} are running from this image. Stop them first, then remove the image.": "{list} 正基于此镜像运行。请先停止它们，再删除镜像。",
+  "Stop it first, then remove it": "请先停止，再删除",
+  "A container was made from this image. Remove the container first.": "已有容器基于此镜像。请先删除容器。",
   "Remove {who} and {name}?": "删除 {who} 和 {name}？",
   "Remove both": "两者都删除", "Remove all": "全部删除",
   "Stopped {when}": "已于 {when} 停止",
@@ -4326,6 +4328,8 @@ const ZH_TW = {
   "{name} is in use": "{name} 正在使用中",
   "{list} is running from this image. Stop it first, then remove the image.": "{list} 正基於此鏡像運行。請先停止它，再刪除鏡像。",
   "{list} are running from this image. Stop them first, then remove the image.": "{list} 正基於此鏡像運行。請先停止它們，再刪除鏡像。",
+  "Stop it first, then remove it": "請先停止，再刪除",
+  "A container was made from this image. Remove the container first.": "已有容器基於此鏡像。請先刪除容器。",
   "Remove {who} and {name}?": "刪除 {who} 和 {name}？",
   "Remove both": "兩者都刪除",
   "Stopped {when}": "已於 {when} 停止",
@@ -5921,7 +5925,7 @@ function detailChrome(c, d) {
       ${reachable ? ibtn("open", `${tr("Open")} ${esc(domain)}`, `data-open="${esc(domain)}"`) : ""}
       ${up ? lbtn("restart", "Restart", `data-c="restart" data-id="${c.Id}"`) : ""}
       ${up ? lbtn("stop", "Stop", `data-c="stop" data-id="${c.Id}"`, "halt") : lbtn("play", "Start", `data-c="start" data-id="${c.Id}"`, "go")}
-      ${isKiriK8s(c) ? "" : lbtn("trash", "Remove", `data-c="remove" data-id="${c.Id}"`, "danger")}
+      ${ctrRemoveBtn(c)}
       ${btn("⋯", `data-more="${c.Id}" title="${tr("More")}" aria-label="${tr("More actions for {name}", { name: esc(d.name) })}" aria-haspopup="menu"`, "more")}
     </span></div>
     ${c.State === "exited" && c.KiriOOMKilled ? oomLine(tr("Stopped: out of memory"), c.KiriFinishedAt
@@ -7301,13 +7305,25 @@ function projectAction(project, action) {
   for (const c of pick) send("container", { action, id: c.Id });
 }
 
+/* Trash: Docker won't remove a running container, nor an image a container
+   was made from — grey it out like kiri-k8s, don't ask after a click. */
+function ctrRemoveBtn(c) {
+  if (isKiriK8s(c)) return ibtn("trash", "Kubernetes is managed in Settings → Kubernetes", "data-ksettings", "locked");
+  if (upC(c)) return ibtn("trash", "Stop it first, then remove it", "disabled", "locked");
+  return ibtn("trash", "Remove", `data-c="remove" data-id="${c.Id}"`, "danger");
+}
+function imgRemoveBtn(name, img) {
+  if ((img ? usersOf(img) : []).length) {
+    return ibtn("trash", "A container was made from this image. Remove the container first.", "disabled", "locked");
+  }
+  return ibtn("trash", "Remove", `data-rmi="${esc(name)}"`, "danger");
+}
 function containerActs(c, name, up, starting, enter) {
   const primary = `${up ? ibtn("restart", "Restart", `data-c="restart" data-id="${c.Id}"`, enter)
     : ibtn("restart", "Start it to restart it", "disabled", "ghost")}
   ${up ? ibtn("stop", "Stop", `data-c="stop" data-id="${c.Id}"`, `halt ${enter}`)
     : ibtn("play", starting ? "Starting…" : "Start", `data-c="start" data-id="${c.Id}"`, starting ? "go rolling" : "go")}`;
-  const danger = `${isKiriK8s(c) ? ibtn("trash", "Kubernetes is managed in Settings → Kubernetes", "data-ksettings", "locked")
-    : ibtn("trash", "Remove", `data-c="remove" data-id="${c.Id}"`, "danger")}
+  const danger = `${ctrRemoveBtn(c)}
   ${btn("⋯", `data-more="${c.Id}" aria-label="More actions for ${esc(name)}" aria-haspopup="menu"`, "more")}`;
   return { primary, danger, all: primary + danger };
 }
@@ -7403,8 +7419,8 @@ function openMenu(button, id, project) {
   if (domain) items.unshift([`${tr("Open")} ${esc(domain)}`, `data-open="${esc(domain)}"`]);
   if (c.State === "running") items.push(["Pause", `data-c="pause" data-id="${id}"`]);
   if (c.State === "paused") items.push(["Resume", `data-c="unpause" data-id="${id}"`]);
-  // kiri-k8s goes with Kubernetes, in Settings, not from here.
-  if (!isKiriK8s(c)) items.push(["Remove", `data-c="remove" data-id="${id}"`, "danger"]);
+  // Running/paused can't be removed (docker rm); kiri-k8s goes in Settings.
+  if (!isKiriK8s(c) && !upC(c)) items.push(["Remove", `data-c="remove" data-id="${id}"`, "danger"]);
   showMenu(button, items);
 }
 function showMenu(button, items) {
@@ -7616,10 +7632,29 @@ function stepTextSize(step) {
   if (next !== prefs.scale) setPref("scale", next);
 }
 
+/* Same image id, allowing a short hash vs full sha256:… digest. */
+function sameImageId(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const na = String(a).replace(/^sha256:/, ""), nb = String(b).replace(/^sha256:/, "");
+  return na.length >= 12 && nb.length >= 12 && (na.startsWith(nb) || nb.startsWith(na));
+}
+/* A container made from this image: prefer ImageID (as Docker does). When that
+   is missing or points at no listed image, fall back to the tag/name — the
+   same way the Size column finds an image. */
+function usesImage(c, img) {
+  if (c.ImageID) {
+    if (sameImageId(c.ImageID, img.Id)) return true;
+    if (ui.images.some((i) => sameImageId(c.ImageID, i.Id))) return false;
+  }
+  return !!(c.Image && (img.RepoTags || []).includes(c.Image));
+}
 /* The containers made from an image: Docker won't remove an image while one
    exists, running or not, since it couldn't start again without it. */
-const usersOf = (img) => ui.containers.filter((c) => c.ImageID === img.Id);
+const usersOf = (img) => ui.containers.filter((c) => usesImage(c, img));
 const cname = (c) => c.Names[0].replace(/^\//, "");
+const findImage = (name) => ui.images.find((i) => i.RepoTags?.includes(name) || i.Id === name || imgKey(i) === name
+  || short(i.Id) === name || sameImageId(i.Id, name));
 /* Phosphor's cube, drawn as strokes so a light can run round its edge; `i`
    is a lit box's place in the list, for the spark's stagger. */
 const CUBE_E = "M128 24 216 72V184L128 232 40 184V72Z M40 72 128 120 216 72 M128 120V232";
@@ -7707,8 +7742,9 @@ function containerAction(action, id) {
   if (isKiriK8s(c) && action === "stop") return confirmRemove(tr("Stop Kubernetes?"), tr("<span class=\"mono\">kiri-k8s</span> is Kiri's Kubernetes cluster. Stopping it turns Kubernetes off, and its pods stop until it starts again."), "Stop", () => send("container", { action, id }));
   if (isKiriK8s(c) && action === "remove") return confirmRemove(tr("Remove Kubernetes' container?"), tr("<span class=\"mono\">kiri-k8s</span> is Kiri's Kubernetes cluster. Removing it turns Kubernetes off. The cluster's data stays in the <span class=\"mono\">kiri-k8s</span> volume; Delete cluster in Settings → Kubernetes removes everything."), "Remove", () => send("container", { action, id }));
   if (action !== "remove") return send("container", { action, id });
-  const up = c && (c.State === "running" || c.State === "paused");
-  confirmRemove(tr("Remove {name}?", { name: esc(name) }), tr(up ? "It's stopped and deleted, with its files and unnamed volumes. Named volumes stay." : "It's deleted, with its files and unnamed volumes. Named volumes stay."), "Remove", () => send("container", { action, id }));
+  // Running/paused trash is disabled (docker rm); refuse if somehow triggered.
+  if (c && upC(c)) return;
+  confirmRemove(tr("Remove {name}?", { name: esc(name) }), tr("It's deleted, with its files and unnamed volumes. Named volumes stay."), "Remove", () => send("container", { action, id }));
 }
 
 /* Removing a whole Compose project asks first; the rest go straight through. */
@@ -7719,30 +7755,11 @@ function projectAsk(project, action) {
 }
 
 function removeImage(name) {
-  const img = ui.images.find((i) => i.RepoTags?.includes(name) || i.Id === name);
-  const users = img ? usersOf(img) : [];
-  if (!users.length) return confirmRemove(tr("Remove {name}?", { name: esc(name) }), tr("You can pull it again later."), "Remove", () => send("rmi", { name }));
-  const running = users.filter((c) => c.State === "running" || c.State === "paused");
-  const list = (cs) => cs.map((c) => `<b>${esc(cname(c))}</b>`).join(", ");
-  const scrim = document.createElement("div");
-  scrim.className = "scrim";
-  const who = users.length === 1 ? esc(cname(users[0])) : tr("{n} containers", { n: users.length });
-  scrim.innerHTML = running.length
-    ? `<div class="dialog alert" role="alertdialog" aria-modal="true">${alertIco("warn")}<h3>${tr("{name} is in use", { name: esc(name) })}</h3>
-        <p>${tr(running.length === 1 ? "{list} is running from this image. Stop it first, then remove the image." : "{list} are running from this image. Stop them first, then remove the image.", { list: list(running) })}</p>
-        <div class="row-end"><span></span><button class="btn" data-close>${tr("OK")}</button></div></div>`
-    : `<div class="dialog alert" role="alertdialog" aria-modal="true">${alertIco("remove")}<h3>${tr("Remove {who} and {name}?", { who, name: esc(name) })}</h3>
-        <p>${tr(users.length === 1 ? "{list} was made from this image and can't start again without it, so it goes too, with its files. Volumes stay." : "{list} were made from this image and can't start again without it, so they go too, with their files. Volumes stay.", { list: list(users) })}</p>
-        <div class="row-end"><span></span><span><button class="btn" data-close>${tr("Cancel")}</button> <button class="btn danger" data-go>${tr(users.length === 1 ? "Remove both" : "Remove all")}</button></span></div></div>`;
-  document.body.append(scrim);
-  const close = () => { scrim.remove(); document.removeEventListener("keydown", onKey); };
-  const onKey = (ev) => { if (ev.key === "Escape") close(); };
-  document.addEventListener("keydown", onKey);
-  scrim.addEventListener("click", (ev) => {
-    if (ev.target === scrim || ev.target.closest("[data-close]")) return close();
-    if (ev.target.closest("[data-go]")) { send("rmi", { name, value: users.map((c) => c.Id) }); close(); }
-  });
-  scrim.querySelector("[data-go], [data-close]")?.focus();
+  const img = findImage(name);
+  // In-use trash is disabled; refuse here too if somehow triggered.
+  const users = img ? usersOf(img) : ui.containers.filter((c) => c.Image === name || sameImageId(c.ImageID, name));
+  if (users.length) return;
+  confirmRemove(tr("Remove {name}?", { name: esc(name) }), tr("You can pull it again later."), "Remove", () => send("rmi", { name }));
 }
 
 function usedBrief(i, lit) {
@@ -7778,7 +7795,7 @@ function imageCard(i, lit) {
       ${cell("Size", `<span class="num">${size(i.Size)}</span>`)}
       ${cell("Pulled", i.Pulled ? ago(i.Pulled) : "—")}
     </div>
-    <div class="gacts"><span class="gacts-l">${runBtn(name, true)}${ibtn("pull", "Pull", `data-pull="${esc(name)}" ${pulling(name) || untagged(i) ? "disabled" : ""}`)}${imgNoteBtn(name)}</span><span class="spacer"></span>${ibtn("trash", "Remove", `data-rmi="${esc(name)}"`, "danger")}</div>
+    <div class="gacts"><span class="gacts-l">${runBtn(name, true)}${ibtn("pull", "Pull", `data-pull="${esc(name)}" ${pulling(name) || untagged(i) ? "disabled" : ""}`)}${imgNoteBtn(name)}</span><span class="spacer"></span>${imgRemoveBtn(name, i)}</div>
   </div>`;
 }
 function imgNoteBtn(name) {
@@ -7837,7 +7854,7 @@ function renderImages() {
         ${runBtn(name, true)}
         ${ibtn("pull", "Pull", `data-pull="${esc(name)}" ${pulling(name) || untagged(i) ? "disabled" : ""}`)}
         ${imgNoteBtn(name)}
-        ${ibtn("trash", "Remove", `data-rmi="${esc(name)}"`, "danger")}
+        ${imgRemoveBtn(name, i)}
       </div></td></tr>`);
   }
   // Pin checkbox/Name/Actions; middle columns keep preferred widths and scroll.
@@ -7877,7 +7894,7 @@ function renderImageDetail() {
       ${tile(i.icon)}
       <div class="who"><span class="ttl"><b title="${esc(d.name)}">${refHtml(d.name, true)}</b>${copyBtn(d.name, "image name")}</span><span class="muted"><span class="mono sel">${esc(short(i.Id))}</span>${copyBtn(i.Id, "image ID")} · ${size(i.Size)} · ${tr("made {when}", { when: ago(i.Created) })}${users.length ? ` · <span title="${esc(users.map(cname).join(", "))}">${users.length > 2 ? tr("used by {names} +{n} more", { names: users.slice(0, 2).map((u) => esc(cname(u))).join(", "), n: users.length - 2 }) : tr("used by {names}", { names: users.slice(0, 2).map((u) => esc(cname(u))).join(", ") })}</span>` : ""}</span></div>
       <span class="spacer"></span>
-      <div class="acts-row">${runBtn(d.name, false)}${lbtn("pull", "Pull", `data-pull="${esc(d.name)}" ${pulling(d.name) ? "disabled" : ""}`)}${imgNoteBtn(d.name)}${lbtn("trash", "Remove", `data-rmi="${esc(d.name)}"`, "danger")}</div>
+      <div class="acts-row">${runBtn(d.name, false)}${lbtn("pull", "Pull", `data-pull="${esc(d.name)}" ${pulling(d.name) ? "disabled" : ""}`)}${imgNoteBtn(d.name)}${imgRemoveBtn(d.name, i)}</div>
     </div>
     <div class="bl-tabs" role="tablist">
       <button role="tab" data-imgtab="layers" aria-selected="${tab === "layers"}">${tr("Layers")}</button>
@@ -13165,7 +13182,8 @@ const LISTS = {
     junk: { state: "failed", label: (n) => tr("Clear {n} failed", { n }), what: "failed containers",
       tip: (xs) => tr(xs.length === 1 ? "Removes the {n} container that exited with an error, with its files. Named volumes stay." : "Removes the {n} containers that exited with an error, with their files. Named volumes stay.", { n: xs.length }) },
     remove: (c) => send("container", { action: "remove", id: c.Id }),
-    bulk: [["Start", "play", "", (c) => !upC(c), (c) => containerAction("start", c.Id)], ["Stop", "stop", "", upC, (c) => isKiriK8s(c) ? containerAction("stop", c.Id) : send("container", { action: "stop", id: c.Id })], ["Delete", "trash", "danger", (c) => !isKiriK8s(c)]],
+    // Docker rm refuses a running container; bulk Delete leaves those (and kiri-k8s).
+    bulk: [["Start", "play", "", (c) => !upC(c), (c) => containerAction("start", c.Id)], ["Stop", "stop", "", upC, (c) => isKiriK8s(c) ? containerAction("stop", c.Id) : send("container", { action: "stop", id: c.Id })], ["Delete", "trash", "danger", (c) => !isKiriK8s(c) && !upC(c)]],
   },
   images: {
     all: () => ui.images, key: imgKey, name: imgKey, hit: (i) => match(i.RepoTags?.[0]), noun: "images", size: (i) => i.Size,

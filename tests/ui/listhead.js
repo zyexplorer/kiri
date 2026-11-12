@@ -183,19 +183,27 @@ t("Space ticks the ringed row, or the focused box, and leaves the others", () =>
 });
 t("Delete or Backspace on picked rows asks first", () => {
   sent.length = 0;
-  clickBox("r1");
-  clickBox("r2");
+  // Failed were cleared earlier; running can't be deleted (docker rm).
+  ui.containers.push(C("s2", "idle", "exited", 0));
+  render();
+  clickBox("s1");
+  clickBox("s2");
   key("Delete");
   const dlg = document.querySelector(".scrim .dialog");
-  eq([dlg?.querySelector("h3").textContent, dlg?.querySelector("[data-go]").textContent, rows().length], ["Delete 2 containers?", "Delete", 3], "asks, nothing gone yet");
+  eq([dlg?.querySelector("h3").textContent, dlg?.querySelector("[data-go]").textContent, rows().length], ["Delete 2 containers?", "Delete", 4], "asks, nothing gone yet");
   dlg.querySelector("[data-close]").click();
-  eq([document.querySelector(".scrim"), picked(), sent.length], [null, ["r1", "r2"], 0], "Cancel keeps them");
+  eq([document.querySelector(".scrim"), picked(), sent.length], [null, ["s1", "s2"], 0], "Cancel keeps them");
   key("Backspace");
   eq(!!document.querySelector(".scrim .dialog"), true, "Backspace too");
   document.querySelector(".scrim [data-close]").click();
   unpick();
   key("Delete");
   eq(document.querySelector(".scrim"), null, "nothing picked, nothing asked");
+  // Running picks alone: Delete does nothing (no removable selection).
+  clickBox("r1");
+  key("Delete");
+  eq(document.querySelector(".scrim"), null, "running left alone");
+  unpick();
 });
 t("a click on the row opens it, as do its name and Return; the box only picks", () => {
   clickBox("r1");
@@ -222,16 +230,19 @@ t("a row's buttons do what they do and pick nothing; a click below the rows lets
 });
 t("Delete on picked rows asks first; Cancel deletes nothing, Delete goes", () => {
   sent.length = 0;
-  clickBox("r1");
-  clickBox("r2");
+  // s2 may already be on the list from the keyboard Delete test.
+  if (!ui.containers.some((c) => c.Id === "s2")) { ui.containers.push(C("s2", "idle", "exited", 0)); render(); }
+  clickBox("s1");
+  clickBox("s2");
   document.querySelector('[data-bulk="2"]').click();
   const dlg = document.querySelector(".scrim .dialog");
-  eq([!!dlg, dlg?.querySelector("h3").textContent, rows().length, sent.length], [true, "Delete 2 containers?", 3, 0], "asks, nothing gone");
+  const n = rows().length;
+  eq([!!dlg, dlg?.querySelector("h3").textContent, rows().length, sent.length], [true, "Delete 2 containers?", n, 0], "asks, nothing gone");
   dlg.querySelector("[data-close]").click();
-  eq([document.querySelector(".scrim"), rows().length, sent.length], [null, 3, 0], "Cancel keeps them");
+  eq([document.querySelector(".scrim"), rows().length, sent.length], [null, n, 0], "Cancel keeps them");
   document.querySelector('[data-bulk="2"]').click();
   document.querySelector(".scrim [data-go]").click();
-  eq(rows().length, 1, "both leave once confirmed");
+  eq(rows().length, n - 2, "stopped ones leave once confirmed; running stay");
   ui.batches = []; render();
 });
 t("Images: tabs, Remove untagged and the Pull image button", () => {
