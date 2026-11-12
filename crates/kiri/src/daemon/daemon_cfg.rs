@@ -14,6 +14,19 @@ const DEFAULT_DOWNLOADS: u64 = 4;
 const DEFAULT_UPLOADS: u64 = 5;
 const MAX_CONCURRENT: u64 = 16;
 
+/// Built-in Docker Hub mirrors when `daemon.json` has no `registry-mirrors`
+/// key. Helps regions where docker.io is slow or unreachable (common in
+/// mainland China). Order: try the faster public ones first.
+/// DaoCloud: <https://github.com/DaoCloud/public-image-mirror>
+/// An explicit `[]` in the file means "no mirrors" and is left alone.
+/// Not included: private/org harbors, or university mirrors that often
+/// fail DNS from residential networks (tuna / ustc).
+const DEFAULT_HUB_MIRRORS: &[&str] = &[
+    "https://docker.m.daocloud.io",
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me",
+];
+
 pub fn path() -> Option<PathBuf> {
     super::state_dir().ok().map(|d| d.join("daemon.json"))
 }
@@ -25,15 +38,33 @@ fn load() -> Value {
         .unwrap_or(Value::Null)
 }
 
+fn default_mirrors() -> Vec<String> {
+    DEFAULT_HUB_MIRRORS.iter().filter_map(|u| kiri_image::normalize_mirror(u)).collect()
+}
+
 /// The configured Hub mirrors, normalized the way `docker pull` expects.
+/// Missing key → built-in defaults; explicit array (including empty) wins.
 pub fn mirrors() -> Vec<String> {
-    load()["registry-mirrors"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|v| v.as_str())
-        .filter_map(kiri_image::normalize_mirror)
-        .collect()
+    match load().get("registry-mirrors") {
+        Some(Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str()).filter_map(kiri_image::normalize_mirror).collect(),
+        _ => default_mirrors(),
+    }
+}
+
+/// Writes a starter `daemon.json` with Hub mirrors when the file is absent,
+/// so Settings and first-run pulls share the same defaults.
+pub fn ensure_defaults() -> std::io::Result<()> {
+    let Some(path) = path() else {
+        return Ok(());
+    };
+    if path.is_file() {
+        return Ok(());
+    }
+    save(&json!({
+        "registry-mirrors": DEFAULT_HUB_MIRRORS,
+        "max-concurrent-downloads": DEFAULT_DOWNLOADS,
+        "max-concurrent-uploads": DEFAULT_UPLOADS,
+    }))
 }
 
 /// Hosts and CIDRs that may be reached over plain HTTP, as Docker's
@@ -185,8 +216,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_file_means_no_mirrors() {
-        assert!(mirrors().is_empty() || path().is_some());
+    fn registry_config_names_docker_io() {
         let cfg = registry_config();
         assert!(
             cfg["IndexConfigs"]["docker.io"]["Official"]
@@ -194,5 +224,18 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(cfg["IndexConfigs"]["docker.io"]["Name"], "docker.io");
+    }
+
+    #[test]
+    fn default_mirrors_normalize() {
+        let m = default_mirrors();
+        assert_eq!(
+            m,
+            vec![
+                "https://docker.m.daocloud.io".to_owned(),
+                "https://docker.1ms.run".to_owned(),
+                "https://docker.xuanyuan.me".to_owned(),
+            ]
+        );
     }
 }

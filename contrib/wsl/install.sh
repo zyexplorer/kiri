@@ -9,6 +9,13 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 install -m 755 "$here/kiri" "$here/kiri-init" /usr/local/bin/
+# Hub mirrors for regions where docker.io is slow (mainland China). Skip if
+# the person already has a daemon.json from Settings → Network.
+mkdir -p /var/lib/kiri-daemon/.kiri
+if [ ! -f /var/lib/kiri-daemon/.kiri/daemon.json ]; then
+  printf '%s\n' '{"registry-mirrors":["https://docker.m.daocloud.io","https://docker.1ms.run","https://docker.xuanyuan.me"],"max-concurrent-downloads":4,"max-concurrent-uploads":5}' \
+    >/var/lib/kiri-daemon/.kiri/daemon.json
+fi
 if [ -d /run/systemd/system ]; then
   cat > /etc/systemd/system/kiri.service <<UNIT
 [Unit]

@@ -164,6 +164,10 @@ pub fn run(_args: &[String]) -> io::Result<()> {
     // own disk already.
     #[cfg(target_os = "macos")]
     finder(&engine);
+    // Starter Hub mirrors when daemon.json is missing (e.g. first Windows setup).
+    if let Err(e) = daemon_cfg::ensure_defaults() {
+        diag::warn!("daemon.json defaults not written", error = e);
+    }
     kiri_image::set_proxy_source(proxy::for_registry);
     kiri_image::set_mirrors_source(daemon_cfg::for_registry);
     kiri_image::set_insecure_source(daemon_cfg::for_insecure);
