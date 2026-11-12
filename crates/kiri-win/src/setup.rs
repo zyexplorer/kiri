@@ -94,6 +94,9 @@ struct State {
     step: &'static str,
     linux: Option<String>,
     sizes: Value,
+    /// Direct download URLs for the pinned WSL MSI and Ubuntu `.wsl`
+    /// (this build's architecture), so the page can open them in a browser.
+    urls: Value,
     existing_ubuntu: bool,
     other_docker: bool,
     /// The engine besides Kiri, by name (crate::buildwith), for the build question.
@@ -261,6 +264,7 @@ fn fresh_state(step: &'static str, s: &Saved) -> State {
         step,
         linux: s.linux.clone(),
         sizes: json!({"wsl": WSL_MSI.size, "ubuntu": UBUNTU.size, "kiri": std::fs::metadata(bundle().join("kiri-linux.tar.gz")).map_or(0, |m| m.len())}),
+        urls: json!({"wsl": WSL_MSI.url, "ubuntu": UBUNTU.url}),
         existing_ubuntu: existing_ubuntu().is_some(),
         other_docker: other,
         other_engine: crate::buildwith::other_engine(),
@@ -359,6 +363,40 @@ fn run(step: &'static str, work: impl FnOnce() -> io::Result<()> + Send + 'stati
 /// so a task's "4 / 368 MB" agrees with the bar's "4 of 368 MB".
 fn mb(bytes: u64) -> u64 {
     (bytes + 500_000) / 1_000_000
+}
+
+/// Copies a person-chosen file into %LOCALAPPDATA%\Kiri\downloads as
+/// `pin.file` after SHA-256 matches. `Ok(false)` means the open dialog was
+/// cancelled (leave the current error alone).
+fn stage_local(pin: &Pin, title: &str, filter_label: &str, filter_pattern: &str) -> io::Result<bool> {
+    if let Some(e) = crate::win::arch_mismatch() {
+        return Err(io::Error::other(e));
+    }
+    let Some(src) = crate::app::pick_file(title, filter_label, filter_pattern) else {
+        return Ok(false);
+    };
+    if !src.is_file() {
+        return Err(io::Error::other(format!("could not read {}", src.display())));
+    }
+    let got = sha256(&src)?;
+    if got != pin.sha256 {
+        return Err(io::Error::other(format!("{} did not match its SHA-256 (got {got})", pin.name)));
+    }
+    let dl = dir().join("downloads");
+    std::fs::create_dir_all(&dl)?;
+    let dest = dl.join(pin.file);
+    if src != dest {
+        let part = dl.join(format!("{}.part", pin.file));
+        let _ = std::fs::remove_file(&part);
+        std::fs::copy(&src, &part).map_err(|e| io::Error::other(format!("could not copy {}: {e}", src.display())))?;
+        let got = sha256(&part)?;
+        if got != pin.sha256 {
+            let _ = std::fs::remove_file(&part);
+            return Err(io::Error::other(format!("{} did not match its SHA-256 after copy (got {got})", pin.name)));
+        }
+        std::fs::rename(&part, &dest)?;
+    }
+    Ok(true)
 }
 
 /// Downloads `pin` into %LOCALAPPDATA%\Kiri\downloads with curl.exe (part
@@ -599,6 +637,15 @@ fn docker() -> PathBuf {
     if ours.is_file() { ours } else { bundle().join("bin").join("docker.exe") }
 }
 
+/// Ensures `~/.kiri/daemon.json` in the engine distro has Hub mirrors when
+/// the file is absent (DaoCloud / 1ms.run / xuanyuan). Best-effort: a
+/// failure only means the test pull may hit docker.io directly.
+fn seed_hub_mirror() {
+    let distro = saved().distro.unwrap_or_else(|| KIRI_DISTRO.to_owned());
+    let script = r#"d=/var/lib/kiri-daemon/.kiri; mkdir -p "$d"; f="$d/daemon.json"; [ -f "$f" ] || printf '%s\n' '{"registry-mirrors":["https://docker.m.daocloud.io","https://docker.1ms.run","https://docker.xuanyuan.me"],"max-concurrent-downloads":4,"max-concurrent-uploads":5}' >"$f""#;
+    let _ = quiet("wsl.exe").args(["-d", &distro, "-u", "root", "--", "sh", "-c", script]).status();
+}
+
 /// Step 3: the engine answers through the pipe and runs a container.
 fn engine() -> io::Result<()> {
     update(|s| {
@@ -621,6 +668,10 @@ fn engine() -> io::Result<()> {
     task(1, "done", r"\\.\pipe\kiri");
     task(2, "active", "pulling alpine");
     log_line("$ docker run --rm alpine echo hello");
+    // Hub is often unreachable from mainland China; seed DaoCloud as a
+    // registry-mirror when daemon.json is still missing (engine reloads it
+    // on each pull). Does not overwrite Settings the person already saved.
+    seed_hub_mirror();
     // Before the installed copy exists, this runs the bundle's docker.exe:
     // check it first, as the tools step does for the copy it installs.
     if !dir().join("bin").join("docker.exe").is_file() {
@@ -750,7 +801,11 @@ fn copy_to_clipboard(text: &str) {
 
 /// Whether a page message is setup's.
 pub fn handles(msg: &str) -> bool {
-    serde_json::from_str::<Value>(msg).ok().and_then(|v| v["cmd"].as_str().map(|c| c.starts_with("setup-") || c == "copy")).unwrap_or(false)
+    serde_json::from_str::<Value>(msg).ok().and_then(|v| v["cmd"].as_str().map(|c| c.starts_with("setup-") || c == "copy" || c == "open")).unwrap_or(false)
+}
+
+fn setup_open_url(url: &str) -> bool {
+    url == "https://learn.microsoft.com/windows/wsl/about" || url == WSL_MSI.url || url == UBUNTU.url
 }
 
 pub fn on_message(msg: &str) {
@@ -807,6 +862,43 @@ pub fn on_message(msg: &str) {
                 _ => update(|s| s.error = None),
             }
         }
+        // Offline / flaky download: pick the pinned MSI or .wsl, verify it,
+        // stage it where download() looks, then continue the step.
+        "setup-use-local" => {
+            if BUSY.load(Ordering::SeqCst) {
+                return;
+            }
+            let (step, linux) = {
+                let g = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+                let s = g.as_ref();
+                (s.map_or("welcome", |s| s.step), s.and_then(|s| s.linux.clone()))
+            };
+            let which = match v["which"].as_str() {
+                Some("ubuntu") => "ubuntu",
+                Some("wsl") => "wsl",
+                _ if step == "linux" && linux.as_deref() == Some("ubuntu") => "ubuntu",
+                _ => "wsl",
+            };
+            std::thread::spawn(move || {
+                let staged = if which == "ubuntu" {
+                    stage_local(&UBUNTU, "Choose the Ubuntu WSL image", "Ubuntu WSL (*.wsl)", "*.wsl")
+                } else {
+                    stage_local(&WSL_MSI, "Choose the WSL installer", "WSL installer (*.msi)", "*.msi")
+                };
+                match staged {
+                    Ok(false) => {}
+                    Ok(true) if which == "ubuntu" => {
+                        update(|s| s.linux = Some("ubuntu".into()));
+                        run("linux", || install_linux("ubuntu"));
+                    }
+                    Ok(true) => run("wsl", install_wsl),
+                    Err(e) => {
+                        crate::serve::log(&format!("setup use-local: {e}"));
+                        update(|s| s.error = Some(e.to_string()));
+                    }
+                }
+            });
+        }
         "setup-default" => update(|s| s.make_default = v["value"] == true),
         "setup-autostart" => update(|s| s.autostart = v["value"] == true),
         "setup-build" => update(|s| s.build_kiri = v["value"] == "kiri"),
@@ -814,6 +906,12 @@ pub fn on_message(msg: &str) {
         // SAFETY: ends this thread's message loop; run on the window's thread.
         "setup-quit" => Handle.run(|_| unsafe { windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0) }),
         "copy" => copy_to_clipboard(v["value"].as_str().unwrap_or("")),
+        // Welcome / error links: only the pinned downloads and the WSL docs.
+        "open" => {
+            if let Some(url) = v["name"].as_str().filter(|u| setup_open_url(u)) {
+                crate::app::open_url(url);
+            }
+        }
         _ => {}
     }
 }

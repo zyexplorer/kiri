@@ -18,13 +18,14 @@ way the main page does: it sends JSON strings with
 | `setup-switch` | `value`: `"kiri"` | while Ubuntu downloads → "Use Kiri Linux instead" |
 | `setup-cancel` | | any progress screen → "Cancel" (back to the step's start) |
 | `setup-retry` | | error → "Try again" |
+| `setup-use-local` | `which`: `"wsl"` or `"ubuntu"` (optional; inferred from the current step) | Welcome → "I already have the installer…"; download error → "Use a local file…" (stages the pinned MSI / `.wsl` into downloads after SHA-256 check, then continues the step) |
 | `setup-default` | `value`: bool | Docker tools → "Make Kiri the default for docker" checkbox |
 | `setup-build` | `value`: `"docker"` or `"kiri"` | Docker tools → Builds (shown only with another engine and Kiri not made docker's default): "Keep building with Docker" / "Build with Kiri" |
 | `setup-autostart` | `value`: bool | Ready → "Start Kiri when I sign in" |
 | `setup-open` | | Ready → "Open Kiri" (the main window replaces setup) |
 | `setup-quit` | | Welcome → "Quit" |
 | `copy` | `value`: text | Ready → "Copy" |
-| `open` | `name`: https URL | "What is WSL?" |
+| `open` | `name`: https URL | "What is WSL?", the pinned WSL MSI / Ubuntu `.wsl` download (only those URLs) |
 
 ## Host → page
 
@@ -36,6 +37,7 @@ One event type, sent whenever anything changes (at most ~10 a second):
   "step": "welcome" | "wsl" | "restart" | "choose" | "linux" | "engine" | "tools" | "ready",
   "linux": "kiri" | "ubuntu" | null,
   "sizes": {"wsl": 367575040, "ubuntu": 418495746, "kiri": 9000000},
+  "urls": {"wsl": "https://github.com/microsoft/WSL/releases/download/3.0.3/wsl.3.0.3.0.x64.msi", "ubuntu": "https://releases.ubuntu.com/…"},
   "existingUbuntu": false,
   "otherDocker": false,
   "otherEngine": null | "Docker Desktop",

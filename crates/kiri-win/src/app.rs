@@ -24,16 +24,17 @@ use webview2_com::{
 use windows::core::{w, GUID, Interface, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Globalization::GetUserDefaultUILanguage;
-use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW};
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Shell::{
-    ShellExecuteW, Shell_NotifyIconW, NIF_GUID, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NOTIFYICONDATAW,
-    NOTIFYICON_VERSION_4,
+    FileOpenDialog, IFileOpenDialog, ShellExecuteW, Shell_NotifyIconW, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, NIF_GUID,
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4, SIGDN_FILESYSPATH,
 };
+use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, BringWindowToTop, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, FindWindowW, GetClientRect,
     GetCursorPos, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowThreadProcessId, IsWindowVisible, IsZoomed, KillTimer, SM_CXSCREEN, SM_CYSCREEN, SW_MAXIMIZE, SW_SHOWNORMAL, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SendMessageW,
@@ -49,6 +50,9 @@ const WM_RUN: u32 = WM_APP + 1;
 const WM_TRAY: u32 = WM_APP + 2;
 /// From a second launch of kiri-win: show the window.
 pub const WM_SHOW: u32 = WM_APP + 3;
+/// Open-file dialog: must not run inside `with_ui` (modal Show nests the
+/// message loop; holding Ui's RefCell then blanks the shell view and freezes).
+const WM_PICK_FILE: u32 = WM_APP + 4;
 
 const PAGE: &str = include_str!("../../kiri/src/ui/index.html");
 /// The first-run setup (setup.rs), Windows only.
@@ -171,6 +175,15 @@ type Job = Box<dyn FnOnce(&mut Ui) + Send>;
 
 static JOBS: Mutex<Vec<Job>> = Mutex::new(Vec::new());
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
+
+struct PickFileReq {
+    title: String,
+    filter_label: String,
+    filter_pattern: String,
+    reply: std::sync::mpsc::Sender<Option<std::path::PathBuf>>,
+}
+
+static PICK_FILE: Mutex<Option<PickFileReq>> = Mutex::new(None);
 
 /// What the rest of kiri-win uses to reach the window, from any thread.
 #[derive(Debug, Clone, Copy)]
@@ -507,21 +520,25 @@ fn icon(size: i32) -> Option<HICON> {
     unsafe { CreateIconFromResourceEx(png, true, 0x0003_0000, px, px, LR_DEFAULTCOLOR).ok() }
 }
 
-/// Stable identity for the tray icon across process restarts. Explorer keeps
-/// GUID icons even after a crash; the next launch deletes/adds the same GUID
-/// so ghosts from `Stop-Process` / rebuilds do not pile up until hover.
+/// Former GUID tray identity (personal fix for rebuild ghosts). Windows binds
+/// a GUID to the **exe path** on first NIM_ADD; unsigned moves (portable →
+/// %LOCALAPPDATA%\Kiri, or debug → release) make later NIM_ADD fail and the
+/// tray vanishes. Kept only so startup can best-effort DELETE an old GUID icon.
 const TRAY_GUID: GUID = GUID::from_u128(0x4b49_5249_5769_6e54_7261_7949_636f_6e01);
 
-fn tray_nid(hwnd: HWND, icon: Option<HICON>) -> NOTIFYICONDATAW {
+fn tray_nid(hwnd: HWND, icon: Option<HICON>, guid: bool) -> NOTIFYICONDATAW {
     let mut nid = NOTIFYICONDATAW {
         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
         hWnd: hwnd,
         uID: 1,
-        uFlags: NIF_MESSAGE | NIF_TIP | NIF_GUID,
+        uFlags: NIF_MESSAGE | NIF_TIP,
         uCallbackMessage: WM_TRAY,
-        guidItem: TRAY_GUID,
         ..Default::default()
     };
+    if guid {
+        nid.uFlags |= NIF_GUID;
+        nid.guidItem = TRAY_GUID;
+    }
     if let Some(i) = icon {
         nid.hIcon = i;
         nid.uFlags |= NIF_ICON;
@@ -532,19 +549,28 @@ fn tray_nid(hwnd: HWND, icon: Option<HICON>) -> NOTIFYICONDATAW {
     nid
 }
 
-fn tray(hwnd: HWND, icon: Option<HICON>, op: windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE) {
-    let nid = tray_nid(hwnd, icon);
-    // SAFETY: a filled-in NOTIFYICONDATAW for our window / GUID.
-    unsafe {
-        let _ = Shell_NotifyIconW(op, &nid);
-    }
+fn tray(hwnd: HWND, icon: Option<HICON>, op: windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE) -> bool {
+    tray_op(hwnd, icon, op, false)
 }
 
-/// Remove any leftover icon for our GUID, then add a fresh one.
+fn tray_op(hwnd: HWND, icon: Option<HICON>, op: windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE, guid: bool) -> bool {
+    let nid = tray_nid(hwnd, icon, guid);
+    // SAFETY: a filled-in NOTIFYICONDATAW for our window.
+    unsafe { Shell_NotifyIconW(op, &nid).as_bool() }
+}
+
+/// Install the tray icon with HWND+uID (survives unsigned exe moves). Also
+/// tries to drop any leftover GUID icon from an older build.
 fn tray_install(hwnd: HWND, icon: Option<HICON>) {
-    tray(hwnd, None, NIM_DELETE);
-    tray(hwnd, icon, NIM_ADD);
-    let mut nid = tray_nid(hwnd, None);
+    let _ = tray_op(hwnd, None, NIM_DELETE, true);
+    let _ = tray_op(hwnd, None, NIM_DELETE, false);
+    if !tray_op(hwnd, icon, NIM_ADD, false) {
+        crate::serve::log("tray: NIM_ADD failed; trying NIM_MODIFY");
+        if !tray_op(hwnd, icon, NIM_MODIFY, false) {
+            crate::serve::log("tray: NIM_MODIFY failed; icon may be hidden");
+        }
+    }
+    let mut nid = tray_nid(hwnd, None, false);
     // SAFETY: union write of uVersion for NIM_SETVERSION.
     unsafe {
         nid.Anonymous.uVersion = NOTIFYICON_VERSION_4;
@@ -648,6 +674,7 @@ fn tray_menu(hwnd: HWND) {
 extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_RUN => run_jobs(),
+        WM_PICK_FILE => run_pick_file(hwnd),
         WM_SHOW => show(),
         WM_TIMER if wparam.0 == TIMER_FOREGROUND => {
             // SAFETY: our window, on its thread.
@@ -828,6 +855,84 @@ pub fn open_url(url: &str) {
     // SAFETY: plain strings; no window is needed.
     unsafe {
         ShellExecuteW(None, w!("open"), &HSTRING::from(url), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
+    }
+}
+
+/// Modal open-file dialog on the window thread. `None` if the person
+/// cancelled or the dialog could not be shown. Call from a worker thread
+/// (not the window's): it posts `WM_PICK_FILE` and waits — never via
+/// `Handle.run` / `with_ui`, so Show's nested loop does not hold Ui.
+pub fn pick_file(title: &str, filter_label: &str, filter_pattern: &str) -> Option<std::path::PathBuf> {
+    let hwnd = WINDOW.load(Ordering::SeqCst);
+    if hwnd == 0 {
+        return None;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    {
+        let mut slot = PICK_FILE.lock().unwrap_or_else(PoisonError::into_inner);
+        // One at a time: a second request cancels as if the person closed it.
+        if slot.is_some() {
+            let _ = tx.send(None);
+            return None;
+        }
+        *slot = Some(PickFileReq {
+            title: title.to_owned(),
+            filter_label: filter_label.to_owned(),
+            filter_pattern: filter_pattern.to_owned(),
+            reply: tx,
+        });
+    }
+    // SAFETY: our window; handler runs on its thread without borrowing Ui.
+    let _ = unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_PICK_FILE, WPARAM(0), LPARAM(0)) };
+    rx.recv().ok().flatten()
+}
+
+fn run_pick_file(hwnd: HWND) {
+    let Some(req) = PICK_FILE.lock().unwrap_or_else(PoisonError::into_inner).take() else {
+        return;
+    };
+    // WebView2 as a child of the owner can leave the common-item dialog a
+    // blank skeleton; hide it for the modal Show, then put it back.
+    with_ui(|ui| {
+        if let Some(c) = ui.controller.as_ref() {
+            // SAFETY: controller for this window, on its thread.
+            let _ = unsafe { c.SetIsVisible(false) };
+        }
+    });
+    let path = unsafe { file_open_dialog(hwnd, &req.title, &req.filter_label, &req.filter_pattern) };
+    with_ui(|ui| {
+        if let Some(c) = ui.controller.as_ref() {
+            // SAFETY: as above.
+            let _ = unsafe { c.SetIsVisible(true) };
+        }
+    });
+    let _ = req.reply.send(path);
+}
+
+/// # Safety
+/// `owner` is this thread's window (or null). Must not be called while `Ui`
+/// is borrowed — the modal loop dispatches window messages.
+unsafe fn file_open_dialog(owner: HWND, title: &str, filter_label: &str, filter_pattern: &str) -> Option<std::path::PathBuf> {
+    // SAFETY: COM is already initialised on the window thread; the dialog
+    // is in-process and freed when `dialog` drops.
+    unsafe {
+        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let _ = dialog.SetTitle(&HSTRING::from(title));
+        let name: Vec<u16> = filter_label.encode_utf16().chain(Some(0)).collect();
+        let spec: Vec<u16> = filter_pattern.encode_utf16().chain(Some(0)).collect();
+        let filters = [COMDLG_FILTERSPEC { pszName: PCWSTR(name.as_ptr()), pszSpec: PCWSTR(spec.as_ptr()) }];
+        let _ = dialog.SetFileTypes(&filters);
+        let opts = dialog.GetOptions().unwrap_or_default() | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST | FOS_FORCEFILESYSTEM;
+        let _ = dialog.SetOptions(opts);
+        dialog.Show(Some(owner)).ok()?;
+        let item = dialog.GetResult().ok()?;
+        let pwstr = item.GetDisplayName(SIGDN_FILESYSPATH).ok()?;
+        if pwstr.is_null() {
+            return None;
+        }
+        let path = pwstr.to_string().ok().map(std::path::PathBuf::from);
+        CoTaskMemFree(Some(pwstr.0 as *const _));
+        path
     }
 }
 
