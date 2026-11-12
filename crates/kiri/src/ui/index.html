@@ -471,22 +471,29 @@ tr.prow .btn svg { width: 12px; height: 12px; fill: currentColor; flex: none; }
 .toast.removed.undo .life { animation-duration: var(--life, 6s); }
 .toast.removed .linkish { font-weight: 600; }
 
-.content { flex: 1; overflow: auto; padding: 4px 24px 20px 20px; }
+/* padding-top must stay 0 when a sticky thead is present: Chromium sticks below
+   the padding edge, so any top padding becomes a scroll "window" that leaks rows. */
+.content { flex: 1; overflow: auto; padding: 0 24px 20px 20px; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; }
 th { white-space: nowrap; text-align: left; font-size: var(--fs-small); font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .05em;
-     padding: 6px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); }
-/* Images (and other .pin tables): checkbox + Name stick left, Actions stick right.
-   Soft hairline separators instead of heavy scroll shadows; opaque pin cells so
-   middle columns don't leak through. No overflow:hidden (breaks sticky). */
+     padding: 6px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; background: var(--bg);
+     /* Solid plate above the sticky edge kills subpixel AA seams (no ::before on
+        table-cells — absolute children of th are unreliable in WebView2). */
+     box-shadow: 0 -8px 0 0 var(--bg); }
+/* List tables (Images, Containers, Volumes, …): checkbox + Name stick left, Actions
+   stick right. Soft hairline separators; opaque pin cells so middle columns don't
+   leak through. No overflow:hidden (breaks sticky). */
 table.pin {
   --pin-pad-l: 16px; --pin-pad-r: 16px; --pin-ck: 34px;
   --pin-edge: var(--line);
   --pin-pick: color-mix(in srgb, var(--blue) 9%, var(--bg));
   --pin-pick-hot: color-mix(in srgb, var(--blue) 13%, var(--bg));
+  /* Top edge lives on sticky thead cells so it doesn't scroll away (漏光). */
   border: 1px solid var(--line);
+  border-top: 0;
   border-radius: 10px;
 }
-.content:has(> table.pin) { padding-left: 0; padding-right: 0; }
+.content:has(> table.pin), .content:has(> .bl) { padding-left: 0; padding-right: 0; }
 /* Full grid: horizontal + vertical rules stay visible even on selected rows. */
 table.pin th, table.pin td {
   border-right: 1px solid var(--line);
@@ -496,7 +503,11 @@ table.pin th, table.pin td {
 table.pin th:last-child, table.pin td:last-child { border-right: 0; }
 table.pin tbody tr:last-child > td { border-bottom: 0; }
 table.pin thead th {
+  border-top: 1px solid var(--line);
   background: color-mix(in srgb, var(--raised) 70%, var(--bg));
+  /* border-box so fill sits under the top border — padding-box left a clear strip. */
+  background-clip: border-box;
+  box-shadow: 0 -8px 0 0 var(--bg);
 }
 table.pin thead th:first-child { border-top-left-radius: 9px; }
 table.pin thead th:last-child { border-top-right-radius: 9px; }
@@ -509,20 +520,30 @@ table.pin th.ck, table.pin td.ck {
   padding-left: var(--pin-pad-l);
   background-color: var(--bg);
 }
-table.pin thead th.ck { z-index: 6; background-color: color-mix(in srgb, var(--raised) 70%, var(--bg)); }
+table.pin thead th.ck {
+  z-index: 6; background-color: color-mix(in srgb, var(--raised) 70%, var(--bg));
+  box-shadow: 0 -8px 0 0 var(--bg);
+}
 table.pin th.ck + th, table.pin td.ck + td {
   position: sticky; left: var(--pin-ck); z-index: 3;
   background-color: var(--bg);
   box-shadow: 4px 0 8px -6px rgba(15, 20, 25, .12);
 }
-table.pin thead th.ck + th { z-index: 6; background-color: color-mix(in srgb, var(--raised) 70%, var(--bg)); }
+table.pin thead th.ck + th {
+  z-index: 6; background-color: color-mix(in srgb, var(--raised) 70%, var(--bg));
+  /* Keep upward anti-leak plate + right scroll depth. */
+  box-shadow: 4px 0 8px -6px rgba(15, 20, 25, .12), 0 -8px 0 0 var(--bg);
+}
 table.pin th.actions, table.pin td.actions {
   position: sticky; right: 0; z-index: 3;
   padding-right: calc(10px + var(--pin-pad-r));
   background-color: var(--bg);
   box-shadow: -4px 0 8px -6px rgba(15, 20, 25, .12);
 }
-table.pin thead th.actions { z-index: 6; background-color: color-mix(in srgb, var(--raised) 70%, var(--bg)); }
+table.pin thead th.actions {
+  z-index: 6; background-color: color-mix(in srgb, var(--raised) 70%, var(--bg));
+  box-shadow: -4px 0 8px -6px rgba(15, 20, 25, .12), 0 -8px 0 0 var(--bg);
+}
 /* Row wash on every cell including sticky pins; keep grid borders as-is. */
 table.pin tbody tr.row:hover > td {
   background-color: color-mix(in srgb, var(--text) 3.5%, var(--bg)) !important;
@@ -1424,8 +1445,11 @@ td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px
 @media (prefers-reduced-motion: reduce) { .toast.engine, .toast.engine * { animation: none !important; } }
 
 /* Builds: a list and the picked build's steps, side by side. */
-.bl { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 16px; height: 100%; min-height: 0; }
-.bl-list { overflow-y: auto; display: grid; align-content: start; gap: 2px; padding: 2px 4px 2px 0; border-right: 1px solid var(--line); }
+/* Builds: same framed list look as .pin tables (outer rules + column split). */
+.bl { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 0; height: 100%; min-height: 0;
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
+.bl-list { overflow-y: auto; display: grid; align-content: start; gap: 2px; padding: 6px; border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--raised) 35%, var(--bg)); }
 .bl-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
 .bl-item:hover { background: var(--row-hover); }
 .bl-item[aria-selected="true"] { background: var(--raised); }
@@ -1438,7 +1462,7 @@ td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px
 .bl-st .spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: bl-spin .8s linear infinite; }
 @keyframes bl-spin { to { transform: rotate(360deg); } }
 .bl-none { color: var(--muted); padding: 12px; }
-.bl-detail { overflow-y: auto; min-width: 0; padding: 4px 4px 16px 0; }
+.bl-detail { overflow-y: auto; min-width: 0; padding: 12px 16px 16px; background: var(--bg); }
 .bl-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 8px; }
 .bl-head h2 { font-size: var(--fs-title); letter-spacing: -.01em; }
 .bl-pill { padding: 2px 9px; border-radius: 999px; font-size: var(--fs-small); font-weight: 600; color: var(--muted); background: var(--raised); }
@@ -7041,8 +7065,9 @@ function table(head, rows, view, last) {
   };
   // In place: a refresh or a button's change doesn't redraw the rows that stay.
   // A list whose rows can be picked starts with their boxes' column, and takes
-  // focus for its keys (⌘A, arrows, Space, Delete). Images pins checkbox/Name/Actions.
-  morph($("content"), `<table${view === "images" ? ' class="pin"' : ""} data-view="${view}"${LISTS[view]?.bulk ? ' tabindex="0"' : ""}><thead><tr>${LISTS[view]?.bulk ? pickHead(view) : ""}${head.map(th).join("")}${last}</tr></thead><tbody>${rows.join("")}</tbody></table>`);
+  // focus for its keys (⌘A, arrows, Space, Delete). .pin draws the full grid and
+  // sticks checkbox/Name left + Actions right (Images first; every list view now).
+  morph($("content"), `<table class="pin" data-view="${view}"${LISTS[view]?.bulk ? ' tabindex="0"' : ""}><thead><tr>${LISTS[view]?.bulk ? pickHead(view) : ""}${head.map(th).join("")}${last}</tr></thead><tbody>${rows.join("")}</tbody></table>`);
   spanRows();
   fitColumns();
 }
