@@ -1025,7 +1025,19 @@ fn allowed_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed_url, host_path_ok};
+    use super::{allowed_url, host_path_ok, page_cmd_tokens_ok};
+
+    #[test]
+    fn notes_cmds_allow_cjk_and_slash_ids() {
+        let id = "新建子目录/未命名-n1794464409860";
+        assert!(page_cmd_tokens_ok("noteread", id, ""));
+        assert!(page_cmd_tokens_ok("noterename", id, ""));
+        assert!(page_cmd_tokens_ok("notedelete", id, ""));
+        assert!(page_cmd_tokens_ok("imgnote", "library/nginx:latest", ""));
+        // Docker ids still rejected when non-plain.
+        assert!(!page_cmd_tokens_ok("container", id, ""));
+        assert!(!page_cmd_tokens_ok("files", "abc", id));
+    }
 
     #[test]
     fn only_kiris_own_urls_open() {
@@ -1055,12 +1067,36 @@ mod tests {
 
 /// Handles one message from the page, on the window's thread: quick things
 /// here, the rest on the engine thread or a thread of their own.
+/// Whether a page command's id/name may be handled. Docker-facing ids stay
+/// ASCII tokens; notes and image remarks allow path/ref characters.
+fn page_cmd_tokens_ok(cmd: &str, id: &str, name: &str) -> bool {
+    let notes_cmd = matches!(
+        cmd,
+        "notes"
+            | "noteread"
+            | "notesave"
+            | "notedelete"
+            | "notemkdir"
+            | "notermdir"
+            | "noterename"
+            | "notemove"
+            | "notereveal"
+            | "imgnotes"
+            | "imgnote"
+            | "imgnotesave"
+    );
+    if notes_cmd {
+        return true;
+    }
+    let plain = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b));
+    plain(id) && (!matches!(cmd, "files" | "preview" | "download" | "terminal") || plain(name))
+}
+
 pub fn on_message(msg: &str) {
     let Ok(c) = serde_json::from_str::<PageCmd>(msg) else { return };
     // Ids and container names are plain tokens; anything else is not from
     // the page as written, and never reaches a request line.
-    let plain = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b));
-    if !plain(&c.id) || (matches!(c.cmd.as_str(), "files" | "preview" | "download" | "terminal") && !plain(&c.name)) {
+    if !page_cmd_tokens_ok(&c.cmd, &c.id, &c.name) {
         return;
     }
     match c.cmd.as_str() {

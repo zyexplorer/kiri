@@ -12556,13 +12556,15 @@ function notesTreeHtml(nodes, depth) {
       const label = renaming
         ? `<input class="rename" id="note-rename" value="${esc(N.renaming.value)}" data-noterename="${esc(n.id)}" data-notekind="folder" aria-label="${tr("Folder name")}">`
         : `<span class="t" title="${esc(n.name)}">${esc(n.name)}</span>`;
-      html += `<div class="notes-row" data-notefolder="${esc(n.id)}" data-notedrop="${esc(n.id)}" draggable="true" data-notedrag="${esc(n.id)}" data-notekind="folder" aria-current="${selected}" ${pad}>
+      // No drag while renaming: HTML5 drag on the row steals clicks and text selection in the input.
+      const drag = renaming ? "" : ` draggable="true" data-notedrag="${esc(n.id)}"`;
+      html += `<div class="notes-row" data-notefolder="${esc(n.id)}" data-notedrop="${esc(n.id)}"${drag} data-notekind="folder" aria-current="${selected}" ${pad}>
         <button type="button" class="twist" data-notetwist="${esc(n.id)}" aria-expanded="${open}" aria-label="${tr("Show")}">${svgOf("caret")}</button>
         <svg class="ic" viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.folder}"/></svg>
         ${label}
         <span class="acts">
-          ${ibtn("pencil", "Rename", `data-noterenameui="${esc(n.id)}" data-notekind="folder" data-notename="${esc(n.name)}"`)}
-          ${ibtn("trash", "Delete", `data-notermdir="${esc(n.id)}"`, "danger")}
+          ${ibtn("pencil", "Rename", `type="button" data-noterenameui="${esc(n.id)}" data-notekind="folder" data-notename="${esc(n.name)}"`)}
+          ${ibtn("trash", "Delete", `type="button" data-notermdir="${esc(n.id)}"`, "danger")}
         </span>
       </div>`;
       if (open) {
@@ -12580,7 +12582,8 @@ function notesTreeHtml(nodes, depth) {
       const star = n.collected
         ? `<svg class="ic star" viewBox="0 0 256 256" aria-hidden="true" title="${tr("Collected note")}"><path d="${PH.starfill}"/></svg>`
         : "";
-      html += `<div class="notes-row" role="button" tabindex="0" data-noteid="${esc(n.id)}" draggable="true" data-notedrag="${esc(n.id)}" data-notekind="note" aria-current="${n.id === N.id}" ${pad}${n.collected ? ` data-collected="1"` : ""}>
+      const drag = renaming ? "" : ` draggable="true" data-notedrag="${esc(n.id)}"`;
+      html += `<div class="notes-row" role="button" tabindex="0" data-noteid="${esc(n.id)}"${drag} data-notekind="note" aria-current="${n.id === N.id}" ${pad}${n.collected ? ` data-collected="1"` : ""}>
         ${star}
         <span class="twist leaf"></span>
         <svg class="ic" viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.notepad}"/></svg>
@@ -12759,9 +12762,15 @@ function renderNotes() {
     const el = $(keep.id);
     if (el) { el.focus(); try { el.setSelectionRange(keep.start, keep.end); } catch {} }
   } else if (N.creating && $("note-create")) {
-    const el = $("note-create"); el.focus(); el.select();
+    // Defer past the click that opened create/rename so the browser doesn't
+    // blur the new input when the destroyed button finishes focusing.
+    const el = $("note-create");
+    notesInlineFocusAt = Date.now();
+    requestAnimationFrame(() => { el.focus(); el.select(); });
   } else if (N.renaming && $("note-rename")) {
-    const el = $("note-rename"); el.focus(); el.select();
+    const el = $("note-rename");
+    notesInlineFocusAt = Date.now();
+    requestAnimationFrame(() => { el.focus(); el.select(); });
   }
 }
 function mdToHtml(src) {
@@ -13038,14 +13047,18 @@ function notesKeys(ev) {
     notesSelect(ev.target.dataset.noteid);
   }
 }
+// Ignore the blur that can follow opening an inline rename/create input.
+let notesInlineFocusAt = 0;
 $("content").addEventListener("click", notesClicks);
 $("hright").addEventListener("click", notesClicks);
 $("content").addEventListener("keydown", notesKeys);
 $("content").addEventListener("focusout", (ev) => {
   if (ev.target?.id === "note-rename" && ui.notes.renaming) setTimeout(() => {
+    if (Date.now() - notesInlineFocusAt < 120) return;
     if (document.activeElement?.id !== "note-rename" && ui.notes.renaming) notesCommitRename();
   }, 0);
   if (ev.target?.id === "note-create" && ui.notes.creating) setTimeout(() => {
+    if (Date.now() - notesInlineFocusAt < 120) return;
     if (document.activeElement?.id !== "note-create" && ui.notes.creating) notesCommitCreate();
   }, 0);
 });
@@ -13076,6 +13089,11 @@ document.addEventListener("click", (ev) => {
 });
 $("content").addEventListener("dragstart", (ev) => {
   if (ui.view !== "notes") return;
+  // Buttons/inputs inside a draggable row: don't start a row drag (kills click + text edit).
+  if (ev.target.closest("button, input, textarea, a, label, .acts, .twist, .tree-toggle")) {
+    ev.preventDefault();
+    return;
+  }
   const row = ev.target.closest("[data-notedrag]");
   if (!row) return;
   const id = row.dataset.notedrag, kind = row.dataset.notekind || "note";

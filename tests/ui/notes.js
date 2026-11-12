@@ -335,6 +335,9 @@ t("clicking rename input stays in edit mode", () => {
   const input = $("note-rename");
   if (!input) throw new Error("rename input missing after pencil");
   eq(ui.notes.renaming?.id, "Compose-tip-n1", "renaming set");
+  // While renaming, the row must not be draggable (drag steals text editing).
+  const row = input.closest(".notes-row");
+  if (row?.getAttribute("draggable") === "true") throw new Error("row still draggable while renaming");
   // A click on the input used to select the row and clear renaming.
   input.click();
   if (!$("note-rename")) throw new Error("rename input destroyed by click");
@@ -344,6 +347,55 @@ t("clicking rename input stays in edit mode", () => {
   if (!sent.some((m) => m.type === "noterename" && m.id === "Compose-tip-n1" && m.value?.name === "New title")) {
     throw new Error(JSON.stringify(sent));
   }
+});
+
+t("folder row rename and delete from acts", () => {
+  kiri.on({
+    type: "notes",
+    items: [{ id: "ops/n2", title: "docker run nginx", updated: 1 }],
+    tree: [{ kind: "folder", id: "ops", name: "ops", children: [
+      { kind: "note", id: "ops/n2", name: "docker run nginx", title: "docker run nginx", updated: 1 },
+    ]}],
+  });
+  ui.notes.open.ops = true;
+  renderNotes();
+  const folder = $("content").querySelector('[data-notefolder="ops"]');
+  if (!folder) throw new Error("no folder row");
+  const rename = folder.querySelector("[data-noterenameui]");
+  const del = folder.querySelector("[data-notermdir]");
+  if (!rename || !del) throw new Error("folder acts missing");
+  rename.click();
+  const input = $("note-rename");
+  if (!input) throw new Error("folder rename input missing");
+  eq(ui.notes.renaming?.id, "ops", "folder renaming");
+  eq(ui.notes.renaming?.kind, "folder", "folder kind");
+  input.value = "prod";
+  sent.length = 0;
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  if (!sent.some((m) => m.type === "noterename" && m.id === "ops" && m.value?.name === "prod")) {
+    throw new Error(JSON.stringify(sent));
+  }
+  renderNotes();
+  const folder2 = $("content").querySelector('[data-notefolder="ops"]');
+  sent.length = 0;
+  folder2.querySelector("[data-notermdir]").click();
+  const dlg = document.querySelector(".scrim .dialog [data-go]");
+  if (!dlg) throw new Error("no folder delete confirm");
+  dlg.click();
+  if (!sent.some((m) => m.type === "notermdir" && m.id === "ops")) throw new Error(JSON.stringify(sent));
+});
+
+t("dragstart from acts is cancelled", () => {
+  kiri.on({
+    type: "notes",
+    items: [{ id: "n1", title: "Compose tip", updated: 2 }],
+    tree: [{ kind: "note", id: "n1", name: "Compose tip", title: "Compose tip", updated: 2 }],
+  });
+  const btn = $("content").querySelector('[data-noteid="n1"] [data-noterenameui]');
+  if (!btn) throw new Error("no rename button");
+  const ev = new Event("dragstart", { bubbles: true, cancelable: true });
+  btn.dispatchEvent(ev);
+  if (!ev.defaultPrevented) throw new Error("dragstart from acts must be cancelled");
 });
 
 t("right-click New subfolder uses inline create then notemkdir", () => {
