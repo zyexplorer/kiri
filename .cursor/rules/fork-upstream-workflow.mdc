@@ -1,41 +1,41 @@
 ---
-description: Fork vs upstream — personal branch vs contribution PRs; never push mixed/conflicting work to libracoder
+description: Fork 与上游——个人分支 vs 贡献 PR；禁止把混杂/冲突改动推给 libracoder
 alwaysApply: true
 ---
 
-# Fork / upstream contribution workflow
+# Fork / 上游贡献流程
 
-Remotes: `origin` = upstream (`libracoder/kiri`); `fork` = your GitHub (`zyexplorer/kiri`).
+远程：`origin` = 上游（`libracoder/kiri`）；`fork` = 你的 GitHub（`zyexplorer/kiri`）。
 
-## Branches
+## 分支
 
-| Branch | Purpose |
-|--------|---------|
-| `main` | Fast-forward only to `origin/main`. No personal commits. |
-| `personal` (or similar long-lived name) | Your customizations; push only to `fork`. |
-| Short-lived `fix/…`, `ui/…`, `feat/…` | **One** upstream-bound change each; branched from **latest** `origin/main`. |
+| 分支 | 用途 |
+|------|------|
+| `main` | 仅快进同步 `origin/main`。不放个人提交。 |
+| `personal`（或类似长期名） | 你的定制；只推到 `fork`。 |
+| 短命 `fix/…`、`ui/…`、`feat/…` | **每个**只承载一项要给上游的改动；从**最新** `origin/main` 拉出。 |
 
-## Agent must never
+## Agent 禁止
 
-- Open or push a PR to `libracoder` / `origin` unless the user **explicitly** asks in that turn.
-- Open a PR from `personal` or any branch that mixes unrelated themes.
-- Open a PR that is not mergeable: always `git fetch origin` and confirm a clean merge into `origin/main` first (rebase/cherry-pick onto latest `main` if needed).
-- `git push origin` for feature work (push contributions to `fork`, then PR `fork` → `libracoder`).
-- Force-push or rewrite history on `origin` branches.
+- 除非用户在**当轮明确**要求，否则不要向 `libracoder` / `origin` 开或推 PR。
+- 不要从 `personal` 或混杂无关主题的分支开 PR。
+- 不要开无法干净合并的 PR：先 `git fetch origin`，确认能干净合进 `origin/main`（必要时先 rebase/cherry-pick 到最新 `main`）。
+- 功能工作不要 `git push origin`（贡献推到 `fork`，再 PR：`fork` → `libracoder`）。
+- 不要对 `origin` 上的分支 force-push 或改写历史。
 
-## Contribution flow (when user asks to contribute)
+## 贡献流程（用户要求贡献时）
 
 1. `git fetch origin && git checkout -B <topic> origin/main`
-2. Bring **only** the intended commits/files (cherry-pick or minimal patch)—not the whole personal line.
-3. Run the checks the author requires (`CONTRIBUTING.md`: fmt/clippy/tests/`ui-test.py` as relevant).
-4. Push to `fork` with `-u`; create the PR only after the user confirms (or they said “开 PR / 提交给作者” clearly).
-5. After upstream merges: update local `main`, then merge/rebase `origin/main` into `personal`.
+2. 只带上**目标**提交/文件（cherry-pick 或最小补丁）——不要整条 personal 线。
+3. 跑作者要求的检查（`CONTRIBUTING.md`：fmt/clippy/tests/`ui-test.py` 等按需）。
+4. 用 `-u` 推到 `fork`；用户确认后再建 PR（或他们已明确说「开 PR / 提交给作者」）。
+5. 上游合并后：更新本地 `main`，再把 `origin/main` merge/rebase 进 `personal`。
 
-## Personal / preview work
+## 个人 / 预览工作
 
-- Stay on `personal` (or a throwaway branch off it). Push to `fork` only.
-- Do not use contribution branches as a dumping ground for i18n dumps, experiments, or unrelated engine knobs.
+- 留在 `personal`（或从它拉出的临时分支）。只推 `fork`。
+- 不要把贡献分支当成堆放 i18n、实验或无关引擎旋钮的垃圾场。
 
-## If unsure
+## 拿不准时
 
-Ask before any `gh pr create` or push that could affect upstream review. Prefer a closed local commit over a dirty PR.
+任何可能影响上游审阅的 `gh pr create` 或 push，先问用户。宁可本地先有一个干净提交，也不要交脏 PR。
