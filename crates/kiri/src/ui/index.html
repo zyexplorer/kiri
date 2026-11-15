@@ -10749,9 +10749,18 @@ $("content").addEventListener("click", (ev) => {
   else if ((el = t("[data-psuggest]"))) { ui.pulls.delete(el.dataset.pname); render(); openPull(el.dataset.psuggest); }
   else if ((el = t("[data-ptags]"))) { ui.pulls.delete(el.dataset.pname); render(); openPull(); ppTo(el.dataset.ptags, "latest"); }
   else if ((el = t("[data-sort]"))) {
-    // A new column sorts names A→Z and numbers biggest first; a second click flips it.
+    // Three-way cycle on the same column: ascending → descending → restore the
+    // view's default (Images: Pulled newest-first; other lists: natural order).
+    // fromUser marks a deliberate pick so the Images default is not stuck on
+    // "descending" when cycling the Pulled column itself.
     const view = el.dataset.sortview, key = el.dataset.sort, cur = ui.sort[view];
-    ui.sort[view] = cur?.key === key ? { key, desc: !cur.desc } : { key, desc: !["repo", "tag", "id", "name", "image", "state", "ports"].includes(key) };
+    const def = view === "images" ? { key: "pulled", desc: true } : null;
+    const atDefault = def ? (!cur?.fromUser && cur?.key === def.key && !!cur?.desc === !!def.desc)
+      : !cur?.key;
+    if (atDefault || cur?.key !== key) ui.sort[view] = { key, desc: false, fromUser: true };
+    else if (!cur.desc) ui.sort[view] = { key, desc: true, fromUser: true };
+    else if (def) ui.sort[view] = { ...def };
+    else delete ui.sort[view];
     render();
   }
   else if ((el = t("[data-rmi]"))) removeImage(el.dataset.rmi);
