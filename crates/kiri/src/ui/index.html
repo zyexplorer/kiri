@@ -472,8 +472,10 @@ tr.prow .btn svg { width: 12px; height: 12px; fill: currentColor; flex: none; }
 .toast.removed .linkish { font-weight: 600; }
 
 /* padding-top must stay 0 when a sticky thead is present: Chromium sticks below
-   the padding edge, so any top padding becomes a scroll "window" that leaks rows. */
-.content { flex: 1; overflow: auto; padding: 0 24px 20px 20px; }
+   the padding edge, so any top padding becomes a scroll "window" that leaks rows.
+   overflow-anchor: none — pin-table morph/hover must not let scroll anchoring
+   yank a panned-right Images list back to scrollLeft 0. */
+.content { flex: 1; overflow: auto; padding: 0 24px 20px 20px; overflow-anchor: none; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; }
 th { white-space: nowrap; text-align: left; font-size: var(--fs-small); font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .05em;
      padding: 6px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; background: var(--bg);
@@ -7050,7 +7052,8 @@ function table(head, rows, view, last) {
   const sort = ui.sort[view];
   // A column can say how it sizes ({ fixed: ch } for one whose longest value is known, { share } for
   // its part of the rest). A column that isn't fixed has a resize edge when one after it isn't either:
-  // it moves the line to that column. `pref` is the pin-table floor before the pane scrolls.
+  // dragging grows/shrinks that column only; columns after the line keep their width and translate
+  // (table scrollWidth changes). `pref` is the pin-table floor before the pane scrolls.
   const flex = (i) => !head[i]?.[3]?.fixed;
   const grip = (i) => (flex(i) && head.some((_, k) => k > i && flex(k)) ? `<span class="col-resize" data-col="${i}" title="${tr("Drag to resize, double-click to reset")}"></span>` : "");
   const size = (o) => {
@@ -7071,23 +7074,38 @@ function table(head, rows, view, last) {
   // A list whose rows can be picked starts with their boxes' column, and takes
   // focus for its keys (⌘A, arrows, Space, Delete). .pin draws the full grid and
   // sticks checkbox/Name left + Actions right (Images first; every list view now).
-  morph($("content"), `<table class="pin" data-view="${view}"${LISTS[view]?.bulk ? ' tabindex="0"' : ""}><thead><tr>${LISTS[view]?.bulk ? pickHead(view) : ""}${head.map(th).join("")}${last}</tr></thead><tbody>${rows.join("")}</tbody></table>`);
+  // morph clears inline table/th widths; the next layout would clamp scrollLeft to 0
+  // before fitColumns restores width — keep the pane's scroll across that dip.
+  const sc = $("content"), sx = sc.scrollLeft, sy = sc.scrollTop;
+  morph(sc, `<table class="pin" data-view="${view}"${LISTS[view]?.bulk ? ' tabindex="0"' : ""}><thead><tr>${LISTS[view]?.bulk ? pickHead(view) : ""}${head.map(th).join("")}${last}</tr></thead><tbody>${rows.join("")}</tbody></table>`);
   spanRows();
   fitColumns();
+  sc.scrollLeft = sx;
+  sc.scrollTop = sy;
 }
 
-/* Resized columns. A table's widths are kept as shares of the room beside its last column (the
-   actions, which keep their pixel width), so they follow the window. Columns hidden at narrow
-   widths don't take a share while hidden. They're saved with the other settings in ~/.kiri/ui.json. */
+/* Resized columns. New drags store absolute pixel widths ({ unit: "px" }); legacy entries are
+   shares of the room beside Actions and still scale with the window. Hidden columns keep a 0
+   slot. Saved with the other settings in ~/.kiri/ui.json. */
 const widths = () => (prefs.columnWidths ||= {});
 function saveWidths() { send("setpref", { name: "columnWidths", value: widths() }); }
 // The boxes' column keeps its own width and isn't one of these.
 const headCells = (tbl) => { const cells = [...tbl.tHead.rows[0].cells].filter((th) => !th.classList.contains("ck")); return [cells, cells.pop()]; };
 const visible = (el) => getComputedStyle(el).display !== "none";
 const COL_MIN = 110;
+/* Per-column floor from data-min (Name/Repository wider than Size/Driver, etc.).
+   Drag and fitColumns share this so the grip hard-stops at that column's min —
+   no “keep dragging then snap back on pointerup”. COL_MIN is only the fallback
+   when a heading forgot to declare min. */
+const colMin = (th) => { const d = +(th?.dataset?.min || 0); return d > 0 ? d : COL_MIN; };
 function fitColumns() {
-  const tbl = $("content").querySelector("table[data-view]");
+  const sc = $("content");
+  const tbl = sc?.querySelector("table[data-view]");
   if (!tbl) return;
+  // Measuring after morph (which drops style.width) can briefly shrink scrollWidth
+  // and clamp scrollLeft; put it back when we're done.
+  const sx = sc.scrollLeft, sy = sc.scrollTop;
+  const restore = () => { sc.scrollLeft = sx; sc.scrollTop = sy; };
   const [cells, last] = headCells(tbl);
   const fixed = (th) => !!th.dataset.fixed;
   let w = widths()[tbl.dataset.view];
@@ -7105,7 +7123,7 @@ function fitColumns() {
   // Laid out when columns declare a share or a fixed width, or after the
   // person has resized once (saved widths). Share-only tables (Images,
   // Containers) must not wait for a drag — otherwise a long tag pushes Actions off.
-  if (!w && !cells.some((th) => fixed(th) || th.dataset.share)) return;
+  if (!w && !cells.some((th) => fixed(th) || th.dataset.share)) { restore(); return; }
   tbl.classList.add("sized");
   const box = getComputedStyle(tbl.parentElement);
   // Actions take what their buttons need, not a saved width: a saved one can be stale or inflated.
@@ -7128,17 +7146,38 @@ function fitColumns() {
     tbl.style.setProperty("--pin-ck", `${ckW}px`);
     const prefs = cells.map((th) => {
       if (fixed(th) || !visible(th)) return 0;
-      const m = Math.max(COL_MIN, +(th.dataset.min || 0) || COL_MIN);
+      const m = colMin(th);
       const pref = +(th.dataset.pref || 0) || m;
       return Math.max(m, pref);
     });
     const prefSum = prefs.reduce((a, b) => a + b, 0) || 1;
     let widthsPx;
-    if (prefSum <= room) {
+    // Pixel-dragged widths must not be force-stretched to the pane: with
+    // table-layout:fixed, surplus width is redistributed and columns left of
+    // the grip jitter (Containers, where the row often fits the window).
+    let exactPx = false;
+    if (w) {
+      // Saved widths: prefer absolute pixels (new drag model). Legacy entries are
+      // unitless shares summing to ~1 — keep distributing those over the pane.
+      const colsArePx = w.unit === "px" || w.cols.some((c) => c > 1.5);
+      if (colsArePx) {
+        exactPx = true;
+        widthsPx = cells.map((th, i) => {
+          if (fixed(th) || !visible(th)) return 0;
+          const m = colMin(th);
+          return Math.max(m, Math.floor(w.cols[i] || m));
+        });
+      } else {
+        const layout = Math.max(room, prefSum);
+        widthsPx = cells.map((th, i) => {
+          if (fixed(th) || !visible(th)) return 0;
+          const m = colMin(th);
+          return Math.max(m, Math.floor(share(th, i) / total * layout));
+        });
+      }
+    } else if (prefSum <= room) {
       const extra = room - prefSum;
       widthsPx = prefs.map((p, i) => p + Math.floor(extra * share(cells[i], i) / total));
-    } else if (w) {
-      widthsPx = cells.map((th, i) => (fixed(th) || !visible(th) ? 0 : Math.max(prefs[i], Math.floor(share(th, i) / total * prefSum))));
     } else {
       widthsPx = prefs;
     }
@@ -7148,11 +7187,13 @@ function fitColumns() {
     });
     last.style.width = `${lastW + pinPadR}px`;
     const mid = cells.reduce((a, th, i) => a + (fixed(th) && visible(th) ? fixedPx(th) : (widthsPx[i] || 0)), 0);
-    tbl.style.width = `${Math.max(parentInner, ckW + lastW + pinPadR + mid)}px`;
+    const contentW = ckW + lastW + pinPadR + mid;
+    tbl.style.width = `${exactPx ? contentW : Math.max(parentInner, contentW)}px`;
+    restore();
     return;
   }
   // No column narrower than its min (default COL_MIN): the room it needs comes off the wider ones.
-  const mins = cells.map((th) => (fixed(th) ? 0 : Math.max(COL_MIN, +(th.dataset.min || 0) || COL_MIN)));
+  const mins = cells.map((th) => (fixed(th) ? 0 : colMin(th)));
   const px = cells.map((th, i) => share(th, i) / total * room);
   const short = px.reduce((a, v, i) => a + (v && v < mins[i] ? mins[i] - v : 0), 0);
   const spare = px.reduce((a, v, i) => a + (v > mins[i] ? v - mins[i] : 0), 0) || 1;
@@ -7163,6 +7204,7 @@ function fitColumns() {
   });
   last.style.width = `${lastW}px`;
   tbl.style.width = "";
+  restore();
 }
 // How wide a text is in a row's cell (or in a heading, with its capitals and spacing).
 function textWidth(tbl, text, inside) {
@@ -7201,34 +7243,88 @@ function spanRows() {
   }
 }
 window.addEventListener("resize", () => { spanRows(); fitColumns(); });
+/* Focusing a wide table.pin (tabindex=0) or a sticky-left control scrolls the
+   pane to show that node's layout start — scrollLeft 0. Remember the pan on
+   pointerdown/up (up catches the end of a scrollbar drag) and put it back
+   after focusin (and after the focus scroll). */
+{
+  let pan = { x: 0, y: 0 };
+  const notePan = () => { const sc = $("content"); pan = { x: sc.scrollLeft, y: sc.scrollTop }; };
+  $("content").addEventListener("pointerdown", notePan, true);
+  $("content").addEventListener("pointerup", notePan, true);
+  $("content").addEventListener("focusin", (ev) => {
+    if (!ev.target.closest?.("table.pin")) return;
+    const sc = $("content"), { x, y } = pan;
+    const put = () => { sc.scrollLeft = x; sc.scrollTop = y; };
+    put();
+    requestAnimationFrame(put);
+  });
+}
 $("content").addEventListener("pointerdown", (ev) => {
   const grip = ev.target.closest(".col-resize");
   if (!grip || ev.button !== 0) return;
+  // Keep focus/scroll where they are: preventing default stops the table[tabindex]
+  // from taking focus and scrolling .content back to scrollLeft 0 (Images when
+  // the person has panned right to reach a middle column's grip).
   ev.preventDefault();
   const tbl = grip.closest("table"), view = tbl.dataset.view, [cells, last] = headCells(tbl);
-  const i = +grip.dataset.col, j = cells.findIndex((th, k) => k > i && visible(th) && !th.dataset.fixed);
-  if (j < 0) return;
-  // Layout pixels: the page is zoomed by the text size setting, the pointer isn't.
-  const px = cells.map((th) => th.offsetWidth), lastW = actionsWidth(tbl) || last.offsetWidth, zoom = prefs.scale || 1;
-  const room = px.reduce((a, b) => a + b, 0), prev = widths()[view];
-  const MIN = 48, x0 = ev.clientX, a = px[i], b = px[j];
+  const i = +grip.dataset.col;
+  // Resize the column left of the grip only; later columns keep their widths and
+  // translate as the table's scrollWidth grows/shrinks (spreadsheet-style).
+  if (!cells[i] || cells[i].dataset.fixed || !visible(cells[i])) return;
+  if (!cells.some((th, k) => k > i && visible(th) && !th.dataset.fixed)) return;
+  const scroller = $("content");
+  let scrollX = scroller.scrollLeft, scrollY = scroller.scrollTop;
+  const restoreScroll = () => { scroller.scrollLeft = scrollX; scroller.scrollTop = scrollY; };
+  tbl.classList.add("sized");
+  // Snapshot every middle column so only index i changes while the rest stay put.
+  const px = cells.map((th) => th.offsetWidth);
+  const lastW = actionsWidth(tbl) || last.offsetWidth, zoom = prefs.scale || 1;
+  const pin = tbl.classList.contains("pin");
+  const cs = getComputedStyle(tbl);
+  const pinPadR = pin ? (parseFloat(cs.getPropertyValue("--pin-pad-r")) || 16) : 0;
+  const ckW = pin ? (parseFloat(cs.getPropertyValue("--pin-ck")) || (tbl.tHead.rows[0].querySelector("th.ck")?.offsetWidth || 0)) : 0;
+  // Same floor as fitColumns — stop at the min during the drag (no post-up snap).
+  const minW = colMin(cells[i]);
+  const x0 = ev.clientX, a0 = px[i];
+  const setTableWidth = () => {
+    const mid = px.reduce((s, v, k) => s + (visible(cells[k]) ? v : 0), 0);
+    // Exact content width only — never Math.max(pane): surplus under
+    // table-layout:fixed lands on earlier columns and makes them twitch when
+    // the dragged column crosses the “fits the pane” boundary (Containers).
+    if (pin) tbl.style.width = `${ckW + lastW + pinPadR + mid}px`;
+  };
+  // Ensure every middle column has an explicit width so changing one does not
+  // reflow the others under table-layout:fixed.
+  cells.forEach((th, k) => { if (visible(th) && !th.dataset.fixed) th.style.width = `${Math.floor(px[k])}px`; });
+  setTableWidth();
   document.documentElement.classList.add("resizing");
   const move = (e) => {
-    const d = Math.max(MIN - a, Math.min(b - MIN, (e.clientX - x0) / zoom));
-    px[i] = a + d; px[j] = b - d;
-    // A hidden column keeps the share it had, or an even one.
-    widths()[view] = { cols: px.map((v, k) => (v ? v / room : prev?.cols[k] ?? 1 / px.length)), last: lastW };
-    fitColumns();
+    const d = (e.clientX - x0) / zoom;
+    // Hard stop: further pointer motion past minW does not shrink the column.
+    px[i] = Math.max(minW, a0 + d);
+    // Re-assert every middle width each move so a transient surplus cannot
+    // bleed into columns left of the grip under table-layout:fixed.
+    cells.forEach((th, k) => { if (visible(th) && !th.dataset.fixed) th.style.width = `${Math.floor(px[k])}px`; });
+    setTableWidth();
+    // Absolute pixels so fitColumns won't reinterpret as shares of a fixed room.
+    widths()[view] = { cols: px.map((v, k) => (visible(cells[k]) ? Math.floor(v) : 0)), last: lastW, unit: "px" };
+    restoreScroll();
   };
   const up = () => {
     document.removeEventListener("pointermove", move);
     document.removeEventListener("pointerup", up);
     document.documentElement.classList.remove("resizing");
     ui.resizedAt = Date.now();
+    fitColumns();
+    restoreScroll();
+    requestAnimationFrame(restoreScroll);
     saveWidths();
   };
   document.addEventListener("pointermove", move);
   document.addEventListener("pointerup", up);
+  restoreScroll();
+  requestAnimationFrame(restoreScroll);
 });
 $("content").addEventListener("dblclick", (ev) => {
   const grip = ev.target.closest(".col-resize");
@@ -7307,8 +7403,8 @@ function renderContainers() {
   }
   const share = shareOn() ? [["Share", "col-share"]] : [];
   // As in Images: every column takes a share of the width and drags to resize; Name (with its image under it) starts widest.
-  if (share.length) share[0].push(undefined, { share: 1 });
-  table([["Name", "", "name", { share: 3 }], ["State", "col-state", "state", { share: 1.2 }], ["Ports", "", "ports", { share: 1.2 }], ...share, ["Size", "r", "size", { share: 1 }], ["Created", "col-created", "created", { share: 1 }]], rows, "containers");
+  if (share.length) share[0].push(undefined, { share: 1, min: 90 });
+  table([["Name", "", "name", { share: 3, min: 160 }], ["State", "col-state", "state", { share: 1.2, min: 120 }], ["Ports", "", "ports", { share: 1.2, min: 120 }], ...share, ["Size", "r", "size", { share: 1, min: 90 }], ["Created", "col-created", "created", { share: 1, min: 110 }]], rows, "containers");
 }
 
 function groupRow(project, members) {
@@ -8260,7 +8356,7 @@ function renderVolumes() {
   if (!items.length) return noMatch();
   // Name's floor fits icon + short id + anonymous tag; Mount takes the rest so
   // host and guest paths stay readable.
-  table([["Name", "clip", "", { share: 1.1, min: 200 }], ["Mount", "vol-mount-cell", "", { share: 3.6 }], ["Status", "", "", { share: 0.9 }], ["Driver", "", "", { share: 0.7 }], ["Created", "", "", { share: 0.8 }]], items.map((v) => {
+  table([["Name", "clip", "", { share: 1.1, min: 200 }], ["Mount", "vol-mount-cell", "", { share: 3.6, min: 220 }], ["Status", "", "", { share: 0.9, min: 120 }], ["Driver", "", "", { share: 0.7, min: 90 }], ["Created", "", "", { share: 0.8, min: 110 }]], items.map((v) => {
     const used = volUsers(v), anon = volAnon(v), guest = volGuestPath(v), host = volMacHost(v);
     const label = anon ? short(v.Name) : v.Name;
     const status = used
@@ -8287,7 +8383,7 @@ function renderNetworks() {
   const items = listed("networks");
   if (!kept("networks").length) return renderEmpty("networks");
   if (!items.length) return noMatch();
-  table([["Name"], ["Driver"], ["Subnet"], ["Created"]], items.map((n) => `<tr class="row${chosen("networks", n)}" data-key="${esc(n.Id)}"${pickAt("networks", n)}>
+  table([["Name", "", "", { share: 1.4, min: 140 }], ["Driver", "", "", { share: 1, min: 100 }], ["Subnet", "", "", { share: 1.2, min: 120 }], ["Created", "", "", { share: 1, min: 110 }]], items.map((n) => `<tr class="row${chosen("networks", n)}" data-key="${esc(n.Id)}"${pickAt("networks", n)}>
     ${pickCell("networks", n)}<td><div class="name">${tile(null, "network")}${esc(n.Name)}</div></td>
     <td class="muted">${esc(n.Driver)}</td>
     <td class="mono muted">${esc(n.IPAM?.Config?.[0]?.Subnet || "—")}</td>
@@ -11131,7 +11227,7 @@ function renderPods() {
         <div><b>${esc(ns)}</b><div class="sub-name">${tr("Namespace · {n} of {total} running", { n: up, total: pods.length })}</div></div></div></td><td class="actions"></td></tr>`);
     if (open) rows.push(...pods.map(podRow));
   }
-  table([["Name", "", "name"], ["Status", "col-state", "status"], ["Ready", "", "ready"], ["Restarts", "r", "restarts"], ...(shareOn() ? [["Share", "col-share"]] : []), ["Age", "", "age"]], rows, "pods");
+  table([["Name", "", "name", { share: 2, min: 160 }], ["Status", "col-state", "status", { share: 1.2, min: 120 }], ["Ready", "", "ready", { share: 0.8, min: 80 }], ["Restarts", "r", "restarts", { share: 0.8, min: 90 }], ...(shareOn() ? [["Share", "col-share", "", { share: 1, min: 90 }]] : []), ["Age", "", "age", { share: 0.9, min: 90 }]], rows, "pods");
 }
 
 function podRow(p) {
@@ -11341,7 +11437,7 @@ function renderServices() {
       <td class="muted" data-kage="${esc(s.created || "")}">${s.created ? since(Date.parse(s.created) / 1000) : ""}</td>
       <td class="actions"><div class="acts-row">${open ? ibtn("open", `Open ${portUrl(open)}`, `data-open="${portUrl(open)}"`) : ""}</div></td></tr>`;
   });
-  table([["Name", "", "name"], ["Namespace", "", "ns"], ["Type", "", "type"], ["Cluster IP", "", "ip"], ["Ports"], ...(shareOn() ? [["Share", "col-share"]] : []), ["Age", "", "age"]], rows, "services");
+  table([["Name", "", "name", { share: 1.6, min: 140 }], ["Namespace", "", "ns", { share: 1.1, min: 110 }], ["Type", "", "type", { share: 0.9, min: 100 }], ["Cluster IP", "", "ip", { share: 1.2, min: 120 }], ["Ports", "", "", { share: 1.2, min: 110 }], ...(shareOn() ? [["Share", "col-share", "", { share: 1, min: 90 }]] : []), ["Age", "", "age", { share: 0.9, min: 90 }]], rows, "services");
 }
 
 /* --- Share for Kubernetes: a service, or a pod, gets the same Share cell as a
@@ -13449,7 +13545,11 @@ document.addEventListener("keydown", (ev) => {
     const next = order[i < 0 ? (down ? 0 : order.length - 1) : Math.max(0, Math.min(order.length - 1, i + (down ? 1 : -1)))];
     if (ev.shiftKey && !order.includes(pick.last)) pick.last = i < 0 ? next : pick.cur;
     pickRow(next, ev.shiftKey ? "range" : "one");
-    $("content").querySelector(`[data-pick="${CSS.escape(next)}"]`)?.scrollIntoView({ block: "nearest" });
+    // Keep horizontal pan: a full-width row's scrollIntoView would otherwise
+    // bring its left edge into view and reset scrollLeft on pin tables.
+    const sc = $("content"), sx = sc.scrollLeft;
+    sc.querySelector(`[data-pick="${CSS.escape(next)}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    sc.scrollLeft = sx;
   } else if ((k === " " || k === "Enter") && at?.closest("button, a")) {
     return;
   } else if (k === " " && !MOD(ev) && (at?.dataset.rpick || at?.hasAttribute("data-pickhead") || pick.cur)) {
