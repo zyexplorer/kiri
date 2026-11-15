@@ -484,7 +484,10 @@ th { white-space: nowrap; text-align: left; font-size: var(--fs-small); font-wei
    stick right. Soft hairline separators; opaque pin cells so middle columns don't
    leak through. No overflow:hidden (breaks sticky). */
 table.pin {
-  --pin-pad-l: 16px; --pin-pad-r: 16px; --pin-ck: 34px;
+  /* ck column: pin-pad-l + .ckbox(24) + pad-right(10) + border. Must not stay at 34 —
+     that was the pre-pin width and clips the box once padding-left becomes --pin-pad-l
+     (Networks / Pods / Services never hit fitColumns' share branch to widen it). */
+  --pin-pad-l: 16px; --pin-pad-r: 16px; --pin-ck: 52px;
   --pin-edge: var(--line);
   --pin-pick: color-mix(in srgb, var(--blue) 9%, var(--bg));
   --pin-pick-hot: color-mix(in srgb, var(--blue) 13%, var(--bg));
@@ -518,6 +521,7 @@ table.pin th.ck, table.pin td.ck {
   position: sticky; left: 0; z-index: 3;
   width: var(--pin-ck); min-width: var(--pin-ck); max-width: var(--pin-ck);
   padding-left: var(--pin-pad-l);
+  padding-right: 10px; /* keep .ckbox clear of the column grid line */
   background-color: var(--bg);
 }
 table.pin thead th.ck {
@@ -7088,6 +7092,16 @@ function fitColumns() {
   const fixed = (th) => !!th.dataset.fixed;
   let w = widths()[tbl.dataset.view];
   if (w && cells.length !== w.cols.length) w = null;
+  // Pin tables absorb .content's side padding into sticky ck/Actions, so the
+  // scrollport has no side gutters for middle cells to leak through.
+  const pinPadL = tbl.classList.contains("pin") ? (parseFloat(getComputedStyle(tbl).getPropertyValue("--pin-pad-l")) || 16) : 0;
+  const pinPadR = tbl.classList.contains("pin") ? (parseFloat(getComputedStyle(tbl).getPropertyValue("--pin-pad-r")) || 16) : 0;
+  // Always size the checkbox pin — share-less lists (Networks, Pods, Services)
+  // return below and would otherwise keep a too-narrow --pin-ck that clips .ckbox.
+  if (tbl.classList.contains("pin") && tbl.tHead.rows[0].querySelector("th.ck")) {
+    const ckNeed = Math.ceil(pinPadL + 24 + 10 + 1); /* padL + .ckbox + padR + border */
+    tbl.style.setProperty("--pin-ck", `${Math.max(ckNeed, 34 + pinPadL)}px`);
+  }
   // Laid out when columns declare a share or a fixed width, or after the
   // person has resized once (saved widths). Share-only tables (Images,
   // Containers) must not wait for a drag — otherwise a long tag pushes Actions off.
@@ -7103,10 +7117,6 @@ function fitColumns() {
   // The heading's room includes its sort arrow (th .arrow: 10px wide, 3px margin) even when not sorted.
   const fixedPx = (th) => Math.ceil(Math.max(textWidth(tbl, th.dataset.fixed) + (+th.dataset.extra || 0), textWidth(tbl, th.firstChild?.textContent || "", th) + 14) + pad(th));
   const taken = cells.reduce((a, th) => a + (visible(th) && fixed(th) ? fixedPx(th) : 0), 0);
-  // Pin tables absorb .content's side padding into sticky ck/Actions, so the
-  // scrollport has no side gutters for middle cells to leak through.
-  const pinPadL = tbl.classList.contains("pin") ? (parseFloat(getComputedStyle(tbl).getPropertyValue("--pin-pad-l")) || 20) : 0;
-  const pinPadR = tbl.classList.contains("pin") ? (parseFloat(getComputedStyle(tbl).getPropertyValue("--pin-pad-r")) || 24) : 0;
   const parentInner = tbl.parentElement.clientWidth - parseFloat(box.paddingLeft) - parseFloat(box.paddingRight);
   const room = parentInner - lastW - ck - taken - (tbl.classList.contains("pin") ? pinPadR : 0);
   const share = (th, i) => (fixed(th) || !visible(th) ? 0 : w ? w.cols[i] : +th.dataset.share || 1);
@@ -7114,7 +7124,7 @@ function fitColumns() {
   // Pin tables: keep preferred middle widths; if they exceed the pane, widen the
   // table and let .content scroll — sticky ck/Name/Actions stay on screen.
   if (tbl.classList.contains("pin")) {
-    const ckW = Math.max(ck, 34 + pinPadL);
+    const ckW = Math.max(ck, Math.ceil(pinPadL + 24 + 10 + 1), 34 + pinPadL);
     tbl.style.setProperty("--pin-ck", `${ckW}px`);
     const prefs = cells.map((th) => {
       if (fixed(th) || !visible(th)) return 0;
