@@ -131,11 +131,12 @@ t("held back: the app has no Registries tab and says docker login in the row", (
   r.querySelector("[data-pdismiss]")?.click();
   ui.loginsOn = true;
 });
-t("the pull popover's registry chip opens the list, Docker Hub picked and the rest Soon", () => {
+t("the pull popover's registry chip opens the list: Docker Hub picked, GitHub and Amazon ECR choosable, the rest Soon", () => {
   openPull();
   $("ppreg").click();
   const m = $("ppregmenu");
-  eq([m.hidden, m.querySelectorAll("[data-reg]").length, m.querySelector('[aria-checked="true"]').textContent, m.querySelectorAll(".soon").length], [false, 7, "Docker Hub", 6], "menu");
+  eq([m.hidden, m.querySelectorAll("[data-reg]").length, m.querySelector('[aria-checked="true"]').textContent, m.querySelectorAll(".soon").length], [false, 7, "Docker Hub", 4], "menu");
+  eq([...m.querySelectorAll("[data-reg]:not(:disabled)")].map((b) => b.dataset.reg), ["docker", "ghcr", "ecr"], "choosable");
   m.querySelector('[data-reg="docker"]').click();
   eq(m.hidden, true, "closes");
   closePull();

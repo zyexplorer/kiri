@@ -4,6 +4,10 @@
 //! container holds the capability that would make them legitimate. A deny
 //! list rather than Docker's allow list: the same protection for a fraction
 //! of the program length, so every syscall pays fewer instructions.
+//!
+//! A container started with its own profile (`--security-opt seccomp=file`)
+//! gets a program the daemon compiled for it instead; that is installed as
+//! given, and the host boundary stays on top of it.
 
 use std::io;
 
@@ -49,6 +53,9 @@ const OFF_ARG0: u32 = 16;
 
 // Capability numbers that relax the filter, as in Docker's profile.
 const CAP_SYS_MODULE: u32 = 16;
+#[cfg(target_arch = "x86_64")]
+const CAP_SYS_RAWIO: u32 = 17;
+const CAP_SYS_PTRACE: u32 = 19;
 const CAP_SYS_PACCT: u32 = 20;
 const CAP_SYS_ADMIN: u32 = 21;
 const CAP_SYS_BOOT: u32 = 22;
@@ -88,6 +95,21 @@ const fn jump(code: u16, k: u32, jt: u8, jf: u8) -> Insn {
     Insn { code, jt, jf, k }
 }
 
+// Syscalls newer than the libc crate knows. The numbers are the same on
+// aarch64 and x86-64 (the shared table, from 424 on).
+const SYS_PROCESS_MADVISE: libc::c_long = 440;
+const SYS_QUOTACTL_FD: libc::c_long = 443;
+const SYS_SET_MEMPOLICY_HOME_NODE: libc::c_long = 450;
+const SYS_LSM_GET_SELF_ATTR: libc::c_long = 459;
+const SYS_LSM_SET_SELF_ATTR: libc::c_long = 460;
+const SYS_LSM_LIST_MODULES: libc::c_long = 461;
+const SYS_OPEN_TREE_ATTR: libc::c_long = 467;
+
+/// `personality` values Docker's profile allows: the default, UNAME26, and
+/// the 32-bit variants, plus 0xffffffff, the query. Anything else can turn
+/// off address randomisation or make readable memory executable.
+const PERSONALITIES: [u32; 5] = [0, 0x8, 0x2_0000, 0x2_0008, 0xffff_ffff];
+
 /// Denied syscalls, each with the capability that would allow it (or none).
 fn denied() -> Vec<(libc::c_long, Option<u32>)> {
     use libc::*;
@@ -106,8 +128,10 @@ fn denied() -> Vec<(libc::c_long, Option<u32>)> {
         (SYS_KEXEC_FILE_LOAD, Some(CAP_SYS_BOOT)),
         (SYS_reboot, Some(CAP_SYS_BOOT)),
         // The VM's clock and accounting.
+        // clock_adjtime stays open, as in Docker's default: glibc reads the clock state through it
+        // (adjtimex and ntp_adjtime with modes 0), and the kernel itself refuses any change without
+        // CAP_SYS_TIME.
         (SYS_clock_settime, Some(CAP_SYS_TIME)),
-        (SYS_clock_adjtime, Some(CAP_SYS_TIME)),
         (SYS_settimeofday, Some(CAP_SYS_TIME)),
         (SYS_acct, Some(CAP_SYS_PACCT)),
         // Swap, quotas, NUMA policy.
@@ -142,11 +166,33 @@ fn denied() -> Vec<(libc::c_long, Option<u32>)> {
         (SYS_io_uring_setup, None),
         (SYS_io_uring_enter, None),
         (SYS_io_uring_register, None),
+        // Also closed by Docker's profile, each behind the capability that
+        // makes it legitimate there.
+        (SYS_sethostname, Some(CAP_SYS_ADMIN)),
+        (SYS_setdomainname, Some(CAP_SYS_ADMIN)),
+        (SYS_fanotify_init, Some(CAP_SYS_ADMIN)),
+        (SYS_QUOTACTL_FD, Some(CAP_SYS_ADMIN)),
+        (SYS_OPEN_TREE_ATTR, Some(CAP_SYS_ADMIN)),
+        (SYS_LSM_GET_SELF_ATTR, Some(CAP_SYS_ADMIN)),
+        (SYS_LSM_SET_SELF_ATTR, Some(CAP_SYS_ADMIN)),
+        (SYS_LSM_LIST_MODULES, Some(CAP_SYS_ADMIN)),
+        (SYS_kcmp, Some(CAP_SYS_PTRACE)),
+        (SYS_pidfd_getfd, Some(CAP_SYS_PTRACE)),
+        (SYS_PROCESS_MADVISE, Some(CAP_SYS_PTRACE)),
+        (SYS_get_mempolicy, Some(CAP_SYS_NICE)),
+        (SYS_SET_MEMPOLICY_HOME_NODE, Some(CAP_SYS_NICE)),
+        #[cfg(target_arch = "x86_64")]
+        (SYS_ioperm, Some(CAP_SYS_RAWIO)),
+        #[cfg(target_arch = "x86_64")]
+        (SYS_iopl, Some(CAP_SYS_RAWIO)),
     ]
 }
 
 /// Every program starts here: the native architecture only, then the
-/// syscall number loaded for the rules that follow.
+/// syscall number loaded for the rules that follow. A call from another
+/// architecture (32-bit compat, x32) gets EPERM here even where a custom
+/// profile's `archMap` would allow it: stricter than Docker, on purpose,
+/// since the rules after this are written for native numbers.
 fn head() -> Vec<Insn> {
     #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut))]
     let mut p = vec![
@@ -166,6 +212,22 @@ fn head() -> Vec<Insn> {
 fn deny(p: &mut Vec<Insn>, nr: libc::c_long) {
     p.push(jump(JEQ_K, nr as u32, 0, 1));
     p.push(stmt(RET_K, RET_ERRNO | libc::EPERM as u32));
+}
+
+/// `personality` outside [`PERSONALITIES`] fails with EPERM. The kernel
+/// reads an `unsigned int`, so only the low half of the argument counts.
+/// Leaves the syscall number loaded.
+fn deny_personality(p: &mut Vec<Insn>) {
+    let n = PERSONALITIES.len();
+    // JEQ number, LD arg0, one JEQ per value (a hit jumps to the reload at
+    // the end), RET EPERM, LD number.
+    p.push(jump(JEQ_K, libc::SYS_personality as u32, 0, n as u8 + 3));
+    p.push(stmt(LD_W_ABS, OFF_ARG0));
+    for (i, v) in PERSONALITIES.iter().enumerate() {
+        p.push(jump(JEQ_K, *v, (n - i) as u8, 0));
+    }
+    p.push(stmt(RET_K, RET_ERRNO | libc::EPERM as u32));
+    p.push(stmt(LD_W_ABS, OFF_NR));
 }
 
 /// vsock is not namespaced: with a socket a container could dial the
@@ -204,6 +266,7 @@ fn program(caps: u64) -> Vec<Insn> {
         }
         deny(&mut p, nr);
     }
+    deny_personality(&mut p);
     deny_vsock(&mut p);
     if !has(CAP_SYS_ADMIN) {
         // clone3 hides its flags in memory a filter cannot read: ENOSYS
@@ -219,11 +282,63 @@ fn program(caps: u64) -> Vec<Insn> {
     p
 }
 
+/// The kernel's limit on one filter's length.
+const MAX_INSNS: usize = 4096;
+
+/// Reads a program the daemon compiled: instructions of eight bytes each
+/// (code, jt, jf, k; little-endian), as the kernel lays them out. A program
+/// that is empty, ragged or longer than the kernel takes is an error.
+fn decode(bytes: &[u8]) -> io::Result<Vec<Insn>> {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(8) || bytes.len() / 8 > MAX_INSNS {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("a seccomp program of {} bytes", bytes.len())));
+    }
+    Ok(bytes
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|c| Insn { code: u16::from_le_bytes([c[0], c[1]]), jt: c[2], jf: c[3], k: u32::from_le_bytes([c[4], c[5], c[6], c[7]]) })
+        .collect())
+}
+
+/// Whether the kernel would take this program's shape.
+pub fn check(program: &[u8]) -> io::Result<()> {
+    decode(program).map(drop)
+}
+
 /// Installs the default filter on this process, or with `None` only the
 /// host boundary; what it execs inherits it. Needs CAP_SYS_ADMIN (or
 /// no_new_privs), so it runs before the user switch.
 pub fn install(caps: Option<u64>) -> io::Result<()> {
-    let insns = caps.map_or_else(boundary, program);
+    set_filter(&caps.map_or_else(boundary, program))
+}
+
+/// Installs a profile the daemon compiled together with the host boundary:
+/// filters stack and the most restrictive answer wins, so no profile can
+/// open what the boundary closes. The boundary goes first and the profile
+/// last, so the profile's `seccomp()` call is the only one it is not
+/// installed under: a profile that denies `seccomp` (or kills on it) still
+/// starts, and the container sees exactly one call, as under runc.
+pub fn install_profile(program: &[u8]) -> io::Result<()> {
+    let program = decode(program)?;
+    set_filter(&boundary())?;
+    set_filter(&program)
+}
+
+/// Only the host boundary, for a container whose profile follows later
+/// (`install_late`): under no-new-privileges runc installs the profile as
+/// late as it can, just before the program starts.
+pub fn install_boundary() -> io::Result<()> {
+    set_filter(&boundary())
+}
+
+/// A profile the daemon compiled, on top of what is installed already. With
+/// no-new-privileges set it needs no capability, so it can wait until the
+/// user is switched and the capabilities are dropped, right before execve.
+pub fn install_late(program: &[u8]) -> io::Result<()> {
+    set_filter(&decode(program)?)
+}
+
+fn set_filter(insns: &[Insn]) -> io::Result<()> {
     let prog = Prog { len: insns.len() as u16, filter: insns.as_ptr() };
     // SAFETY: a valid sock_fprog whose instructions outlive the call.
     let ret = unsafe { libc::syscall(libc::SYS_seccomp, 1 /* SECCOMP_SET_MODE_FILTER */, SECCOMP_FILTER_FLAG_SPEC_ALLOW, &prog as *const Prog) };
@@ -285,5 +400,111 @@ mod tests {
             }
         }
         assert_eq!(p.last().map(|i| (i.code, i.k)), Some((RET_K, RET_ALLOW)));
+    }
+
+    /// What the kernel would answer for a call, for the instructions this
+    /// file emits.
+    fn answer(p: &[Insn], nr: u32, arg0: u32) -> u32 {
+        let (mut pc, mut acc) = (0usize, 0u32);
+        loop {
+            let i = p[pc];
+            pc += 1;
+            match i.code {
+                LD_W_ABS => {
+                    acc = match i.k {
+                        OFF_NR => nr,
+                        OFF_ARCH => AUDIT_ARCH,
+                        OFF_ARG0 => arg0,
+                        other => panic!("offset {other}"),
+                    }
+                }
+                RET_K => return i.k,
+                JEQ_K => pc += if acc == i.k { i.jt } else { i.jf } as usize,
+                #[cfg(target_arch = "x86_64")]
+                JGE_K => pc += if acc >= i.k { i.jt } else { i.jf } as usize,
+                JSET_K => pc += if acc & i.k != 0 { i.jt } else { i.jf } as usize,
+                other => panic!("opcode {other:#x}"),
+            }
+        }
+    }
+
+    #[test]
+    fn only_docker_s_personalities_pass() {
+        let p = program(0);
+        let nr = libc::SYS_personality as u32;
+        for v in PERSONALITIES {
+            assert_eq!(answer(&p, nr, v), RET_ALLOW, "{v:#x}");
+        }
+        // ADDR_NO_RANDOMIZE, READ_IMPLIES_EXEC and a made-up one.
+        for v in [0x0004_0000, 0x0040_0000, 0x1234_5678] {
+            assert_eq!(answer(&p, nr, v), RET_ERRNO | libc::EPERM as u32, "{v:#x}");
+        }
+        // The calls after it are still seen with their number.
+        assert_eq!(answer(&p, libc::SYS_write as u32, 0), RET_ALLOW);
+        assert_eq!(answer(&p, libc::SYS_mount as u32, 0), RET_ERRNO | libc::EPERM as u32);
+        // Capabilities do not matter for it.
+        assert_eq!(answer(&program(u64::MAX), nr, 0x0004_0000), RET_ERRNO | libc::EPERM as u32);
+    }
+
+    #[test]
+    fn the_calls_docker_also_closes_follow_their_capabilities() {
+        let eperm = RET_ERRNO | libc::EPERM as u32;
+        // (call, capability that opens it, or none)
+        let calls = [
+            (libc::SYS_sethostname, Some(CAP_SYS_ADMIN)),
+            (libc::SYS_setdomainname, Some(CAP_SYS_ADMIN)),
+            (libc::SYS_fanotify_init, Some(CAP_SYS_ADMIN)),
+            (SYS_QUOTACTL_FD, Some(CAP_SYS_ADMIN)),
+            (SYS_OPEN_TREE_ATTR, Some(CAP_SYS_ADMIN)),
+            (SYS_LSM_GET_SELF_ATTR, Some(CAP_SYS_ADMIN)),
+            (SYS_LSM_SET_SELF_ATTR, Some(CAP_SYS_ADMIN)),
+            (SYS_LSM_LIST_MODULES, Some(CAP_SYS_ADMIN)),
+            (libc::SYS_kcmp, Some(CAP_SYS_PTRACE)),
+            (libc::SYS_pidfd_getfd, Some(CAP_SYS_PTRACE)),
+            (SYS_PROCESS_MADVISE, Some(CAP_SYS_PTRACE)),
+            (libc::SYS_get_mempolicy, Some(CAP_SYS_NICE)),
+            (SYS_SET_MEMPOLICY_HOME_NODE, Some(CAP_SYS_NICE)),
+        ];
+        for (nr, cap) in calls {
+            assert_eq!(answer(&program(0), nr as u32, 0), eperm, "{nr} denied by default");
+            match cap {
+                Some(c) => assert_eq!(answer(&program(1 << c), nr as u32, 0), RET_ALLOW, "{nr} opens with cap {c}"),
+                None => assert_eq!(answer(&program(u64::MAX), nr as u32, 0), eperm, "{nr} has no capability"),
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn port_io_needs_rawio() {
+        let eperm = RET_ERRNO | libc::EPERM as u32;
+        for nr in [libc::SYS_ioperm, libc::SYS_iopl] {
+            assert_eq!(answer(&program(0), nr as u32, 0), eperm);
+            assert_eq!(answer(&program(1 << CAP_SYS_RAWIO), nr as u32, 0), RET_ALLOW);
+        }
+    }
+
+    #[test]
+    fn a_compiled_program_is_read_back_as_sent() {
+        // LD arch; JEQ native; RET EPERM ...: any whole number of eight-byte instructions.
+        let mut bytes = Vec::new();
+        for i in boundary() {
+            bytes.extend_from_slice(&i.code.to_le_bytes());
+            bytes.push(i.jt);
+            bytes.push(i.jf);
+            bytes.extend_from_slice(&i.k.to_le_bytes());
+        }
+        let read = decode(&bytes).unwrap();
+        assert_eq!(read.len(), boundary().len());
+        assert!(read.iter().zip(boundary()).all(|(a, b)| (a.code, a.jt, a.jf, a.k) == (b.code, b.jt, b.jf, b.k)));
+        assert!(check(&bytes).is_ok());
+    }
+
+    #[test]
+    fn a_program_the_kernel_would_refuse_is_refused_here() {
+        assert!(decode(&[]).is_err(), "empty");
+        assert!(decode(&[0; 12]).is_err(), "not whole instructions");
+        assert!(decode(&vec![0; 8 * (MAX_INSNS + 1)]).is_err(), "too long");
+        assert!(decode(&vec![0; 8 * MAX_INSNS]).is_ok());
     }
 }

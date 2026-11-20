@@ -1,0 +1,52 @@
+# Header: Apple's virtiofs server (the Mac's files, for bind mounts) has to
+# read a file to look it up. It creates the file but fails FUSE_CREATE with
+# EACCES when the mode lacks owner read, leaving it behind: open(O_CREAT,
+# 0200), as libstdc++'s copy_file and so Node's fs.cpSync do, failed on bind
+# mounts. Lima's vz VMs show the same on a stock kernel. Create the file
+# owner-readable and set the mode asked for once it is open, so it ends as
+# on Linux. Only modes without owner read pay the extra SETATTR. Applies to
+# every FUSE mount in the guest; elsewhere the end result is the same.
+--- a/fs/fuse/dir.c
++++ b/fs/fuse/dir.c
+@@ -640,6 +640,7 @@
+ 	struct fuse_file *ff;
+ 	int epoch, err;
+ 	bool trunc = flags & O_TRUNC;
++	umode_t want;
+ 
+ 	/* Userspace expects S_IFREG in create mode */
+ 	BUG_ON((mode & S_IFMT) != S_IFREG);
+@@ -658,6 +659,16 @@
+ 	if (!fm->fc->dont_mask)
+ 		mode &= ~current_umask();
+ 
++	/*
++	 * Apple's virtiofs server has to read a file to look it up: it makes
++	 * the file but fails FUSE_CREATE with EACCES when the mode lacks owner
++	 * read (libstdc++'s copy_file creates with 0200). Create it owner-
++	 * readable and set the mode asked for once it is open.
++	 */
++	want = mode;
++	if (!fm->fc->dont_mask && !(mode & S_IRUSR))
++		mode |= S_IRUSR;
++
+ 	flags &= ~O_NOCTTY;
+ 	memset(&inarg, 0, sizeof(inarg));
+ 	memset(&outentry, 0, sizeof(outentry));
+@@ -729,6 +740,16 @@
+ 			truncate_pagecache(inode, 0);
+ 		else if (!(ff->open_flags & FOPEN_KEEP_CACHE))
+ 			invalidate_inode_pages2(inode->i_mapping);
++		if (mode != want) {
++			/* ATTR_FORCE: the caller chose this mode at create. */
++			struct iattr attr = {
++				.ia_valid = ATTR_MODE | ATTR_FORCE,
++				.ia_mode = want,
++			};
++
++			/* If refused, the file keeps owner read and stays usable. */
++			fuse_do_setattr(idmap, entry, &attr, file);
++		}
+ 	}
+ 	return err;
+ 

@@ -23,6 +23,7 @@ mod domains;
 mod engine;
 mod filters;
 mod health;
+mod hostetc;
 mod hostopts;
 mod http;
 mod logfile;
@@ -35,11 +36,18 @@ mod ops;
 pub(crate) mod ports;
 pub mod proxy;
 mod pulls;
+mod seccomp;
+mod seccomp_names;
 pub mod time;
 pub mod tls;
+mod top;
+#[cfg(target_os = "macos")]
+mod usb;
 mod vmcpu;
 mod vmlink;
 mod volumes;
+#[cfg(target_os = "macos")]
+mod watch;
 
 use std::io;
 use std::os::unix::fs::PermissionsExt;
@@ -99,6 +107,21 @@ fn raise_open_files() {
 pub fn run(_args: &[String]) -> io::Result<()> {
     let t0 = Instant::now();
     raise_open_files();
+    // SIGINT/SIGTERM shut down cleanly: power the guest off, remove the socket.
+    // Blocked before anything else starts a thread, so every thread inherits
+    // it and one thread waits for them. A thread started before this (the
+    // socket group's watcher, on a Linux host) took the signal instead, and
+    // the daemon died without a shutdown: the agent was killed with its
+    // bridges and nftables table still in place.
+    // SAFETY: plain signal-mask calls on a local set.
+    let set = unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        set
+    };
     let socket = socket_path()?;
     if UnixStream::connect(&socket).is_ok() {
         // Not an error: launchd (KeepAlive on failure) must not retry it.
@@ -137,18 +160,7 @@ pub fn run(_args: &[String]) -> io::Result<()> {
         None => None,
     };
 
-    // SIGINT/SIGTERM shut down cleanly: power the guest off, remove the socket.
-    // Blocked here so every thread inherits it; one thread waits for them.
-    // SAFETY: plain signal-mask calls on a local set.
-    let set = unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
-        libc::sigaddset(&mut set, libc::SIGINT);
-        libc::sigaddset(&mut set, libc::SIGTERM);
-        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
-        set
-    };
-
+    kiri_image::store::set_error_log(|message| diag::error!("image store", detail = message));
     let store = kiri_image::Store::open(kiri_image::Store::default_root()?)?;
     let engine = engine::Engine::boot(store)
         .inspect_err(|e| diag::error!("engine did not start", error = e))?;
@@ -178,13 +190,16 @@ pub fn run(_args: &[String]) -> io::Result<()> {
     // A Kubernetes node the engine restarted gets its kubectl context.
     crate::k8s::sync_at_start();
     // Kiri Dev leaves *.kiri.local and ports 80 and 443 to the installed
-    // Kiri, unless given ports of its own.
-    let routers = !crate::flavor::dev() || std::env::var_os("KIRI_HTTP_PORT").is_some();
+    // Kiri, unless given ports of its own (Settings → Domains, or
+    // KIRI_HTTP_PORT and KIRI_HTTPS_PORT).
+    let routers = !crate::flavor::dev() || domains::own_ports();
     if crate::flavor::dev() {
-        diag::info!(format!(
-            "{}: container domains off (KIRI_HTTP_PORT and KIRI_HTTPS_PORT turn them on)",
-            crate::flavor::APP
-        ));
+        if !routers {
+            diag::info!(format!(
+                "{}: container domains off (ports in Settings → Domains turn them on)",
+                crate::flavor::APP
+            ));
+        }
     } else if let Err(e) = dns::start() {
         diag::warn!("*.kiri.local off", error = e);
     }

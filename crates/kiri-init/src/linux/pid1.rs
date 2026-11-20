@@ -52,8 +52,24 @@ pub fn run(exe: &CStr, argv: *const *const libc::c_char, envp: *const *const lib
             libc::sigemptyset(&mut none);
             libc::sigprocmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
             libc::execve(exe.as_ptr(), argv, envp);
-            child_fail(2, "exec", io::Error::last_os_error());
+            let err = io::Error::last_os_error();
+            // tini runs the program with execvp, which hands a file that is
+            // no program (a script without a shebang) to /bin/sh.
+            if err.raw_os_error() == Some(libc::ENOEXEC) {
+                let sh = c"/bin/sh";
+                let mut args = vec![sh.as_ptr(), exe.as_ptr()];
+                let mut i = 1;
+                while !(*argv).is_null() && !(*argv.add(i)).is_null() {
+                    args.push(*argv.add(i));
+                    i += 1;
+                }
+                args.push(std::ptr::null());
+                libc::execve(sh.as_ptr(), args.as_ptr(), envp);
+            }
+            super::sys::exec_fail(2, exe, err, true);
         }
+        // The agent's descriptors (DNS sockets, other containers' pipes) stay out of PID 1.
+        libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, 0u32);
 
         let wake = libc::timespec { tv_sec: 1, tv_nsec: 0 };
         loop {

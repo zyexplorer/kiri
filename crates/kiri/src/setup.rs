@@ -40,8 +40,8 @@ use serde_json::{Value, json};
 // certificate.
 use crate::flavor::{AGENT, APP_ID, CONTEXT, dev};
 
-pub use crate::builds::ensure_builder;
 use crate::builds::{BUILDER, builder};
+pub use crate::builds::ensure_builder;
 
 /// `~/.kiri/bin`, or `~/.kiri-dev/bin`.
 fn bin_dir() -> io::Result<PathBuf> {
@@ -49,9 +49,7 @@ fn bin_dir() -> io::Result<PathBuf> {
 }
 
 fn home() -> io::Result<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| io::Error::other("HOME is not set"))
+    std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| io::Error::other("HOME is not set"))
 }
 
 fn docker_dir() -> io::Result<PathBuf> {
@@ -64,19 +62,12 @@ fn docker_dir() -> io::Result<PathBuf> {
 /// The docker CLI's directory for a context: named by the SHA-256 of its name.
 fn context_dir(name: &str) -> io::Result<PathBuf> {
     let digest = kiri_image::store::sha256_digest(name.as_bytes());
-    Ok(docker_dir()?
-        .join("contexts/meta")
-        .join(digest.trim_start_matches("sha256:")))
+    Ok(docker_dir()?.join("contexts/meta").join(digest.trim_start_matches("sha256:")))
 }
 
 fn read_json(path: &Path) -> io::Result<Value> {
     match std::fs::read(path) {
-        Ok(b) => serde_json::from_slice(&b).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("{}: {e}", path.display()),
-            )
-        }),
+        Ok(b) => serde_json::from_slice(&b).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", path.display()))),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(json!({})),
         Err(e) => Err(e),
     }
@@ -88,10 +79,7 @@ fn write_json(path: &Path, v: &Value) -> io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("kiri-tmp");
-    std::fs::write(
-        &tmp,
-        serde_json::to_vec_pretty(v).map_err(io::Error::other)?,
-    )?;
+    std::fs::write(&tmp, serde_json::to_vec_pretty(v).map_err(io::Error::other)?)?;
     std::fs::rename(tmp, path)
 }
 
@@ -111,9 +99,19 @@ pub fn launched_from_app() -> bool {
 }
 
 /// The first time the app opens: the same as `kiri setup`, quietly, except
-/// `*.kiri.local`, which the window offers and the user chooses.
-pub fn first_launch() -> io::Result<()> {
-    if agent_plist()?.is_file() && agent_runs_this()? {
+/// `*.kiri.local`, which the window offers and the user chooses. It never
+/// stops the window opening (#250): each step runs on its own, and the ones
+/// that fail wait in the window's setup checklist (`undone`) with their
+/// errors. Without the login item, the window starts the engine itself
+/// (update::start_engine).
+pub fn first_launch() {
+    let set_up = agent_plist().and_then(|p| Ok(p.is_file() && agent_runs_this()?)).map_err(step("checking how Kiri starts at login"));
+    // Not knowing is not set up: the steps run, and say what failed.
+    let set_up = set_up.unwrap_or_else(|e| {
+        crate::diag::warn!("setup step failed", step = "check", error = e);
+        false
+    });
+    if set_up {
         // Set up by an older Kiri: make sure the commands are there too.
         if let Some(contents) = bundle_contents() {
             let _ = bundled_cli(&contents);
@@ -122,9 +120,66 @@ pub fn first_launch() -> io::Result<()> {
         if !dev() {
             let _ = crate::daemon::socket_path().map(|s| docker_socket_fallback(&s));
         }
-        return Ok(());
+        // Nothing else is touched: a docker context this person removed
+        // later stays removed.
+        return;
     }
-    run(&["--no-domains".to_owned()])
+    let mut undone = Vec::new();
+    for s in FIRST_STEPS {
+        if let Err(e) = first_step(s) {
+            crate::diag::warn!("setup step failed", step = s, error = e);
+            undone.push((s, e.to_string()));
+        }
+    }
+    // The builder needs the engine, which the login item has just started;
+    // without it the window makes the builder once it starts the engine.
+    if !undone.iter().any(|(s, _)| *s == "login") {
+        let _ = builder();
+    }
+    if !dev() {
+        let _ = crate::daemon::socket_path().map(|s| docker_socket_fallback(&s));
+    }
+    *UNDONE.lock().unwrap_or_else(|e| e.into_inner()) = undone;
+}
+
+/// The first launch's steps, as the window's checklist names them: the
+/// docker context (docker reaches Kiri), the kiri and docker commands, and
+/// starting the engine at login.
+pub const FIRST_STEPS: [&str; 3] = ["context", "commands", "login"];
+
+/// The first launch's steps that failed, with their errors.
+static UNDONE: std::sync::Mutex<Vec<(&'static str, String)>> = std::sync::Mutex::new(Vec::new());
+
+pub fn undone() -> Vec<(&'static str, String)> {
+    UNDONE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// One of the steps, the same for `kiri setup` and the first launch, its
+/// error saying which step it was (`step`).
+fn first_step(name: &str) -> io::Result<()> {
+    match name {
+        "context" => crate::daemon::socket_path().map_err(step("finding the engine's socket")).and_then(|s| context(&s).map_err(step("adding the kiri docker context"))),
+        "commands" => bundle_contents().map_or(Ok(()), |c| bundled_cli(&c).map_err(step("setting up the kiri and docker commands"))),
+        "login" => agent().map(drop).map_err(step("starting the engine at login")),
+        _ => Err(io::Error::new(io::ErrorKind::InvalidInput, format!("no setup step {name}"))),
+    }
+}
+
+/// The checklist's Try again for one step.
+pub fn retry(name: &str) -> io::Result<()> {
+    let result = first_step(name);
+    let mut undone = UNDONE.lock().unwrap_or_else(|e| e.into_inner());
+    undone.retain(|(s, _)| *s != name);
+    if let (Err(e), Some(s)) = (&result, FIRST_STEPS.iter().find(|s| **s == name)) {
+        undone.push((s, e.to_string()));
+    }
+    result
+}
+
+/// Each step's error says which step it was: on first launch it is all the
+/// log has to go on (#250).
+fn step(what: &'static str) -> impl Fn(io::Error) -> io::Error {
+    move |e| io::Error::new(e.kind(), format!("{what}: {e}"))
 }
 
 pub fn run(args: &[String]) -> io::Result<()> {
@@ -133,65 +188,45 @@ pub fn run(args: &[String]) -> io::Result<()> {
         return uninstall();
     }
     if flag("--domains") {
-        return if dev() {
-            Err(io::Error::other(format!(
-                "*.kiri.local belongs to the installed Kiri, not {}",
-                crate::flavor::APP
-            )))
-        } else {
-            domains()
-        };
+        return if dev() { Err(io::Error::other(format!("*.kiri.local belongs to the installed Kiri, not {}", crate::flavor::APP))) } else { domains() };
     }
     if flag("--docker-socket") {
         if dev() {
-            return Err(io::Error::other(format!(
-                "/var/run/docker.sock belongs to the installed Kiri, not {}",
-                crate::flavor::APP
-            )));
+            return Err(io::Error::other(format!("/var/run/docker.sock belongs to the installed Kiri, not {}", crate::flavor::APP)));
         }
         let result = docker_socket();
         println!("{}", docker_socket_fallback(&crate::daemon::socket_path()?));
         return result;
     }
-    let socket = crate::daemon::socket_path()?;
-    context(&socket)?;
+    let socket = crate::daemon::socket_path().map_err(step("finding the engine's socket"))?;
+    first_step("context")?;
     println!("docker context `{CONTEXT}` → unix://{}", socket.display());
     if flag("--use") && !dev() {
-        let path = docker_dir()?.join("config.json");
-        let mut cfg = read_json(&path)?;
+        let path = docker_dir().map(|d| d.join("config.json")).map_err(step("making kiri docker's current context"))?;
+        let mut cfg = read_json(&path).map_err(step("making kiri docker's current context"))?;
         cfg["currentContext"] = CONTEXT.get().into();
-        write_json(&path, &cfg)?;
+        write_json(&path, &cfg).map_err(step("making kiri docker's current context"))?;
         println!("docker now uses Kiri by default (`docker context use default` to switch back)");
     }
-    if let Some(contents) = bundle_contents() {
-        bundled_cli(&contents)?;
-    }
+    first_step("commands")?;
     if !flag("--no-agent") {
-        let plist = agent()?;
-        println!("kiri daemon starts at login ({})", plist.display());
+        first_step("login")?;
+        println!("kiri daemon starts at login ({})", agent_plist()?.display());
     }
     match builder() {
         Ok(true) => match crate::buildwith::places().map(|p| p.saved()) {
-            Ok(Some(crate::buildwith::With::Kiri)) => {
-                println!("docker build uses BuildKit in Kiri (builder `{BUILDER}`)")
-            }
-            _ => println!(
-                "docker build follows docker's context, and builds on Kiri when docker uses Kiri (`kiri build-with kiri` sends every build to Kiri)"
-            ),
+            Ok(Some(crate::buildwith::With::Kiri)) => println!("docker build uses BuildKit in Kiri (builder `{BUILDER}`)"),
+            _ => println!("docker build follows docker's context, and builds on Kiri when docker uses Kiri (`kiri build-with kiri` sends every build to Kiri)"),
         },
         Ok(false) => {}
-        Err(e) => println!(
-            "docker build: the `{BUILDER}` builder comes later ({e}); the window makes it once Kiri is running"
-        ),
+        Err(e) => println!("docker build: the `{BUILDER}` builder comes later ({e}); the window makes it once Kiri is running"),
     }
     if !flag("--no-domains") && !dev() {
         // domains() asks for /var/run/docker.sock with the same password;
         // with the names already there, it is asked for on its own.
         let named = crate::daemon::dns::installed();
         if let Err(e) = domains() {
-            println!(
-                "container names stay on *.kiri.localhost ({e}); `kiri setup --domains` tries again"
-            );
+            println!("container names stay on *.kiri.localhost ({e}); `kiri setup --domains` tries again");
         } else if named {
             if let Err(e) = docker_socket() {
                 println!("{DOCKER_SOCK} stays as it is ({e})");
@@ -213,35 +248,16 @@ pub fn domains() -> io::Result<()> {
         return Ok(());
     }
     let tmp = std::env::temp_dir().join(format!("kiri-resolver-{}", std::process::id()));
-    std::fs::write(
-        &tmp,
-        format!(
-            "# Kiri: container names (kiri setup --uninstall removes this)\nnameserver 127.0.0.1\nport {}\n",
-            dns::PORT
-        ),
-    )?;
+    std::fs::write(&tmp, format!("# Kiri: container names (kiri setup --uninstall removes this)\nnameserver 127.0.0.1\nport {}\n", dns::PORT))?;
     // /var/run/docker.sock with the same password, when it is free. Its
     // failing must not undo the names: how it went is read back after.
     let link = docker_socket_script()?;
     let (command, why) = match &link {
         Some(l) => (
-            format!(
-                "mkdir -p /etc/resolver && cp '{}' {} && chmod 644 {} && ({l} || true)",
-                tmp.display(),
-                dns::RESOLVER,
-                dns::RESOLVER
-            ),
+            format!("mkdir -p /etc/resolver && cp '{}' {} && chmod 644 {} && ({l} || true)", tmp.display(), dns::RESOLVER, dns::RESOLVER),
             "Kiri wants to give your containers names like myapp.kiri.local, and to answer at /var/run/docker.sock for tools that look for Docker there.",
         ),
-        None => (
-            format!(
-                "mkdir -p /etc/resolver && cp '{}' {} && chmod 644 {}",
-                tmp.display(),
-                dns::RESOLVER,
-                dns::RESOLVER
-            ),
-            "Kiri wants to give your containers names like myapp.kiri.local.",
-        ),
+        None => (format!("mkdir -p /etc/resolver && cp '{}' {} && chmod 644 {}", tmp.display(), dns::RESOLVER, dns::RESOLVER), "Kiri wants to give your containers names like myapp.kiri.local."),
     };
     let result = as_admin(&command, why);
     let _ = std::fs::remove_file(&tmp);
@@ -277,15 +293,11 @@ enum DockerSock {
 /// or not: their socket is missing only until they start.
 fn other_engine_dirs() -> Vec<PathBuf> {
     let Ok(h) = home() else { return Vec::new() };
-    [
-        ("/Applications/Docker.app", ".docker"),
-        ("/Applications/OrbStack.app", ".orbstack"),
-        ("/Applications/Rancher Desktop.app", ".rd"),
-    ]
-    .iter()
-    .filter(|(app, _)| Path::new(app).exists())
-    .map(|(_, dir)| h.join(dir))
-    .collect()
+    [("/Applications/Docker.app", ".docker"), ("/Applications/OrbStack.app", ".orbstack"), ("/Applications/Rancher Desktop.app", ".rd")]
+        .iter()
+        .filter(|(app, _)| Path::new(app).exists())
+        .map(|(_, dir)| h.join(dir))
+        .collect()
 }
 
 fn docker_sock(ours: &Path) -> DockerSock {
@@ -293,13 +305,9 @@ fn docker_sock(ours: &Path) -> DockerSock {
 }
 
 fn docker_sock_at(path: &Path, ours: &Path, engines: &[PathBuf]) -> DockerSock {
-    let Ok(meta) = std::fs::symlink_metadata(path) else {
-        return DockerSock::Free;
-    };
+    let Ok(meta) = std::fs::symlink_metadata(path) else { return DockerSock::Free };
     if meta.file_type().is_symlink() {
-        let Ok(target) = std::fs::read_link(path) else {
-            return DockerSock::Taken(path.display().to_string());
-        };
+        let Ok(target) = std::fs::read_link(path) else { return DockerSock::Taken(path.display().to_string()) };
         if target == ours {
             return DockerSock::Kiri;
         }
@@ -341,8 +349,7 @@ fn docker_socket_script() -> io::Result<Option<LinkScript>> {
     }
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;");
     let ours_s = ours.to_string_lossy();
-    let boot =
-        format!("[ -e {DOCKER_SOCK} ] || [ -L {DOCKER_SOCK} ] || ln -s \"$1\" {DOCKER_SOCK}");
+    let boot = format!("[ -e {DOCKER_SOCK} ] || [ -L {DOCKER_SOCK} ] || ln -s \"$1\" {DOCKER_SOCK}");
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -372,13 +379,8 @@ fn docker_socket_script() -> io::Result<Option<LinkScript>> {
 /// `kiri setup --docker-socket`: /var/run/docker.sock to Kiri, if free
 /// (macOS asks for the password).
 pub fn docker_socket() -> io::Result<()> {
-    let Some(l) = docker_socket_script()? else {
-        return Ok(());
-    };
-    let result = as_admin(
-        &l.command,
-        "Kiri wants to answer at /var/run/docker.sock, for tools that look for Docker there.",
-    );
+    let Some(l) = docker_socket_script()? else { return Ok(()) };
+    let result = as_admin(&l.command, "Kiri wants to answer at /var/run/docker.sock, for tools that look for Docker there.");
     let _ = std::fs::remove_file(&l.tmp);
     result
 }
@@ -390,25 +392,15 @@ fn docker_socket_fallback(ours: &Path) -> String {
     match docker_sock(ours) {
         DockerSock::Kiri => {
             let _ = testcontainers(ours, false);
-            format!(
-                "{DOCKER_SOCK} → Kiri (docker-py, Testcontainers and other tools that ignore docker contexts)"
-            )
+            format!("{DOCKER_SOCK} → Kiri (docker-py, Testcontainers and other tools that ignore docker contexts)")
         }
         DockerSock::Taken(t) => {
             let _ = testcontainers(ours, false);
-            format!(
-                "{DOCKER_SOCK} is another engine's ({t}) and stays so; DOCKER_HOST=unix://{} points a tool at Kiri",
-                ours.display()
-            )
+            format!("{DOCKER_SOCK} is another engine's ({t}) and stays so; DOCKER_HOST=unix://{} points a tool at Kiri", ours.display())
         }
         DockerSock::Free => match testcontainers(ours, true) {
-            Ok(true) => format!(
-                "{DOCKER_SOCK} is not Kiri's yet (`kiri setup --docker-socket` asks for the password); Testcontainers finds Kiri through ~/.testcontainers.properties"
-            ),
-            _ => format!(
-                "{DOCKER_SOCK} is not Kiri's yet (`kiri setup --docker-socket` asks for the password); until then DOCKER_HOST=unix://{} points a tool at Kiri",
-                ours.display()
-            ),
+            Ok(true) => format!("{DOCKER_SOCK} is not Kiri's yet (`kiri setup --docker-socket` asks for the password); Testcontainers finds Kiri through ~/.testcontainers.properties"),
+            _ => format!("{DOCKER_SOCK} is not Kiri's yet (`kiri setup --docker-socket` asks for the password); until then DOCKER_HOST=unix://{} points a tool at Kiri", ours.display()),
         },
     }
 }
@@ -418,10 +410,7 @@ fn docker_socket_fallback(ours: &Path) -> String {
 const TESTCONTAINERS_MARK: &str = "# Written by Kiri while /var/run/docker.sock is not Kiri's (kiri setup --uninstall removes it)";
 
 fn testcontainers_text(ours: &Path) -> String {
-    format!(
-        "{TESTCONTAINERS_MARK}\ndocker.host=unix://{}\n",
-        ours.display()
-    )
+    format!("{TESTCONTAINERS_MARK}\ndocker.host=unix://{}\n", ours.display())
 }
 
 /// Writes (`on`) or removes Kiri's `~/.testcontainers.properties`. A file
@@ -435,13 +424,7 @@ fn testcontainers_at(path: &Path, ours: &Path, on: bool) -> io::Result<bool> {
     let ours_text = testcontainers_text(ours);
     match std::fs::read_to_string(path) {
         // Only exactly what Kiri wrote: Testcontainers adds keys of its own.
-        Ok(text)
-            if text.starts_with(TESTCONTAINERS_MARK)
-                && text
-                    .lines()
-                    .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
-                    .all(|l| l.starts_with("docker.host=")) =>
-        {
+        Ok(text) if text.starts_with(TESTCONTAINERS_MARK) && text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).all(|l| l.starts_with("docker.host=")) => {
             if on {
                 if text != ours_text {
                     std::fs::write(path, ours_text)?;
@@ -482,13 +465,9 @@ fn remove_docker_socket() -> io::Result<()> {
     if !linked && !Path::new(SOCKET_DAEMON).exists() {
         return Ok(());
     }
-    let mut command =
-        format!("launchctl bootout system/{SOCKET_LABEL} 2>/dev/null; rm -f {SOCKET_DAEMON}");
+    let mut command = format!("launchctl bootout system/{SOCKET_LABEL} 2>/dev/null; rm -f {SOCKET_DAEMON}");
     if linked {
-        command.push_str(&format!(
-            "; [ \"$(readlink {DOCKER_SOCK})\" = {} ] && rm -f {DOCKER_SOCK}; true",
-            sh_quote(&ours.to_string_lossy())
-        ));
+        command.push_str(&format!("; [ \"$(readlink {DOCKER_SOCK})\" = {} ] && rm -f {DOCKER_SOCK}; true", sh_quote(&ours.to_string_lossy())));
     }
     as_admin(&command, "Kiri wants to remove its /var/run/docker.sock.")?;
     println!("removed {DOCKER_SOCK}");
@@ -501,10 +480,7 @@ pub fn remove_domains() -> io::Result<()> {
     if !Path::new(resolver).exists() {
         return Ok(());
     }
-    as_admin(
-        &format!("rm -f {resolver}"),
-        "Kiri wants to remove its *.kiri.local names.",
-    )?;
+    as_admin(&format!("rm -f {resolver}"), "Kiri wants to remove its *.kiri.local names.")?;
     println!("removed *.kiri.local");
     Ok(())
 }
@@ -513,12 +489,8 @@ pub fn remove_domains() -> io::Result<()> {
 /// script runs in this process, not through `osascript`, so the prompt says
 /// "Kiri wants to make changes". AppleScript belongs on the main thread: the
 /// window's workers hand it there, and the CLI is already on it.
-fn as_admin(command: &str, why: &str) -> io::Result<()> {
-    let script = format!(
-        "do shell script \"{}\" with prompt \"{}\" with administrator privileges",
-        command.replace('"', "\\\""),
-        why.replace('"', "\\\"")
-    );
+pub(crate) fn as_admin(command: &str, why: &str) -> io::Result<()> {
+    let script = format!("do shell script \"{}\" with prompt \"{}\" with administrator privileges", command.replace('"', "\\\""), why.replace('"', "\\\""));
     // SAFETY: pthread_main_np only reads the calling thread's state.
     if unsafe { libc::pthread_main_np() } == 1 {
         return apple_script(&script);
@@ -531,17 +503,13 @@ fn as_admin(command: &str, why: &str) -> io::Result<()> {
 fn apple_script(source: &str) -> io::Result<()> {
     use objc2::AllocAnyThread;
     use objc2_foundation::{NSAppleScript, NSString};
-    let script = NSAppleScript::initWithSource(NSAppleScript::alloc(), &NSString::from_str(source))
-        .ok_or_else(|| io::Error::other("bad AppleScript"))?;
-    let mut error: Option<
-        objc2::rc::Retained<objc2_foundation::NSDictionary<NSString, objc2::runtime::AnyObject>>,
-    > = None;
+    let script = NSAppleScript::initWithSource(NSAppleScript::alloc(), &NSString::from_str(source)).ok_or_else(|| io::Error::other("bad AppleScript"))?;
+    let mut error: Option<objc2::rc::Retained<objc2_foundation::NSDictionary<NSString, objc2::runtime::AnyObject>>> = None;
     // Called directly: the generated binding panics on the nil it returns
     // when the script fails.
     // SAFETY: the selector takes an NSDictionary** out-parameter, and the
     // result is an optional NSAppleEventDescriptor.
-    let _: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> =
-        unsafe { objc2::msg_send![&*script, executeAndReturnError: Some(&mut error)] };
+    let _: Option<objc2::rc::Retained<objc2::runtime::AnyObject>> = unsafe { objc2::msg_send![&*script, executeAndReturnError: Some(&mut error)] };
     let Some(info) = error else { return Ok(()) };
     // "message (number)"; the number is -128 when the prompt is cancelled.
     let field = |key: &str| {
@@ -551,11 +519,7 @@ fn apple_script(source: &str) -> io::Result<()> {
             d.to_string()
         })
     };
-    Err(io::Error::other(format!(
-        "{} ({})",
-        field("NSAppleScriptErrorMessage").unwrap_or_default(),
-        field("NSAppleScriptErrorNumber").unwrap_or_default()
-    )))
+    Err(io::Error::other(format!("{} ({})", field("NSAppleScriptErrorMessage").unwrap_or_default(), field("NSAppleScriptErrorNumber").unwrap_or_default())))
 }
 
 /// Kiri Lite, once its tools are downloaded: the CLI links and the build
@@ -583,9 +547,7 @@ pub fn use_context(name: &str) -> io::Result<()> {
     if name == CONTEXT.get() {
         context(&crate::daemon::socket_path()?)?;
     } else if name != "default" && !context_dir(name)?.join("meta.json").is_file() {
-        return Err(io::Error::other(format!(
-            "there is no docker context `{name}`"
-        )));
+        return Err(io::Error::other(format!("there is no docker context `{name}`")));
     }
     let path = docker_dir()?.join("config.json");
     let mut cfg = read_json(&path)?;
@@ -637,19 +599,13 @@ fn bundled_cli(contents: &Path) -> io::Result<()> {
     let plugins = bin.join("cli-plugins").to_string_lossy().into_owned();
     let path = docker_dir()?.join("config.json");
     let mut cfg = read_json(&path)?;
-    let mut dirs: Vec<Value> = cfg["cliPluginsExtraDirs"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let mut dirs: Vec<Value> = cfg["cliPluginsExtraDirs"].as_array().cloned().unwrap_or_default();
     if !dirs.iter().any(|d| d.as_str() == Some(plugins.as_str())) {
         dirs.push(plugins.into());
     }
     cfg["cliPluginsExtraDirs"] = dirs.into();
     write_json(&path, &cfg)?;
-    println!(
-        "docker and kiri commands: {} (on PATH in new terminal windows)",
-        ours.display()
-    );
+    println!("docker and kiri commands: {} (on PATH in new terminal windows)", ours.display());
     Ok(())
 }
 
@@ -678,10 +634,7 @@ fn system_link(kiri: &Path) {
 /// Kiri bin directory (~/.kiri/bin, ~/.kiri-dev/bin).
 fn kiri_link(target: &Path) -> bool {
     let t = target.to_string_lossy();
-    t.ends_with("/kiri")
-        && (t.contains(".app/Contents/MacOS/")
-            || t.contains("/.kiri/bin/")
-            || t.contains("/.kiri-dev/bin/"))
+    t.ends_with("/kiri") && (t.contains(".app/Contents/MacOS/") || t.contains("/.kiri/bin/") || t.contains("/.kiri-dev/bin/"))
 }
 
 /// Whether `/usr/local/bin/kiri` is the link system_link() makes.
@@ -692,26 +645,12 @@ fn system_link_is_ours() -> bool {
 /// Every other process running this app's `kiri` binary, asked to quit,
 /// then made to after a few seconds.
 fn stop_others() {
-    let Some(exe) = std::env::current_exe()
-        .ok()
-        .and_then(|e| std::fs::canonicalize(e).ok())
-    else {
-        return;
-    };
+    let Some(exe) = std::env::current_exe().ok().and_then(|e| std::fs::canonicalize(e).ok()) else { return };
     let me = std::process::id().to_string();
     let pattern = format!("^{}( |$)", regex_escape(&exe.to_string_lossy()));
     for (sig, wait) in [("-TERM", 3), ("-KILL", 0)] {
-        let Ok(out) = Command::new("/usr/bin/pgrep")
-            .args(["-f", &pattern])
-            .output()
-        else {
-            return;
-        };
-        let pids: Vec<String> = String::from_utf8_lossy(&out.stdout)
-            .split_whitespace()
-            .filter(|p| *p != me)
-            .map(str::to_owned)
-            .collect();
+        let Ok(out) = Command::new("/usr/bin/pgrep").args(["-f", &pattern]).output() else { return };
+        let pids: Vec<String> = String::from_utf8_lossy(&out.stdout).split_whitespace().filter(|p| *p != me).map(str::to_owned).collect();
         if pids.is_empty() {
             return;
         }
@@ -731,13 +670,11 @@ fn regex_escape(s: &str) -> String {
 }
 
 /// The marked lines Kiri adds to shell profiles, and removes on uninstall.
-const PROFILE_MARK: &str =
-    "# Added by Kiri: its docker and kiri commands (kiri setup --uninstall removes this)";
+const PROFILE_MARK: &str = "# Added by Kiri: its docker and kiri commands (kiri setup --uninstall removes this)";
 
 /// Adds `~/.kiri/bin` to the end of PATH once, however many of the
 /// profiles a shell reads. Plain sh, for zsh and bash alike.
-const SH_LINE: &str =
-    r#"case ":$PATH:" in *":$HOME/.kiri/bin:"*) ;; *) export PATH="$PATH:$HOME/.kiri/bin" ;; esac"#;
+const SH_LINE: &str = r#"case ":$PATH:" in *":$HOME/.kiri/bin:"*) ;; *) export PATH="$PATH:$HOME/.kiri/bin" ;; esac"#;
 
 /// The line Kiri 0.1.0 wrote, only to `~/.zprofile`; taken back on uninstall.
 const OLD_SH_LINE: &str = "export PATH=\"$PATH:$HOME/.kiri/bin\"";
@@ -754,14 +691,8 @@ const FISH_LINE: &str = "fish_add_path --append $HOME/.kiri/bin";
 ///   `.bashrc` in others, when the user has one
 /// - fish's `conf.d`, when the user has fish
 fn profiles(home: &Path, zdotdir: &Path) -> Vec<(PathBuf, &'static str)> {
-    let mut v = vec![
-        (zdotdir.join(".zprofile"), SH_LINE),
-        (zdotdir.join(".zshrc"), SH_LINE),
-    ];
-    let login = [".bash_profile", ".bash_login", ".profile"]
-        .iter()
-        .map(|f| home.join(f))
-        .find(|p| p.is_file());
+    let mut v = vec![(zdotdir.join(".zprofile"), SH_LINE), (zdotdir.join(".zshrc"), SH_LINE)];
+    let login = [".bash_profile", ".bash_login", ".profile"].iter().map(|f| home.join(f)).find(|p| p.is_file());
     v.push((login.unwrap_or_else(|| home.join(".bash_profile")), SH_LINE));
     if home.join(".bashrc").is_file() {
         v.push((home.join(".bashrc"), SH_LINE));
@@ -773,43 +704,54 @@ fn profiles(home: &Path, zdotdir: &Path) -> Vec<(PathBuf, &'static str)> {
 }
 
 fn zdotdir(home: &Path) -> PathBuf {
-    std::env::var_os("ZDOTDIR")
-        .filter(|d| !d.is_empty())
-        .map_or_else(|| home.to_path_buf(), PathBuf::from)
+    std::env::var_os("ZDOTDIR").filter(|d| !d.is_empty()).map_or_else(|| home.to_path_buf(), PathBuf::from)
 }
 
+/// Puts ~/.kiri/bin on the shell's PATH in each profile. A profile that
+/// can't be written is passed over (and logged), not the end of setup: a
+/// link to a dotfiles folder that moved made the app's first launch quit
+/// with only "No such file or directory" (#250).
 fn shell_path(home: &Path, zdotdir: &Path) -> io::Result<()> {
     for (file, line) in profiles(home, zdotdir) {
-        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        // A link to nothing (or to a place Kiri can't reach): writing
+        // through it fails when the target's folder is gone (#250), or makes
+        // a file where it points. It stays as the user left it.
+        if file.symlink_metadata().is_ok() && !file.try_exists().unwrap_or(false) {
+            crate::diag::warn!("shell profile skipped: a link to nothing", file = file.display());
+            continue;
+        }
+        // Only a profile Kiri could read, or one that isn't there, is
+        // written: a read error (not UTF-8, no read permission) must never
+        // turn into a profile holding only Kiri's lines.
+        let text = match std::fs::read_to_string(&file) {
+            Ok(t) => t,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                crate::diag::warn!("shell profile skipped", file = file.display(), error = e);
+                continue;
+            }
+        };
         if text.contains(PROFILE_MARK) {
             continue;
         }
-        if let Some(dir) = file.parent() {
-            std::fs::create_dir_all(dir)?;
+        let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+        let written = file.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&file, format!("{text}{sep}\n{PROFILE_MARK}\n{line}\n")));
+        if let Err(e) = written {
+            crate::diag::warn!("shell profile skipped", file = file.display(), error = e);
         }
-        let sep = if text.is_empty() || text.ends_with('\n') {
-            ""
-        } else {
-            "\n"
-        };
-        std::fs::write(&file, format!("{text}{sep}\n{PROFILE_MARK}\n{line}\n"))?;
     }
     Ok(())
 }
 
 fn remove_shell_path(home: &Path, zdotdir: &Path) -> io::Result<()> {
     for (file, line) in profiles(home, zdotdir) {
-        let Ok(text) = std::fs::read_to_string(&file) else {
-            continue;
-        };
+        let Ok(text) = std::fs::read_to_string(&file) else { continue };
         if !text.contains(PROFILE_MARK) {
             continue;
         }
         let mut kept = text;
         for line in [line, OLD_SH_LINE] {
-            kept = kept
-                .replace(&format!("\n{PROFILE_MARK}\n{line}\n"), "\n")
-                .replace(&format!("{PROFILE_MARK}\n{line}\n"), "");
+            kept = kept.replace(&format!("\n{PROFILE_MARK}\n{line}\n"), "\n").replace(&format!("{PROFILE_MARK}\n{line}\n"), "");
         }
         if kept.trim().is_empty() && file.extension().is_some_and(|e| e == "fish") {
             std::fs::remove_file(&file)?;
@@ -828,21 +770,12 @@ fn default_context() -> io::Result<()> {
     let ours = crate::daemon::socket_path()?;
     let system = !matches!(docker_sock(&ours), DockerSock::Kiri) && Path::new(DOCKER_SOCK).exists();
     let other = system
-        || [
-            h.join(".orbstack/run/docker.sock"),
-            h.join(".docker/run/docker.sock"),
-        ]
-        .iter()
-        .any(|p| p.exists())
+        || [h.join(".orbstack/run/docker.sock"), h.join(".docker/run/docker.sock")].iter().any(|p| p.exists())
         || Path::new("/Applications/OrbStack.app").exists()
         || Path::new("/Applications/Docker.app").exists();
     let path = docker_dir()?.join("config.json");
     let mut cfg = read_json(&path)?;
-    if other
-        || cfg["currentContext"]
-            .as_str()
-            .is_some_and(|c| !c.is_empty() && c != "default")
-    {
+    if other || cfg["currentContext"].as_str().is_some_and(|c| !c.is_empty() && c != "default") {
         return Ok(());
     }
     cfg["currentContext"] = CONTEXT.get().into();
@@ -852,9 +785,7 @@ fn default_context() -> io::Result<()> {
 }
 
 fn agent_plist() -> io::Result<PathBuf> {
-    Ok(home()?
-        .join("Library/LaunchAgents")
-        .join(format!("{AGENT}.plist")))
+    Ok(home()?.join("Library/LaunchAgents").join(format!("{AGENT}.plist")))
 }
 
 fn uid() -> u32 {
@@ -867,11 +798,7 @@ fn uid() -> u32 {
 fn agent() -> io::Result<PathBuf> {
     let exe = std::env::current_exe()?.canonicalize()?;
     let log = home()?.join(crate::flavor::STATE.get()).join("daemon.log");
-    let esc = |p: &Path| {
-        p.to_string_lossy()
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-    };
+    let esc = |p: &Path| p.to_string_lossy().replace('&', "&amp;").replace('<', "&lt;");
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -901,44 +828,50 @@ fn agent() -> io::Result<PathBuf> {
     }
     std::fs::write(&path, plist)?;
     // Reload, so a new path to the binary takes effect.
-    let _ = Command::new("/bin/launchctl")
-        .args(["bootout", &format!("gui/{}/{AGENT}", uid())])
-        .stderr(std::process::Stdio::null())
-        .status();
+    let _ = Command::new("/bin/launchctl").args(["bootout", &format!("gui/{}/{AGENT}", uid())]).stderr(std::process::Stdio::null()).status();
     // bootout returns before launchd has let the old job go, and a
     // bootstrap in that moment fails (error 5): try again for a few seconds.
     let mut ok = false;
     for _ in 0..20 {
-        ok = Command::new("/bin/launchctl")
-            .args(["bootstrap", &format!("gui/{}", uid())])
-            .arg(&path)
-            .stderr(std::process::Stdio::null())
-            .status()?
-            .success();
+        ok = Command::new("/bin/launchctl").args(["bootstrap", &format!("gui/{}", uid())]).arg(&path).stderr(std::process::Stdio::null()).status()?.success();
         if ok {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
     if !ok {
-        return Err(io::Error::other(format!(
-            "launchctl could not load {}",
-            path.display()
-        )));
+        return Err(io::Error::other(format!("launchctl could not load {}", path.display())));
     }
     Ok(path)
+}
+
+/// Starts the engine through the LaunchAgent, loading it first if launchd
+/// doesn't have it (Login Items turned off and on, or a plist written but
+/// never loaded). Ok(false) when there is no agent for this copy of Kiri,
+/// and the caller starts the engine itself.
+pub fn start_agent() -> io::Result<bool> {
+    if !agent_plist()?.is_file() || !agent_runs_this()? {
+        return Ok(false);
+    }
+    let job = format!("gui/{}/{AGENT}", uid());
+    let kicked = Command::new("/bin/launchctl").args(["kickstart", &job]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status()?.success();
+    if kicked {
+        return Ok(true);
+    }
+    // Not loaded: bootstrap it, and RunAtLoad starts it.
+    let loaded = Command::new("/bin/launchctl").args(["bootstrap", &format!("gui/{}", uid())]).arg(agent_plist()?).stderr(std::process::Stdio::null()).status()?.success();
+    if !loaded {
+        crate::diag::info!("the LaunchAgent would not load; starting the engine directly");
+    }
+    Ok(loaded)
 }
 
 /// Whether the LaunchAgent starts this copy of Kiri. One left by another
 /// copy (an older download, a build elsewhere) is replaced when this one opens.
 fn agent_runs_this() -> io::Result<bool> {
     let exe = std::env::current_exe()?.canonicalize()?;
-    let esc = exe
-        .to_string_lossy()
-        .replace('&', "&amp;")
-        .replace('<', "&lt;");
-    Ok(std::fs::read_to_string(agent_plist()?)?
-        .contains(&format!("<string>{esc}</string><string>daemon</string>")))
+    let esc = exe.to_string_lossy().replace('&', "&amp;").replace('<', "&lt;");
+    Ok(std::fs::read_to_string(agent_plist()?)?.contains(&format!("<string>{esc}</string><string>daemon</string>")))
 }
 
 /// Adds the app's name to a LaunchAgent written by an older Kiri. launchd
@@ -959,10 +892,7 @@ pub fn docker_cli() -> Option<PathBuf> {
 }
 
 fn uninstall() -> io::Result<()> {
-    let _ = Command::new("/bin/launchctl")
-        .args(["bootout", &format!("gui/{}/{AGENT}", uid())])
-        .stderr(std::process::Stdio::null())
-        .status();
+    let _ = Command::new("/bin/launchctl").args(["bootout", &format!("gui/{}/{AGENT}", uid())]).stderr(std::process::Stdio::null()).status();
     // Uninstalling stops everything this Kiri runs: the engine (the agent,
     // just booted out, which stops the VM and its containers) and any window
     // or kiri command still open from this app (`kiri share`, a second
@@ -976,10 +906,7 @@ fn uninstall() -> io::Result<()> {
     // Only a context that still points at Kiri's socket is ours to remove.
     let dir = context_dir(CONTEXT.get())?;
     let meta = read_json(&dir.join("meta.json"))?;
-    if meta["Endpoints"]["docker"]["Host"]
-        .as_str()
-        .is_some_and(|h| h.ends_with(&format!("{}/run/docker.sock", crate::flavor::STATE)))
-    {
+    if meta["Endpoints"]["docker"]["Host"].as_str().is_some_and(|h| h.ends_with(&format!("{}/run/docker.sock", crate::flavor::STATE))) {
         std::fs::remove_dir_all(&dir)?;
         println!("removed docker context `{CONTEXT}`");
     }
@@ -993,15 +920,9 @@ fn uninstall() -> io::Result<()> {
         changed = true;
     }
     // `get_mut`: indexing would add the key to a config that lacks it.
-    if let Some(dirs) = cfg
-        .get_mut("cliPluginsExtraDirs")
-        .and_then(Value::as_array_mut)
-    {
+    if let Some(dirs) = cfg.get_mut("cliPluginsExtraDirs").and_then(Value::as_array_mut) {
         let before = dirs.len();
-        dirs.retain(|d| {
-            !d.as_str()
-                .is_some_and(|s| s.contains("Kiri.app/Contents/Resources/bin"))
-        });
+        dirs.retain(|d| !d.as_str().is_some_and(|s| s.contains("Kiri.app/Contents/Resources/bin")));
         changed |= dirs.len() != before;
     }
     if changed {
@@ -1012,11 +933,7 @@ fn uninstall() -> io::Result<()> {
         println!("could not give docker build back its own builder ({e})");
     }
     if let Some(docker) = docker_cli() {
-        let _ = Command::new(docker)
-            .args(["buildx", "rm", BUILDER.get()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        let _ = Command::new(docker).args(["buildx", "rm", BUILDER.get()]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
     }
     if !dev() && system_link_is_ours() {
         let _ = std::fs::remove_file(SYSTEM_LINK);
@@ -1025,11 +942,12 @@ fn uninstall() -> io::Result<()> {
     let _ = std::fs::remove_file(bin_dir()?.join("kiri"));
     // The cluster's kubectl context (`kiri k8s`); the cluster stays in Kiri's data.
     crate::k8s::forget();
+    // Every flavor has a helper of its own.
+    if let Err(e) = crate::usb::helper::remove() {
+        println!("could not remove the USB helper ({e})");
+    }
     if dev() {
-        println!(
-            "{0}'s data stays in ~/Library/Application Support/{0}; delete it to remove images and volumes too",
-            crate::flavor::APP
-        );
+        println!("{0}'s data stays in ~/Library/Application Support/{0}; delete it to remove images and volumes too", crate::flavor::APP);
         return Ok(());
     }
     match home().and_then(|h| remove_shell_path(&h, &zdotdir(&h))) {
@@ -1042,9 +960,7 @@ fn uninstall() -> io::Result<()> {
     if let Err(e) = remove_docker_socket() {
         println!("could not remove {DOCKER_SOCK} ({e})");
     }
-    println!(
-        "Kiri's data stays in ~/Library/Application Support/Kiri; delete it to remove images and volumes too"
-    );
+    println!("Kiri's data stays in ~/Library/Application Support/Kiri; delete it to remove images and volumes too");
     Ok(())
 }
 
@@ -1098,25 +1014,12 @@ mod tests {
         let path = d.join(".testcontainers.properties");
         let ours = std::path::Path::new("/Users/me/.kiri/run/docker.sock");
         assert!(super::testcontainers_at(&path, ours, true).unwrap());
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            super::testcontainers_text(ours)
-        );
-        assert!(
-            std::fs::read_to_string(&path)
-                .unwrap()
-                .contains("docker.host=unix:///Users/me/.kiri/run/docker.sock\n")
-        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), super::testcontainers_text(ours));
+        assert!(std::fs::read_to_string(&path).unwrap().contains("docker.host=unix:///Users/me/.kiri/run/docker.sock\n"));
         assert!(!super::testcontainers_at(&path, ours, false).unwrap());
         assert!(!path.exists());
         // The user's own file, or one Testcontainers has added to, stays.
-        for text in [
-            "docker.host=tcp://remote:2375\n",
-            &format!(
-                "{}testcontainers.reuse.enable=true\n",
-                super::testcontainers_text(ours)
-            ),
-        ] {
+        for text in ["docker.host=tcp://remote:2375\n", &format!("{}testcontainers.reuse.enable=true\n", super::testcontainers_text(ours))] {
             std::fs::write(&path, text).unwrap();
             assert!(!super::testcontainers_at(&path, ours, true).unwrap());
             assert!(!super::testcontainers_at(&path, ours, false).unwrap());
@@ -1127,10 +1030,61 @@ mod tests {
 
     #[test]
     fn quotes_for_sh() {
-        assert_eq!(
-            super::sh_quote("/Users/o'neil/.kiri"),
-            r"'/Users/o'\''neil/.kiri'"
-        );
+        assert_eq!(super::sh_quote("/Users/o'neil/.kiri"), r"'/Users/o'\''neil/.kiri'");
+    }
+
+    // #250: a profile that is a link to nowhere (a dotfiles folder that
+    // moved) is passed over, not the end of the app's first launch.
+    #[test]
+    fn a_dangling_profile_link_does_not_stop_setup() {
+        let h = scratch("dangling");
+        std::os::unix::fs::symlink(h.join("dotfiles-gone/zshrc"), h.join(".zshrc")).unwrap();
+        super::shell_path(&h, &h).unwrap();
+        assert!(std::fs::read_link(h.join(".zshrc")).is_ok(), "the user's link stays a link");
+        assert!(!h.join("dotfiles-gone").exists(), "nothing made where it points");
+        assert!(std::fs::read_to_string(h.join(".zprofile")).unwrap().contains(super::PROFILE_MARK), "the other profiles still get the line");
+        super::remove_shell_path(&h, &h).unwrap();
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    // #250, as Nix home-manager sets a Mac up: a profile Kiri can read but
+    // not write (a link into a read-only store) is passed over, whether or
+    // not Kiri's line is in it already, and the other profiles get the line.
+    #[test]
+    fn a_read_only_profile_does_not_stop_setup() {
+        use std::os::unix::fs::PermissionsExt;
+        let with_line = format!("# managed elsewhere\n\n{}\n{}\n", super::PROFILE_MARK, super::SH_LINE);
+        for (round, text) in ["# managed elsewhere\n", with_line.as_str()].into_iter().enumerate() {
+            let h = scratch(&format!("readonly{round}"));
+            let managed = h.join("store/zshrc");
+            std::fs::create_dir_all(h.join("store")).unwrap();
+            std::fs::write(&managed, text).unwrap();
+            std::fs::set_permissions(&managed, std::fs::Permissions::from_mode(0o444)).unwrap();
+            // root writes through the mode: nothing read-only to try then.
+            if std::fs::OpenOptions::new().append(true).open(&managed).is_ok() {
+                let _ = std::fs::remove_dir_all(&h);
+                return;
+            }
+            std::os::unix::fs::symlink(&managed, h.join(".zshrc")).unwrap();
+            super::shell_path(&h, &h).unwrap();
+            assert_eq!(std::fs::read_to_string(&managed).unwrap(), text, "the read-only profile is as it was");
+            assert!(std::fs::read_link(h.join(".zshrc")).is_ok(), "the user's link stays a link");
+            assert!(std::fs::read_to_string(h.join(".zprofile")).unwrap().contains(super::PROFILE_MARK), "the other profiles still get the line");
+            let _ = std::fs::remove_dir_all(&h);
+        }
+    }
+
+    // A profile Kiri can't read as text is left exactly as it was, never
+    // replaced by Kiri's lines alone.
+    #[test]
+    fn an_unreadable_profile_is_left_alone() {
+        let h = scratch("unreadable");
+        let latin1: &[u8] = b"# caf\xe9 settings\nexport EDITOR=vim\n";
+        std::fs::write(h.join(".zshrc"), latin1).unwrap();
+        super::shell_path(&h, &h).unwrap();
+        assert_eq!(std::fs::read(h.join(".zshrc")).unwrap(), latin1);
+        assert!(std::fs::read_to_string(h.join(".zprofile")).unwrap().contains(super::PROFILE_MARK));
+        let _ = std::fs::remove_dir_all(&h);
     }
 
     #[test]
@@ -1138,26 +1092,13 @@ mod tests {
         let h = scratch("profiles");
         std::fs::write(h.join(".zprofile"), "export A=1").unwrap();
         // An install by Kiri 0.1.0: the old line, in .zprofile only.
-        std::fs::write(
-            h.join(".profile"),
-            format!(
-                "export B=2\n\n{}\n{}\n",
-                super::PROFILE_MARK,
-                super::OLD_SH_LINE
-            ),
-        )
-        .unwrap();
+        std::fs::write(h.join(".profile"), format!("export B=2\n\n{}\n{}\n", super::PROFILE_MARK, super::OLD_SH_LINE)).unwrap();
         std::fs::write(h.join(".bashrc"), "").unwrap();
         super::shell_path(&h, &h).unwrap();
         super::shell_path(&h, &h).unwrap();
         let read = |f: &str| std::fs::read_to_string(h.join(f)).unwrap();
         for f in [".zprofile", ".zshrc", ".bashrc"] {
-            assert_eq!(
-                read(f).matches(super::SH_LINE).count(),
-                1,
-                "{f}: {}",
-                read(f)
-            );
+            assert_eq!(read(f).matches(super::SH_LINE).count(), 1, "{f}: {}", read(f));
         }
         assert!(read(".zprofile").starts_with("export A=1\n\n"));
         // bash's login file is .profile here: no .bash_profile to shadow it.
@@ -1179,9 +1120,6 @@ mod tests {
             .env("PATH", "/usr/bin:/bin")
             .output()
             .unwrap();
-        assert_eq!(
-            String::from_utf8_lossy(&out.stdout),
-            "/usr/bin:/bin:/h/.kiri/bin"
-        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "/usr/bin:/bin:/h/.kiri/bin");
     }
 }

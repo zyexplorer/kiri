@@ -11,8 +11,8 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -28,15 +28,14 @@ struct Session {
     input: Sender<Vec<u8>>,
     /// Set once the shell has exited and been reaped.
     done: Arc<AtomicBool>,
+    /// The size the page last asked for (columns, rows).
+    size: (u16, u16),
 }
 
 static SESSIONS: Mutex<Option<HashMap<String, Session>>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut HashMap<String, Session>) -> R) -> R {
-    f(SESSIONS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get_or_insert_with(HashMap::new))
+    f(SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new))
 }
 
 /// One `term` command from the page.
@@ -51,10 +50,7 @@ pub fn handle(action: &str, id: &str, value: &Value, emit: fn(String)) {
             let asked = value["shell"].as_str().unwrap_or("");
             let (list, default) = shells();
             // Only a shell from the list: the page never names a program.
-            let path = list
-                .iter()
-                .find(|s| s.id == asked)
-                .map_or(default, |s| s.id.clone());
+            let path = list.iter().find(|s| s.id == asked).map_or(default, |s| s.id.clone());
             if let Err(e) = open(id, Path::new(&path), cols, rows, emit) {
                 emit(termwire::exit(id, None, Some(&e.to_string())));
             }
@@ -66,7 +62,16 @@ pub fn handle(action: &str, id: &str, value: &Value, emit: fn(String)) {
         }
         "resize" => {
             let (cols, rows) = termwire::size(value);
-            with(|s| s.get(id).map(|s| set_size(&s.master, cols, rows)));
+            let master = with(|s| {
+                s.get_mut(id).map(|s| {
+                    s.size = (cols, rows);
+                    s.master.clone()
+                })
+            });
+            if let Some(master) = master {
+                set_size(&master, cols, rows);
+                keep_size(id.to_owned(), master, cols, rows);
+            }
         }
         "close" => {
             if let Some(s) = with(|s| s.remove(id)) {
@@ -99,6 +104,90 @@ fn end(s: &Session) {
     });
 }
 
+/// A program on its own pseudo-terminal, for a sign-in that wants one
+/// (weblogin.rs): what it prints, what to type to it, a way to stop it, and
+/// its exit code. Kiri's tools first on the PATH, as for a shell.
+pub fn captured(program: &Path, args: &[&str]) -> std::io::Result<super::weblogin::Run> {
+    let (master, slave_path) = new_pty()?;
+    let master = Arc::new(File::from(master));
+    let slave = std::fs::OpenOptions::new().read(true).write(true).custom_flags_noctty().open(&slave_path)?;
+    // Wide, so a long line (a code and its page) isn't wrapped.
+    set_size(&master, 240, 40);
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let dirs = program.parent().map(Path::to_path_buf).into_iter().chain(tool_dirs()).chain(std::env::split_paths(&path));
+    let path = std::env::join_paths(dirs).unwrap_or(path);
+    cmd.env("PATH", path).env("TERM", "xterm-256color");
+    if let Some(home) = std::env::var_os("HOME") {
+        cmd.current_dir(home);
+    }
+    cmd.stdin(Stdio::from(slave.try_clone()?)).stdout(Stdio::from(slave.try_clone()?)).stderr(Stdio::from(slave));
+    // SAFETY: as in open: async-signal-safe calls in the child.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = cmd.spawn()?;
+    drop(cmd);
+    let pid = child.id() as i32;
+    let done = Arc::new(AtomicBool::new(false));
+
+    let (input, typed) = channel::<Vec<u8>>();
+    let writer = master.clone();
+    std::thread::spawn(move || {
+        for bytes in typed {
+            if (&*writer).write_all(&bytes).is_err() {
+                break;
+            }
+        }
+    });
+    let (exit_tx, exit) = channel();
+    {
+        let done = done.clone();
+        std::thread::spawn(move || {
+            let code = child.wait().ok().and_then(|s| s.code());
+            hang_up(pid);
+            done.store(true, Ordering::SeqCst);
+            let _ = exit_tx.send(code);
+        });
+    }
+    let (out_tx, output) = channel();
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 16 * 1024];
+        loop {
+            match (&*master).read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if out_tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
+    });
+    let stop = Box::new(move || {
+        if !done.load(Ordering::SeqCst) {
+            hang_up(pid);
+            let done = done.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                if !done.load(Ordering::SeqCst) {
+                    // SAFETY: kill only sends a signal, to a group not yet reaped.
+                    unsafe { libc::kill(-pid, libc::SIGKILL) };
+                }
+            });
+        }
+    });
+    Ok((output, input, stop, exit))
+}
+
 /// SIGHUP to a shell's process group, so what it started in the background goes too.
 fn hang_up(pid: i32) {
     // SAFETY: kill only sends a signal.
@@ -108,18 +197,8 @@ fn hang_up(pid: i32) {
 /// The shells in /etc/shells that a person would open, plus Homebrew's, and
 /// which one is the user's own.
 fn shells() -> (Vec<Shell>, String) {
-    let mut paths: Vec<PathBuf> = std::fs::read_to_string("/etc/shells")
-        .unwrap_or_default()
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.starts_with('/'))
-        .map(PathBuf::from)
-        .collect();
-    for dir in [
-        "/opt/homebrew/bin",
-        "/usr/local/bin",
-        "/home/linuxbrew/.linuxbrew/bin",
-    ] {
+    let mut paths: Vec<PathBuf> = std::fs::read_to_string("/etc/shells").unwrap_or_default().lines().map(str::trim).filter(|l| l.starts_with('/')).map(PathBuf::from).collect();
+    for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin"] {
         for name in ["zsh", "bash", "fish", "nu", "pwsh"] {
             paths.push(Path::new(dir).join(name));
         }
@@ -129,26 +208,9 @@ fn shells() -> (Vec<Shell>, String) {
     let mut seen = Vec::new();
     let mut list: Vec<Shell> = Vec::new();
     for p in paths {
-        let name = p
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_owned();
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_owned();
         // Shells nobody opens a tab of, and the ones that only refuse logins.
-        if name.is_empty()
-            || [
-                "nologin",
-                "false",
-                "true",
-                "rbash",
-                "git-shell",
-                "screen",
-                "tmux",
-                "sh",
-            ]
-            .contains(&name.as_str())
-            || !executable(&p)
-        {
+        if name.is_empty() || ["nologin", "false", "true", "rbash", "git-shell", "screen", "tmux", "sh"].contains(&name.as_str()) || !executable(&p) {
             continue;
         }
         // /bin/bash and /usr/bin/bash are one file where /bin is a link.
@@ -157,33 +219,12 @@ fn shells() -> (Vec<Shell>, String) {
             continue;
         }
         seen.push(real);
-        let label = if list.iter().any(|s| s.label == name) {
-            format!(
-                "{name} ({})",
-                p.parent()
-                    .map_or(String::new(), |d| d.display().to_string())
-            )
-        } else {
-            name
-        };
-        list.push(Shell {
-            id: p.display().to_string(),
-            label,
-            group: "",
-        });
+        let label = if list.iter().any(|s| s.label == name) { format!("{name} ({})", p.parent().map_or(String::new(), |d| d.display().to_string())) } else { name };
+        list.push(Shell { id: p.display().to_string(), label, group: "" });
     }
-    let default = if list.iter().any(|s| Path::new(&s.id) == own) {
-        own.display().to_string()
-    } else {
-        list.first()
-            .map_or_else(|| "/bin/sh".to_owned(), |s| s.id.clone())
-    };
+    let default = if list.iter().any(|s| Path::new(&s.id) == own) { own.display().to_string() } else { list.first().map_or_else(|| "/bin/sh".to_owned(), |s| s.id.clone()) };
     if list.is_empty() {
-        list.push(Shell {
-            id: default.clone(),
-            label: "sh".into(),
-            group: "",
-        });
+        list.push(Shell { id: default.clone(), label: "sh".into(), group: "" });
     }
     (list, default)
 }
@@ -197,22 +238,9 @@ fn login_shell() -> PathBuf {
     // pw_shell is read at once, before another call could replace it.
     let from_passwd = unsafe {
         let pw = libc::getpwuid(libc::getuid());
-        (!pw.is_null() && !(*pw).pw_shell.is_null()).then(|| {
-            CStr::from_ptr((*pw).pw_shell)
-                .to_string_lossy()
-                .into_owned()
-        })
+        (!pw.is_null() && !(*pw).pw_shell.is_null()).then(|| CStr::from_ptr((*pw).pw_shell).to_string_lossy().into_owned())
     };
-    from_passwd.map_or_else(
-        || {
-            PathBuf::from(if cfg!(target_os = "macos") {
-                "/bin/zsh"
-            } else {
-                "/bin/bash"
-            })
-        },
-        PathBuf::from,
-    )
+    from_passwd.map_or_else(|| PathBuf::from(if cfg!(target_os = "macos") { "/bin/zsh" } else { "/bin/bash" }), PathBuf::from)
 }
 
 fn executable(p: &Path) -> bool {
@@ -225,23 +253,13 @@ fn executable(p: &Path) -> bool {
 fn tool_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(
-            PathBuf::from(home)
-                .join(crate::flavor::STATE.get())
-                .join("bin"),
-        );
+        dirs.push(PathBuf::from(home).join(crate::flavor::STATE.get()).join("bin"));
     }
-    if let Some(exe_dir) = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(Path::to_path_buf))
-    {
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
         dirs.push(exe_dir.join("../Resources/bin"));
         dirs.push(exe_dir);
     }
-    dirs.into_iter()
-        .filter(|d| d.is_dir())
-        .filter_map(|d| std::fs::canonicalize(d).ok())
-        .collect()
+    dirs.into_iter().filter(|d| d.is_dir()).filter_map(|d| std::fs::canonicalize(d).ok()).collect()
 }
 
 /// A new pseudo-terminal: its master, and the path of its other side.
@@ -270,11 +288,7 @@ fn slave_name(fd: i32) -> std::io::Result<PathBuf> {
         return Err(std::io::Error::last_os_error());
     }
     // SAFETY: on success buf holds a NUL-terminated path.
-    Ok(PathBuf::from(
-        unsafe { CStr::from_ptr(buf.as_ptr()) }
-            .to_string_lossy()
-            .into_owned(),
-    ))
+    Ok(PathBuf::from(unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().into_owned()))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -288,21 +302,36 @@ fn slave_name(fd: i32) -> std::io::Result<PathBuf> {
         if p.is_null() {
             return Err(std::io::Error::last_os_error());
         }
-        Ok(PathBuf::from(
-            CStr::from_ptr(p).to_string_lossy().into_owned(),
-        ))
+        Ok(PathBuf::from(CStr::from_ptr(p).to_string_lossy().into_owned()))
     }
 }
 
 fn set_size(master: &File, cols: u16, rows: u16) {
-    let ws = libc::winsize {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
+    let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
     // SAFETY: TIOCSWINSZ reads one winsize.
     unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCSWINSZ, &ws) };
+}
+
+/// Sees that a resize stays. On macOS a size set in the moment a shell
+/// finishes a command is accepted and then put back to the old one: the
+/// terminal kept its old size after the window was resized, about one time
+/// in seven when the two met. So the size is looked at again over the next
+/// 60 ms and set again if it went back, unless a newer resize has come.
+fn keep_size(id: String, master: Arc<File>, cols: u16, rows: u16) {
+    std::thread::spawn(move || {
+        for ms in [1, 2, 4, 8, 16, 32] {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            if with(|s| s.get(&id).map(|s| s.size)) != Some((cols, rows)) {
+                return;
+            }
+            let mut now: libc::winsize = unsafe { std::mem::zeroed() };
+            // SAFETY: TIOCGWINSZ writes one winsize.
+            let read = unsafe { libc::ioctl(master.as_raw_fd(), libc::TIOCGWINSZ, &mut now) } == 0;
+            if read && (now.ws_col, now.ws_row) != (cols, rows) {
+                set_size(&master, cols, rows);
+            }
+        }
+    });
 }
 
 fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::io::Result<()> {
@@ -312,11 +341,7 @@ fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::
     }
     let (master, slave_path) = new_pty()?;
     let master = Arc::new(File::from(master));
-    let slave = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags_noctty()
-        .open(&slave_path)?;
+    let slave = std::fs::OpenOptions::new().read(true).write(true).custom_flags_noctty().open(&slave_path)?;
     // After the other side is open: macOS forgets a size set before.
     set_size(&master, cols, rows);
 
@@ -328,22 +353,15 @@ fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::
         cmd.arg0(format!("-{name}"));
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let path = std::env::join_paths(tool_dirs().into_iter().chain(std::env::split_paths(&path)))
-        .unwrap_or(path);
-    cmd.env("PATH", path)
-        .env("TERM", "xterm-256color")
-        .env("COLORTERM", "truecolor")
-        .env("TERM_PROGRAM", "Kiri")
-        .env_remove("TERM_PROGRAM_VERSION");
+    let path = std::env::join_paths(tool_dirs().into_iter().chain(std::env::split_paths(&path))).unwrap_or(path);
+    cmd.env("PATH", path).env("TERM", "xterm-256color").env("COLORTERM", "truecolor").env("TERM_PROGRAM", "Kiri").env_remove("TERM_PROGRAM_VERSION");
     if std::env::var_os("LANG").is_none() {
         cmd.env("LANG", "en_US.UTF-8");
     }
     if let Some(home) = std::env::var_os("HOME") {
         cmd.current_dir(home);
     }
-    cmd.stdin(Stdio::from(slave.try_clone()?))
-        .stdout(Stdio::from(slave.try_clone()?))
-        .stderr(Stdio::from(slave));
+    cmd.stdin(Stdio::from(slave.try_clone()?)).stdout(Stdio::from(slave.try_clone()?)).stderr(Stdio::from(slave));
     // SAFETY: setsid and ioctl are async-signal-safe; they run in the child
     // after its stdio is the terminal, making it the controlling terminal
     // of the shell's own session.
@@ -363,17 +381,7 @@ fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::
 
     let (input, typed) = channel::<Vec<u8>>();
     let done = Arc::new(AtomicBool::new(false));
-    with(|s| {
-        s.insert(
-            id.to_owned(),
-            Session {
-                master: master.clone(),
-                pid,
-                input,
-                done: done.clone(),
-            },
-        )
-    });
+    with(|s| s.insert(id.to_owned(), Session { master: master.clone(), pid, input, done: done.clone(), size: (cols, rows) }));
 
     // Writes go through their own thread: a shell that stops reading can't
     // hold up the window.
@@ -423,11 +431,7 @@ fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::
             mine
         });
         if mine {
-            emit(termwire::exit(
-                &id,
-                *code.lock().unwrap_or_else(|e| e.into_inner()),
-                None,
-            ));
+            emit(termwire::exit(&id, *code.lock().unwrap_or_else(|e| e.into_inner()), None));
         }
     });
     Ok(())
@@ -490,44 +494,62 @@ mod tests {
     }
 
     #[test]
+    fn a_captured_program_has_a_terminal_reads_what_is_typed_and_says_its_exit_code() {
+        let script = "test -t 0 && echo tty; printf 'code: ABCD-EFGH\\n'; read x; echo got:$x; exit 3";
+        let (output, input, _stop, exit) = captured(Path::new("/bin/sh"), &["-c", script]).unwrap();
+        input.send(b"yes\r".to_vec()).unwrap();
+        let text: String = output.iter().map(|b| String::from_utf8_lossy(&b).into_owned()).collect();
+        assert!(text.contains("tty") && text.contains("code: ABCD-EFGH") && text.contains("got:yes"), "{text:?}");
+        assert_eq!(exit.recv().unwrap(), Some(3));
+    }
+
+    #[test]
+    #[ignore = "runs the real docker login, which reaches Docker's sign-in service"]
+    fn live_docker_login_shows_its_device_code_on_a_captured_terminal() {
+        let dir = std::env::temp_dir().join(format!("kiri-weblogin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), "{}").unwrap();
+        // SAFETY: an ignored test, run on its own.
+        unsafe { std::env::set_var("DOCKER_CONFIG", &dir) };
+        let (output, _input, stop, _exit) = captured(Path::new("docker"), &["login"]).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut seen = String::new();
+        while let Ok(b) = output.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+            seen.push_str(&String::from_utf8_lossy(&b));
+            if seen.contains("login.docker.com/activate") || seen.contains("Login Succeeded") {
+                break;
+            }
+        }
+        stop();
+        let _ = std::fs::remove_dir_all(&dir);
+        // Signed in already (a credential helper on PATH answers), or the browser sign-in's code and page.
+        assert!(seen.contains("Login Succeeded") || (seen.contains("device confirmation code") && seen.contains("login.docker.com/activate")), "{seen:?}");
+    }
+
+    #[test]
+    fn a_captured_program_stops_when_asked() {
+        let (output, _input, stop, exit) = captured(Path::new("/bin/sleep"), &["30"]).unwrap();
+        stop();
+        assert!(exit.recv_timeout(std::time::Duration::from_secs(5)).is_ok());
+        drop(output);
+    }
+
+    #[test]
     fn a_shell_runs_on_a_real_terminal_and_says_when_it_ends() {
         let rx = listen();
         let (list, default) = shells();
-        assert!(
-            list.iter().any(|s| s.id == default),
-            "default {default} not in the list"
-        );
+        assert!(list.iter().any(|s| s.id == default), "default {default} not in the list");
 
-        handle(
-            "open",
-            "t1",
-            &serde_json::json!({"shell": "/bin/bash", "cols": 91, "rows": 17}),
-            record,
-        );
-        let typed = |s: &str| {
-            handle(
-                "input",
-                "t1",
-                &Value::String(termwire::b64(s.as_bytes())),
-                record,
-            )
-        };
+        handle("open", "t1", &serde_json::json!({"shell": "/bin/bash", "cols": 91, "rows": 17}), record);
+        let typed = |s: &str| handle("input", "t1", &Value::String(termwire::b64(s.as_bytes())), record);
         // A terminal of the size asked for, Kiri's tools on the PATH, and
         // the TERM programs expect.
         typed("stty size; echo \"T=$TERM\"; test -t 0 && echo IS-A-TTY; echo DONE$((40+2))\n");
         let (out, _) = output_until(&rx, "t1", "DONE42");
         assert!(out.contains("17 91"), "{out}");
-        assert!(
-            out.contains("T=xterm-256color") && out.contains("IS-A-TTY"),
-            "{out}"
-        );
+        assert!(out.contains("T=xterm-256color") && out.contains("IS-A-TTY"), "{out}");
 
-        handle(
-            "resize",
-            "t1",
-            &serde_json::json!({"cols": 120, "rows": 30}),
-            record,
-        );
+        handle("resize", "t1", &serde_json::json!({"cols": 120, "rows": 30}), record);
         typed("stty size; echo AGAIN$((1+1))\n");
         let (out, _) = output_until(&rx, "t1", "AGAIN2");
         assert!(out.contains("30 120"), "{out}");
@@ -541,18 +563,8 @@ mod tests {
     #[test]
     fn closing_hangs_up_the_shell_and_what_it_started() {
         let rx = listen();
-        handle(
-            "open",
-            "t2",
-            &serde_json::json!({"shell": "/bin/bash"}),
-            record,
-        );
-        handle(
-            "input",
-            "t2",
-            &Value::String(termwire::b64(b"sleep 600 & echo STARTED$((2*3))\n")),
-            record,
-        );
+        handle("open", "t2", &serde_json::json!({"shell": "/bin/bash"}), record);
+        handle("input", "t2", &Value::String(termwire::b64(b"sleep 600 & echo STARTED$((2*3))\n")), record);
         output_until(&rx, "t2", "STARTED6");
         let pid = with(|s| s["t2"].pid);
         handle("close", "t2", &Value::Null, record);
@@ -567,18 +579,8 @@ mod tests {
     #[test]
     fn a_shell_that_ignores_the_hang_up_still_goes() {
         let rx = listen();
-        handle(
-            "open",
-            "t3",
-            &serde_json::json!({"shell": "/bin/bash"}),
-            record,
-        );
-        handle(
-            "input",
-            "t3",
-            &Value::String(termwire::b64(b"trap '' HUP; echo TRAPPED$((3*3))\n")),
-            record,
-        );
+        handle("open", "t3", &serde_json::json!({"shell": "/bin/bash"}), record);
+        handle("input", "t3", &Value::String(termwire::b64(b"trap '' HUP; echo TRAPPED$((3*3))\n")), record);
         output_until(&rx, "t3", "TRAPPED9");
         let pid = with(|s| s["t3"].pid);
         handle("close", "t3", &Value::Null, record);
@@ -593,11 +595,7 @@ mod tests {
     #[test]
     fn a_page_can_only_start_a_listed_shell() {
         let (list, default) = shells();
-        assert!(
-            !list
-                .iter()
-                .any(|s| s.id.ends_with("/nologin") || s.id.ends_with("/false"))
-        );
+        assert!(!list.iter().any(|s| s.id.ends_with("/nologin") || s.id.ends_with("/false")));
         assert!(Path::new(&default).is_absolute());
     }
 }

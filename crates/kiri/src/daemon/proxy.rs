@@ -6,6 +6,7 @@
 //! `HTTPS_PROXY` and `NO_PROXY`, as Docker Desktop does. VPNs need nothing
 //! here: container traffic leaves through macOS's own networking.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -178,10 +179,42 @@ fn parse_scutil(text: &str) -> Effective {
     }
 }
 
+/// Windows loopback ports and the distro ports that lead to them, from
+/// kiri-win's relay (crates/kiri/src/hostrelay.rs): in WSL2, a proxy on
+/// Windows' 127.0.0.1 is reached there.
+static RELAY: Mutex<Option<HashMap<u16, u16>>> = Mutex::new(None);
+
+pub fn set_relay(map: HashMap<u16, u16>) {
+    *RELAY.lock().unwrap_or_else(|e| e.into_inner()) = Some(map);
+}
+
+/// The address a proxy is dialled at: through kiri-win's relay when it is
+/// on Windows' loopback, else as set.
+fn dialled(url: String) -> String {
+    let relay = RELAY.lock().unwrap_or_else(|e| e.into_inner());
+    relay.as_ref().and_then(|m| crate::hostrelay::relayed(&url, m)).unwrap_or(url)
+}
+
 /// For kiri-image: the proxy registry requests use. Registries are https.
 pub fn for_registry() -> Option<Option<(String, Vec<String>)>> {
     let e = effective();
-    Some(e.https.or(e.http).map(|url| (url, e.no_proxy)))
+    Some(e.https.or(e.http).map(|url| (dialled(url), e.no_proxy)))
+}
+
+/// The proxy pulls go through, as set (not as relayed) and without a
+/// password, for messages.
+pub fn shown() -> Option<String> {
+    let e = effective();
+    e.https.or(e.http).map(without_password)
+}
+
+fn without_password(url: String) -> String {
+    let start = url.find("://").map_or(0, |i| i + 3);
+    let end = url[start..].find('/').map_or(url.len(), |i| start + i);
+    match url[start..end].rfind('@') {
+        Some(at) => format!("{}{}", &url[..start], &url[start + at + 1..]),
+        None => url,
+    }
 }
 
 /// The variables a new container gets when "pass to containers" is on. A
@@ -252,6 +285,14 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_proxy_is_shown_without_its_password() {
+        let shown = |u: &str| super::without_password(u.into());
+        assert_eq!(shown("http://me:se@cret@127.0.0.1:7892"), "http://127.0.0.1:7892");
+        assert_eq!(shown("me:pw@proxy.corp:3128"), "proxy.corp:3128");
+        assert_eq!(shown("http://proxy.corp:3128/a@b"), "http://proxy.corp:3128/a@b");
+    }
+
     #[test]
     fn reads_scutil() {
         let text = "<dictionary> {\n  ExceptionsList : <array> {\n    0 : *.local\n    1 : 169.254/16\n  }\n  FTPPassive : 1\n  HTTPEnable : 1\n  HTTPPort : 3128\n  HTTPProxy : proxy.corp\n  HTTPSEnable : 1\n  HTTPSPort : 3129\n  HTTPSProxy : proxy.corp\n}\n";

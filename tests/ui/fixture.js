@@ -21,3 +21,35 @@ window.webkit = { messageHandlers: { kiri: { postMessage: (m) => { const o = JSO
 // UI tests assert English copy; pin the language so a Chinese system locale cannot fail them.
 prefs.lang = "en";
 if (typeof paintChrome === "function") paintChrome();
+
+
+// For the tests in other languages (zh.js, ar.js, langswitch.js): English left on screen.
+// Words that are fine in a Chinese window: products, systems, Kubernetes
+// kinds, units and the fixture's own names.
+const KEEP = new Set(("kiri dev share cloud docker hub desktop compose kubernetes kubectl macos windows linux wsl mac pc ubuntu " +
+  "orbstack finder explorer pod pods service services deployment replicaset clusterip nodeport loadbalancer ingress configmap secret " +
+  "canestack labs cpu cpus gpu ram id ids url dns tcp udp http https ip ipv6 ssh tls api cli json yaml sha k3s ok " +
+  "web api postgres worker nginx alpine node python octo localhost runkiri default rancher latest").split(" "));
+function english(root) {
+  const out = [];
+  const walk = (el) => {
+    // An element in a language of its own (a language's name in its own words) is meant so.
+    if (el.closest?.("[hidden], .xterm, pre, code, kbd, .mono, .p-mono, [data-copy], svg, script, style, [lang]:not(html)")) return;
+    if (el.nodeType === 1 && getComputedStyle(el).display === "none") return;
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3) {
+        // Two or more ordinary English words in a row, none of them a name.
+        for (const m of n.textContent.matchAll(/[A-Za-z][a-z']+(?:[ -][A-Za-z][a-z']+)+/g)) {
+          const words = m[0].toLowerCase().split(/[ -]/);
+          if (words.filter((w) => !KEEP.has(w)).length >= 2) out.push(m[0]);
+        }
+      } else if (n.nodeType === 1) walk(n);
+    }
+    for (const a of ["title", "aria-label", "placeholder"]) {
+      const v = el.getAttribute?.(a);
+      if (v && /[a-z]{2,} [a-z]{2,}/.test(v) && v.toLowerCase().split(/\W+/).filter((w) => w.length > 1 && !KEEP.has(w)).length >= 2 && !/[一-鿿\u0600-\u06FF]/.test(v)) out.push(`${a}="${v}"`);
+    }
+  };
+  walk(root);
+  return [...new Set(out)];
+}

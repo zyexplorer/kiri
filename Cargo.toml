@@ -26,5 +26,15 @@ panic = "abort"
 # (`crate::diag`) then name the functions instead of bare addresses.
 strip = "debuginfo"
 
+# Feature builds (`cargo xtask app-dev`): optimized like a release, but split
+# across every core and incremental, so a build takes seconds instead of a
+# minute and a half. The binary is bigger and a little slower; what ships, and
+# what speed checks measure, keeps [profile.release].
+[profile.fast]
+inherits = "release"
+lto = "off"
+codegen-units = 16
+incremental = true
+
 [profile.dev]
 panic = "abort"

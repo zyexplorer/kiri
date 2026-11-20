@@ -19,8 +19,9 @@
 //! The window downloads in the background, then installs on Restart now,
 //! or when it quits after Later (or at its next launch, if that quit never
 //! happened). The engine in WSL keeps running the old binary until
-//! `restart_engine` copies the new one in and restarts it; the page offers
-//! that as "Finish updating" when the engine's version lags the app's.
+//! `restart_engine` copies the new one in and restarts it, which the new
+//! Kiri does once the engine answers (`catch_up_engine`); the page offers
+//! it as "Finish updating" when that failed and the engine still lags.
 //!
 //! What this cannot do that the Mac does: pin the download to a signing
 //! identity, since the MSI is not signed. The feed is fetched over HTTPS and
@@ -37,7 +38,7 @@ mod recheck;
 
 use serde_json::json;
 
-use crate::engine::{emit, notice};
+use crate::engine::{emit, notice, trf};
 
 #[cfg(not(target_arch = "aarch64"))]
 const FEED: &str = "https://download.runkiri.com/latest-windows-x86_64.json";
@@ -272,28 +273,42 @@ pub fn install_staged() -> io::Result<String> {
 /// binary). Running containers stop; those with a restart policy start again.
 pub fn restart_engine() -> io::Result<()> {
     let distro = crate::setup::saved_distro().ok_or_else(|| io::Error::other("Kiri's Linux is not set up"))?;
-    let kiri = crate::setup::to_wsl(&distro, &dir().join("kiri"))?;
-    let init = crate::setup::to_wsl(&distro, &dir().join("kiri-init"))?;
     // The pkill patterns spell "kiri" as "[k]iri": `sh -c` runs with this
     // whole script on its command line, and a plain pattern would match
     // that too and kill the shell before it starts the daemon again.
     let script = if distro == crate::setup::KIRI_DISTRO {
-        // Kiri Linux: busybox, no systemd; kiri-start starts the daemon.
-        format!(
-            "cp -f '{kiri}' /usr/local/bin/kiri.new && cp -f '{init}' /usr/local/bin/kiri-init.new && chmod 755 /usr/local/bin/kiri.new /usr/local/bin/kiri-init.new && mv -f /usr/local/bin/kiri.new /usr/local/bin/kiri && mv -f /usr/local/bin/kiri-init.new /usr/local/bin/kiri-init && pkill -f '/usr/local/bin/[k]iri daemon'; pkill -f '/usr/local/bin/[k]iri bridge'; sleep 1; /usr/local/bin/kiri-start"
-        )
+        // Kiri Linux: busybox, no systemd; this version's engine, kiri-start
+        // and wsl.conf go in, and kiri-start --restart stops the daemon,
+        // waits for it to exit and starts it again, under its lock.
+        format!("( {} ) >/dev/null || exit 1; pkill -f '/usr/local/bin/[k]iri bridge'; /usr/local/bin/kiri-start --restart", crate::wslsync::sync_script(&dir(), "", true))
     } else {
         // Ubuntu: install.sh installs the binaries and restarts the service.
         let install = crate::setup::to_wsl(&distro, &dir().join("install.sh"))?;
-        format!("sh '{install}' && pkill -f '/usr/local/bin/[k]iri bridge'; true")
+        format!("sh {} && pkill -f '/usr/local/bin/[k]iri bridge'; true", crate::wslsync::sh_quote(&install))
     };
     let mut cmd = crate::win::tool("wsl.exe");
     std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
-    let out = cmd.args(["-d", &distro, "-u", "root", "--", "sh", "-c", &script]).stdin(Stdio::null()).output()?;
+    let out = output_within(cmd.args(crate::wslsync::wsl_sh(&distro, &script)), RESTART_LIMIT)?;
     if !out.status.success() {
         return Err(io::Error::other(first_line(&out.stderr, "the engine did not restart")));
     }
-    Ok(())
+    // Done only when the engine answers as this version: a restart that
+    // brought the old one back would ask again at the next check.
+    let began = Instant::now();
+    let mut last = None;
+    while began.elapsed() < Duration::from_secs(60) {
+        if let Some(v) = crate::client::request("GET", "/version", None).ok().filter(|r| r.ok()).and_then(|r| crate::client::kiri_version(&r.json()).map(str::to_owned)) {
+            if v == CURRENT {
+                return Ok(());
+            }
+            last = Some(v);
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    Err(io::Error::other(match last {
+        Some(v) => format!("the engine came back on {v}, not {CURRENT}"),
+        None => "the engine did not come back".to_owned(),
+    }))
 }
 
 /// Whether `msi` is a Kiri installer of the version `promised`, newer than
@@ -447,7 +462,14 @@ fn update_state(state: &str, latest: Option<&str>, error: Option<String>) {
 /// check asks the feed.
 pub fn check_now(manual: bool) {
     std::thread::spawn(move || {
-        if let Some(v) = crate::client::request("GET", "/version", None).ok().filter(|r| r.ok()).and_then(|r| r.json()["Version"].as_str().map(str::to_owned))
+        // An update went in and the engine in WSL still runs the old build:
+        // it is moved over (once, catch_up_engine), rather than asking. The
+        // card shows only if that fails, and on a manual check.
+        // What it tells the page before the window has opened (Kiri started
+        // in the background) waits in app.rs's queue, and shows when it opens.
+        if !manual {
+            catch_up_engine();
+        } else if let Some(v) = engine_version()
             && newer(CURRENT, &v)
         {
             emit(json!({"type": "enginestale", "version": v}).to_string());
@@ -466,7 +488,7 @@ fn feed_check(manual: bool) {
         // updated from the feed: it would "update" back to its release.
         if CURRENT.contains("-dev") {
             if manual {
-                emit(notice("ok", &format!("Kiri {CURRENT} is a test build: it doesn't update itself")));
+                emit(notice("ok", &trf("Kiri {version} is a test build: it doesn't update itself", &[("version", &CURRENT)])));
             }
             update_state("test", None, None);
             return;
@@ -487,13 +509,13 @@ fn feed_check(manual: bool) {
             Ok(_) => {
                 update_state("uptodate", None, None);
                 if manual {
-                    emit(notice("ok", &format!("Kiri {CURRENT} is the newest version")));
+                    emit(notice("ok", &trf("Kiri {version} is the newest version", &[("version", &CURRENT)])));
                 }
             }
             Err(e) => {
                 update_state("error", None, Some(e.to_string()));
                 if manual {
-                    emit(notice("error", &format!("Couldn't check for updates: {e}")));
+                    emit(notice("error", &trf("Couldn't check for updates: {error}", &[("error", &e)])));
                 }
             }
         }
@@ -552,48 +574,111 @@ pub fn restart_now() {
 /// The card's "Finish updating": the engine in WSL moves to the installed
 /// binary. Off the window's thread; the page hears when it is done.
 /// Before the engine starts (engine::ensure_daemon), the engine binaries in
-/// WSL are made the ones this app installed, when they differ. Without it,
-/// declining "Restart engine" after an update left the old engine in WSL,
-/// and every later start (each login, each reboot) ran it again. Copying
-/// only: nothing running is stopped, so this is for an engine that isn't up.
-/// Returns whether anything was copied.
+/// WSL are made the ones this app installed, when they differ, and in Kiri
+/// Linux this version's kiri-start and wsl.conf (whose boot command starts
+/// the engine when WSL boots the distro), so a distro an older Kiri set up
+/// gets them too. Without it, declining "Restart engine" after an update
+/// left the old engine in WSL, and every later start (each login, each
+/// reboot) ran it again. Copying only: nothing running is stopped, so this
+/// is for an engine that isn't up. One call into WSL, killed after
+/// WSL_LIMIT. Returns whether anything was copied.
 pub fn sync_engine() -> io::Result<bool> {
-    let (kiri_src, init_src) = (dir().join("kiri"), dir().join("kiri-init"));
-    if !kiri_src.is_file() || !init_src.is_file() {
+    if !dir().join("kiri").is_file() || !dir().join("kiri-init").is_file() {
         return Ok(false); // a development build run from elsewhere
     }
     let distro = crate::setup::saved_distro().ok_or_else(|| io::Error::other("Kiri's Linux is not set up"))?;
-    let kiri = crate::setup::to_wsl(&distro, &kiri_src)?;
-    let init = crate::setup::to_wsl(&distro, &init_src)?;
-    // Both distros keep the engine in /usr/local/bin (kiri-start, install.sh).
-    let script = format!(
-        "c=0; for f in kiri kiri-init; do if [ $f = kiri ]; then s='{kiri}'; else s='{init}'; fi; \
-         cmp -s \"$s\" /usr/local/bin/$f && continue; \
-         cp -f \"$s\" /usr/local/bin/$f.new && chmod 755 /usr/local/bin/$f.new && mv -f /usr/local/bin/$f.new /usr/local/bin/$f && c=1; done; \
-         [ $c = 1 ] && echo copied; true"
-    );
+    let script = crate::wslsync::sync_script(&dir(), "", distro == crate::setup::KIRI_DISTRO);
     let mut cmd = crate::win::tool("wsl.exe");
     std::os::windows::process::CommandExt::creation_flags(&mut cmd, CREATE_NO_WINDOW);
-    let out = cmd.args(["-d", &distro, "-u", "root", "--", "sh", "-c", &script]).stdin(Stdio::null()).output()?;
+    let out = output_within(cmd.args(crate::wslsync::wsl_sh(&distro, &script)), WSL_LIMIT)?;
     if !out.status.success() {
         return Err(io::Error::other(first_line(&out.stderr, "could not copy the engine into WSL")));
     }
     Ok(String::from_utf8_lossy(&out.stdout).contains("copied"))
 }
 
-pub fn restart_engine_now() {
-    std::thread::spawn(|| {
-        let began = Instant::now();
-        match restart_engine() {
-            Ok(()) => {
-                emit(r#"{"type":"enginestale","version":null}"#.to_owned());
-                // The page's engine toast, as the Mac's.
-                emit(json!({"type": "enginerestarted", "version": CURRENT, "ms": began.elapsed().as_millis() as u64}).to_string());
-            }
-            Err(e) => emit(notice("error", &format!("Could not restart the engine: {e}"))),
+/// The most one call into WSL to sync or start the engine may take: two
+/// binaries copied off the Windows disk, over WSL's file sharing, and a
+/// start.
+pub(crate) const WSL_LIMIT: Duration = Duration::from_secs(60);
+/// The most a restart's call into WSL may take: the sync (WSL_LIMIT), then
+/// kiri-start --restart: up to 25 s for its lock, 140 s for the old
+/// daemon's stop (its shutdown waits up to 120 s for a container with a
+/// long --stop-timeout, then for SIGKILL and its VM: about 132 s), 5 s for
+/// the new one's socket. 60 + 25 + 140 + 5 = 230 s. Restarts run on
+/// threads of their own.
+const RESTART_LIMIT: Duration = Duration::from_secs(240);
+
+/// `cmd`'s output, as `Command::output`, but killed (Err TimedOut) when it
+/// runs past `limit`: a wsl.exe right after Windows wakes can hang.
+pub(crate) fn output_within(cmd: &mut Command, limit: Duration) -> io::Result<std::process::Output> {
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let until = Instant::now() + limit;
+    while child.try_wait()?.is_none() {
+        if Instant::now() >= until {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::new(io::ErrorKind::TimedOut, format!("WSL did not finish in {} s", limit.as_secs())));
         }
-        crate::engine::send(crate::engine::Cmd::Refresh);
-    });
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // It has exited: what it wrote (a line or two) is in the pipes.
+    child.wait_with_output()
+}
+
+/// The engine's own Kiri version, when it answers.
+fn engine_version() -> Option<String> {
+    crate::client::request("GET", "/version", None).ok().filter(|r| r.ok()).and_then(|r| crate::client::kiri_version(&r.json()).map(str::to_owned))
+}
+
+static CATCH_UP: crate::wslsync::CatchUp = crate::wslsync::CatchUp::new();
+
+/// Once the engine answers (engine::ensure_daemon, on a thread of its own,
+/// and the window's update check), an engine older than this app is
+/// restarted on this one's, once per run of kiri-win (wslsync::CatchUp):
+/// after an update, Kiri Linux's boot command or the bridge starts the old
+/// engine before anything here can copy the new one in, and with no window
+/// open nothing else would move it over. Waits for that restart; one asked
+/// while another runs returns at once. Never on the engine thread.
+pub fn catch_up_engine() {
+    if !dir().join("kiri").is_file() {
+        return; // a development build run from elsewhere: nothing to copy
+    }
+    CATCH_UP.run(
+        engine_version,
+        |v| newer(CURRENT, v),
+        |v| {
+            crate::serve::log(&format!("update: the engine runs {v}, this Kiri is {CURRENT}; restarting it"));
+            emit(json!({"type": "state", "state": "booting"}).to_string());
+            restart_and_report();
+        },
+    );
+}
+
+pub fn restart_engine_now() {
+    std::thread::spawn(restart_and_report);
+}
+
+/// `restart_engine`, with the page and the log told how it went.
+fn restart_and_report() {
+    let began = Instant::now();
+    match restart_engine() {
+        Ok(()) => {
+            emit(r#"{"type":"enginestale","version":null}"#.to_owned());
+            // The page's engine toast, as the Mac's.
+            emit(json!({"type": "enginerestarted", "version": CURRENT, "ms": began.elapsed().as_millis() as u64}).to_string());
+        }
+        Err(e) => {
+            crate::serve::log(&format!("engine: did not restart ({e})"));
+            emit(notice("error", &trf("Could not restart the engine: {error}", &[("error", &e)])));
+            if let Some(v) = engine_version()
+                && newer(CURRENT, &v)
+            {
+                emit(json!({"type": "enginestale", "version": v}).to_string());
+            }
+        }
+    }
+    crate::engine::send(crate::engine::Cmd::Refresh);
 }
 
 #[cfg(test)]

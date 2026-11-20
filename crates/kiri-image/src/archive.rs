@@ -36,11 +36,9 @@ pub fn load(store: &Store, archive: impl Read) -> io::Result<Vec<Image>> {
             manifest = Some(buf);
             continue;
         }
-        if path.ends_with(".json") && !path.starts_with("blobs/") && entry.size() <= MAX_JSON {
-            // index.json, legacy per-layer json: not needed.
-            io::copy(&mut entry, &mut io::sink())?;
-            continue;
-        }
+        // Every other file is kept, `.json` ones too: in the classic layout
+        // (podman save, older docker save) the image config is a top-level
+        // `<hex>.json`. Files no image names are removed after the manifest.
         let mut w = store.ingest()?;
         io::copy(&mut entry, &mut w)?;
         let (digest, size) = w.finish()?;
@@ -233,6 +231,49 @@ mod tests {
         b.append_data(&mut h, "x", &b"x"[..]).unwrap();
         let bytes = b.into_inner().unwrap();
         assert!(load(&store, bytes.as_slice()).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The classic docker-archive layout (podman save, older docker save):
+    /// the config is a top-level `<hex>.json`, layers are `<hex>.tar`, with
+    /// a `repositories` file and, in the legacy layout, per-layer json.
+    #[test]
+    fn loads_classic_archives_with_a_top_level_config_json() {
+        let dir = scratch();
+        let store = Store::open(&dir).unwrap();
+        let add = |b: &mut tar::Builder<Vec<u8>>, name: &str, data: &[u8]| {
+            let mut h = tar::Header::new_ustar();
+            h.set_size(data.len() as u64);
+            h.set_mode(0o644);
+            h.set_entry_type(tar::EntryType::Regular);
+            b.append_data(&mut h, name, data).unwrap();
+        };
+        let mut layer = tar::Builder::new(Vec::new());
+        add(&mut layer, "etc/hello.txt", b"hello kiri\n");
+        let layer = layer.into_inner().unwrap();
+        let config = json!({"architecture": "arm64", "os": "linux", "created": "2026-11-09T00:00:00Z",
+            "config": {"Env": ["PATH=/usr/bin"], "Cmd": ["/bin/true"]},
+            "rootfs": {"type": "layers", "diff_ids": ["sha256:00"]}});
+        let config = serde_json::to_vec(&config).unwrap();
+        let manifest = json!([{"Config": "91df036f.json", "RepoTags": ["minirepro:flat"], "Layers": ["5e1a.tar"]}]);
+
+        let mut b = tar::Builder::new(Vec::new());
+        add(&mut b, "91df036f.json", &config); // before manifest.json, as tar sorts it
+        add(&mut b, "5e1a.tar", &layer);
+        add(&mut b, "5e1a/json", b"{\"id\":\"5e1a\"}");
+        add(&mut b, "index.json", b"{\"schemaVersion\":2}");
+        add(&mut b, "manifest.json", &serde_json::to_vec(&manifest).unwrap());
+        add(&mut b, "repositories", b"{\"minirepro\":{\"flat\":\"5e1a\"}}");
+        let bytes = b.into_inner().unwrap();
+
+        let images = load(&store, bytes.as_slice()).unwrap();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].name, "minirepro:flat");
+        assert_eq!(store.read_config(&images[0].config_digest).unwrap(), config);
+        assert_eq!(images[0].layers.len(), 1);
+        // Only the config and the layer stay in the store.
+        let blobs = std::fs::read_dir(store.blob_path(&images[0].config_digest).unwrap().parent().unwrap()).unwrap().count();
+        assert_eq!(blobs, 2);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

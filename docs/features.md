@@ -19,7 +19,11 @@ Apple silicon and Intel Macs (macOS 14+), Windows 10 and 11 (x86-64 and Arm, thr
   privileged and unconfined containers keep the host boundary: no vsock
   sockets (the way to the Mac) and no io_uring
 - **Networking**: a default bridge, user networks with DNS by name and
-  alias, `network connect`/`disconnect`, `--network host|none`, `-p`/`-P`
+  alias, `network connect`/`disconnect` (as with Docker, a container can
+  leave any of its networks, its first one too: another of its networks
+  then gives its default route, and with none left it has no network, as
+  with `--network none`; to leave its first network a running container is
+  stopped first), `--network host|none`, `-p`/`-P`
   (TCP and UDP) on all interfaces (as Docker does; `-p 127.0.0.1:8080:80`
   keeps a port local), `--add-host`, `host.docker.internal`,
   `--network container:<name>` (Compose `network_mode: service:x`; as with
@@ -50,6 +54,11 @@ Apple silicon and Intel Macs (macOS 14+), Windows 10 and 11 (x86-64 and Arm, thr
   Kiri container (buildx's docker-container driver), stopped when idle;
   on Apple silicon, amd64 build steps run through Rosetta too
 - **Compose**: `up`, `down`, `ps`, `logs`, `exec`, multiple networks, events
+- **USB devices (beta)**: the USB tab hands a device (a serial adapter, a
+  Zigbee stick, a development board) to your containers on Mac, Windows and
+  Linux, and shows where it is inside Linux with the `--device` line to
+  copy. On a Mac, a device that drops off the bus while attached (the board
+  resets, or the Mac sleeps) is attached again when it comes back
 - **Mac integration**: container files at `~/Kiri` in Finder (read-only
   NFS, always current), SSH agent forwarding at
   `/run/host-services/ssh-auth.sock`
@@ -107,6 +116,16 @@ versions on first launch (`crates/kiri/src/cli_pins.rs`, checked by SHA-256)
 unless the Mac already has a docker CLI.
 
 ## Known issues
+
+- **Mac: an attached USB device leaves your containers while the Mac
+  sleeps.** macOS takes USB devices off the bus when it sleeps, so a device
+  such as `/dev/ttyACM0` is gone from containers until the Mac wakes. Kiri
+  then attaches it again by itself. Kiri doesn't keep the Mac awake for a
+  device, since that would drain a laptop's battery. For a long job that
+  runs unattended (flashing boards, logging a serial port), keep the Mac
+  awake while it runs: `caffeinate -s` in a terminal (on power), or turn on
+  "Prevent automatic sleeping when the display is off" in System Settings
+  (Battery › Options on a laptop, Energy on a desktop Mac).
 
 - **`docker build --add-host name:host-gateway` with BuildKit fails** with
   `host-gateway is not supported by the docker-container driver`. buildx

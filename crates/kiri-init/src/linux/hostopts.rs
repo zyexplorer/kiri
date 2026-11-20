@@ -265,16 +265,25 @@ pub fn errno_text(e: &io::Error) -> String {
     c.next().map(|f| f.to_lowercase().chain(c).collect()).unwrap_or(s)
 }
 
-/// The supplementary groups for a user, read from the container's
-/// /etc/passwd and /etc/group as runc does: every group that lists the
-/// user, unless the run named a group (`user:group`), then `--group-add`.
-pub fn supplementary_groups(user: &str, uid: u32, add: &[String]) -> io::Result<Vec<libc::gid_t>> {
+/// The supplementary groups for a user, as Docker gives them: the user's
+/// own group `gid` first, then, read from the container's /etc/passwd and
+/// /etc/group as runc does, every group that lists the user, unless the run
+/// named a group (`user:group`), then `--group-add`.
+pub fn supplementary_groups(user: &str, uid: u32, gid: u32, add: &[String]) -> io::Result<Vec<libc::gid_t>> {
     let group_file = fs::read_to_string("/etc/group").unwrap_or_default();
+    groups_from(&group_file, user, || user_name(uid), gid, add)
+}
+
+/// [`supplementary_groups`] over `group_file`'s text; `uid_name` gives the
+/// name /etc/passwd has for a numeric user.
+fn groups_from(group_file: &str, user: &str, uid_name: impl FnOnce() -> Option<String>, gid: u32, add: &[String]) -> io::Result<Vec<libc::gid_t>> {
     let groups: Vec<Vec<&str>> = group_file.lines().map(|l| l.split(':').collect()).filter(|f: &Vec<&str>| f.len() >= 3).collect();
-    let mut out = Vec::new();
+    // Docker always lists the primary group, so getgroups() includes it
+    // (moby's getUser starts AdditionalGids with the user's gid).
+    let mut out = vec![gid];
     let (name, group) = user.split_once(':').map_or((user, None), |(u, g)| (u, Some(g)));
     if group.is_none() {
-        let name = if name.is_empty() || name.parse::<u32>().is_ok() { user_name(uid) } else { Some(name.to_owned()) };
+        let name = if name.is_empty() || name.parse::<u32>().is_ok() { uid_name() } else { Some(name.to_owned()) };
         if let Some(name) = name {
             for f in &groups {
                 if f.get(3).is_some_and(|members| members.split(',').any(|m| m.trim() == name)) {
@@ -296,6 +305,7 @@ pub fn supplementary_groups(user: &str, uid: u32, add: &[String]) -> io::Result<
         };
         out.push(gid);
     }
+    out.sort_unstable();
     out.dedup();
     Ok(out)
 }
@@ -312,6 +322,24 @@ fn user_name(uid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_users_own_group_is_a_supplementary_group_as_with_docker() {
+        let group = "root:x:0:root\nwheel:x:10:root,app\napp:x:1000:\nextra:x:2000:\n";
+        let groups = |user: &str, gid: u32, add: &[&str]| {
+            let add: Vec<String> = add.iter().map(|g| g.to_string()).collect();
+            groups_from(group, user, || Some("app".to_owned()), gid, &add).unwrap()
+        };
+        // --user 1000:1000: the named group, nothing from /etc/group.
+        assert_eq!(groups("1000:1000", 1000, &[]), [1000]);
+        // --user app (and its uid alone): its group, then its memberships.
+        assert_eq!(groups("app", 1000, &[]), [10, 1000]);
+        assert_eq!(groups("1000", 1000, &[]), [10, 1000]);
+        // --group-add beside it; a group given twice is listed once.
+        assert_eq!(groups("1000:1000", 1000, &["2000", "app"]), [1000, 2000]);
+        assert_eq!(groups("65534:1234", 1234, &[]), [1234]);
+        assert!(groups_from(group, "1000:1000", || None, 1000, &["nope".to_owned()]).is_err());
+    }
 
     fn list(lines: &[&str]) -> Vec<u8> {
         let mut buf = Vec::new();

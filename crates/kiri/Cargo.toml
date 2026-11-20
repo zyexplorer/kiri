@@ -13,12 +13,19 @@ kiri-share-proto = { path = "../kiri-share-proto" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
+# gzip uploads to PUT /containers/{id}/archive (DDEV sends them).
+flate2 = "1"
+# zstd uploads to the same endpoints: the decoder the guest unpacks layers with.
+ruzstd = "0.9"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # HTTPS for container names: the same rustls and ring ureq already brings in.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # Roots for `kiri share`'s connection to the edge.
 webpki-roots = "1"
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem", "crypto"] }
+# The `name` filter is a regular expression in Docker (k3d sends `^[/]?name$`).
+# regex-lite: RE2 syntax like Go's regexp, without the Unicode tables' size.
+regex-lite = "0.1"
 
 [target.'cfg(any(unix, windows))'.dependencies]
 libc = "0.2"
@@ -27,12 +34,13 @@ libc = "0.2"
 kiri-vmm = { path = "../kiri-vmm" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6.2"
 dispatch2 = "0.3.1"
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSWindow", "NSView", "NSGraphics", "NSRunningApplication", "NSMenu", "NSMenuItem", "NSEvent"] }
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFArray", "CFDictionary", "CFNumber", "CFString"] }
 objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFontCollection", "CTFontDescriptor", "CTFontTraits"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSNotification", "NSGeometry", "NSObject", "NSAppleScript", "NSDictionary"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSNotification", "NSGeometry", "NSObject", "NSAppleScript", "NSDictionary", "NSArray"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-app-kit", "objc2-core-foundation", "WKWebView", "WKWebViewConfiguration", "WKUserContentController", "WKScriptMessage", "WKScriptMessageHandler", "WKNavigation"] }
 
 # The Linux window (`kiri ui`), only with `--features window`: the engine and

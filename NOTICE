@@ -3307,6 +3307,7 @@ Used by:
 - once_cell 1.21.4 (https://github.com/matklad/once_cell)
 - percent-encoding 2.3.2 (https://github.com/servo/rust-url/)
 - pkg-config 0.3.34 (https://github.com/rust-lang/pkg-config-rs)
+- regex-lite 0.1.9 (https://github.com/rust-lang/regex)
 - ring 0.17.14 (https://github.com/briansmith/ring)
 - rustc_version 0.4.1 (https://github.com/djc/rustc-version-rs)
 - rustix 1.1.5 (https://github.com/bytecodealliance/rustix)

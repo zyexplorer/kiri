@@ -376,6 +376,43 @@ fn builtin(name: &str, driver: &str, bridge: &str, subnet: [u8; 4], gateway: [u8
     }
 }
 
+/// `--opt com.docker.network.bridge.name=…`. Kiri names each bridge itself
+/// (`kiri0`, `kiri1`, …) and the guest's firewall recognises its bridges by
+/// that prefix (the forward filter, masquerading, the host.docker.internal
+/// and DNS redirects, the loopback guard), so another name is refused rather
+/// than reported and not applied.
+pub const BRIDGE_NAME_OPT: &str = "com.docker.network.bridge.name";
+
+/// The options a network keeps, or why one of them cannot be applied. An
+/// empty bridge name is Docker's "unset" and is dropped.
+fn checked_options(options: serde_json::Value) -> Result<serde_json::Value, String> {
+    let serde_json::Value::Object(mut map) = options else { return Ok(serde_json::json!({})) };
+    match map.get(BRIDGE_NAME_OPT).map(|v| v.as_str().unwrap_or("?")) {
+        None => {}
+        Some("") => {
+            map.remove(BRIDGE_NAME_OPT);
+        }
+        Some(name) => {
+            return Err(format!(
+                "Kiri does not support the network option {BRIDGE_NAME_OPT} ({name}): Kiri names each network's bridge itself (kiri1, kiri2, …), and its firewall rules depend on those names. Create the network without it"
+            ));
+        }
+    }
+    Ok(serde_json::Value::Object(map))
+}
+
+/// A network's options as inspect shows them: a bridge name that is not the
+/// bridge's own (kept by a Kiri that did not refuse it) is left out.
+pub fn shown_options(n: &Network) -> serde_json::Value {
+    let mut o = if n.options.is_object() { n.options.clone() } else { serde_json::json!({}) };
+    if let Some(map) = o.as_object_mut()
+        && map.get(BRIDGE_NAME_OPT).is_some_and(|v| v.as_str() != Some(n.bridge.as_str()))
+    {
+        map.remove(BRIDGE_NAME_OPT);
+    }
+    o
+}
+
 /// What `POST /networks/create` asks for beyond the name.
 #[derive(Debug, Default)]
 pub struct Settings {
@@ -737,6 +774,7 @@ impl Networks {
         if s.no_ipv4 && !s.ipv6 {
             return Err("invalid network config: IPv4 or IPv6 must be enabled".into());
         }
+        let options = checked_options(s.options.clone())?;
         if s.no_ipv4 && s.ipam.is_some() {
             return Err("invalid network config: an IPv4 subnet was given, but IPv4 is disabled (--ipv4=false)".into());
         }
@@ -821,11 +859,8 @@ impl Networks {
             user_subnet: s.ipam.is_some(),
             ip_range: s.ipam.as_ref().and_then(|i| i.ip_range),
             aux: s.ipam.map(|i| i.aux).unwrap_or_default(),
-            options: if s.options.is_object() {
-                s.options
-            } else {
-                serde_json::json!({})
-            },
+            options,
+
             ipam_options: s.ipam_options,
             attachable: s.attachable,
             no_ipv4: s.no_ipv4,
@@ -921,7 +956,7 @@ impl Networks {
 
 /// The first free subnet: 172.17.0.0/16 (only for the default bridge), then
 /// 172.18.0.0/16 … 172.31.0.0/16, then 10.89.N.0/24, skipping ones Kiri
-/// already uses and ones the host routes.
+/// already uses and ones on the host's own links.
 fn free_subnet(taken: &[([u8; 4], u8)], default_bridge: bool) -> Option<([u8; 4], u8)> {
     let routes = host_routes();
     let first = if default_bridge { 17 } else { 18 };
@@ -963,22 +998,32 @@ fn host_routes6() -> Vec<([u8; 16], u8)> {
     Vec::new()
 }
 
-/// The host's own routes as (network, mask), outside Kiri's bridges and the
-/// default route. Only a Linux host shares its routing table with Kiri.
+/// The host's on-link routes as (network, mask), outside Kiri's bridges.
+/// Only a Linux host shares its routing table with Kiri.
 #[cfg(target_os = "linux")]
 fn host_routes() -> Vec<(u32, u32)> {
-    let text = std::fs::read_to_string("/proc/net/route").unwrap_or_default();
+    on_link_routes(&std::fs::read_to_string("/proc/net/route").unwrap_or_default())
+}
+
+/// The routes in `/proc/net/route`'s text that put the host on a subnet, as
+/// Docker reserves them since 23.0 (moby#42598): not one through a gateway
+/// (OpenVPN's 0.0.0.0/1 and 128.0.0.0/1), an unreachable or prohibit one, or
+/// one to 0.0.0.0 (the default route, a WireGuard 0.0.0.0/1).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn on_link_routes(text: &str) -> Vec<(u32, u32)> {
+    const RTF_GATEWAY: u32 = 0x2;
     text.lines()
         .skip(1)
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
-            if f.len() < 8 || f[0].starts_with("kiri") {
+            // A blackhole or unreachable route has no interface: "*".
+            if f.len() < 8 || f[0].starts_with("kiri") || f[0] == "*" || u32::from_str_radix(f[3], 16).ok()? & RTF_GATEWAY != 0 {
                 return None;
             }
             // Little-endian hex, as the kernel prints them.
             let dest = u32::from_str_radix(f[1], 16).ok()?.swap_bytes();
             let mask = u32::from_str_radix(f[7], 16).ok()?.swap_bytes();
-            (mask != 0).then_some((dest & mask, mask))
+            (dest != 0).then_some((dest & mask, mask))
         })
         .collect()
 }
@@ -1152,6 +1197,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// A bridge name of the user's own is refused: Kiri's firewall knows
+    /// its bridges by their `kiri` prefix. An empty one is Docker's unset;
+    /// one kept by an older Kiri is not shown in inspect.
+    #[test]
+    fn a_bridge_name_of_ones_own_is_refused_not_reported() {
+        let (mut n, dir) = nets();
+        let opts = |v: &str| Settings { options: serde_json::json!({BRIDGE_NAME_OPT: v, "com.docker.network.bridge.enable_ip_masquerade": "false"}), ..Default::default() };
+        let e = n.create("isolated", opts("cp-isolated")).unwrap_err();
+        assert!(e.starts_with("Kiri does not support the network option com.docker.network.bridge.name (cp-isolated)"), "{e}");
+        assert!(n.find("isolated").is_none(), "nothing made");
+        let made = n.create("isolated", opts("")).unwrap();
+        assert_eq!(made.options, serde_json::json!({"com.docker.network.bridge.enable_ip_masquerade": "false"}));
+        let mut old = made.clone();
+        old.options[BRIDGE_NAME_OPT] = "cp-isolated".into();
+        assert_eq!(shown_options(&old), made.options);
+        old.options[BRIDGE_NAME_OPT] = old.bridge.clone().into();
+        assert_eq!(shown_options(&old)[BRIDGE_NAME_OPT], old.bridge.as_str(), "its own name is true");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     fn v6(ipam6: Option<Ipam6>) -> Settings {
         Settings {
             labels: serde_json::json!({}),
@@ -1299,6 +1364,24 @@ mod tests {
         // A user's 172.18.0.0/24 keeps the automatic choice off 172.18.0.0/16.
         let free = free_subnet(&[([172, 17, 0, 0], 16), ([172, 18, 0, 0], 24)], false).unwrap();
         assert!(!overlaps(free, ([172, 18, 0, 0], 24)) && !overlaps(free, ([172, 17, 0, 0], 16)));
+    }
+
+    #[test]
+    fn only_on_link_routes_reserve_subnets() {
+        // As /proc/net/route prints them: an OpenVPN full tunnel (`def1`), a
+        // WireGuard one with no gateway, unreachable 10.0.0.0/8, blackhole 172.16.0.0/12.
+        let text = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n\
+            eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n\
+            tun0\t00000000\t0100080A\t0003\t0\t0\t0\t00000080\t0\t0\t0\n\
+            tun0\t00000080\t0100080A\t0003\t0\t0\t0\t00000080\t0\t0\t0\n\
+            tun0\t0000080A\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n\
+            wg0\t00000000\t00000000\t0001\t0\t0\t0\t00000080\t0\t0\t0\n\
+            *\t0000000A\t00000000\t0201\t0\t0\t0\t000000FF\t0\t0\t0\n\
+            *\t000010AC\t00000000\t0001\t0\t0\t0\t0000F0FF\t0\t0\t0\n\
+            eth0\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n\
+            kiri1\t000012AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n";
+        let lan = |a: [u8; 4]| (u32::from_be_bytes(a), u32::MAX << 8);
+        assert_eq!(on_link_routes(text), [lan([10, 8, 0, 0]), lan([192, 168, 1, 0])]);
     }
 
     #[test]

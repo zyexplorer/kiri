@@ -72,9 +72,9 @@ distro). What the packages do:
   starts it; where it isn't installed (kiri-lite, the arm64 packages, which
   zig cross-compiles), `kiri ui` says so. `linux-build.sh` builds the window
   for its own machine's architecture when `libwebkit2gtk-4.1-dev` is there.
-- Upgrading the package leaves the running engine as it is (stopping it would
-  end every container); run `systemctl restart kiri` afterwards to get the
-  new version.
+- Upgrading the package restarts a running engine on the new version, as
+  the Mac and Windows apps do after an update: running containers stop, and
+  those with a restart policy start again.
 
 Tests: `packaging/linux/test.sh` (package listings, install/remove in
 privileged Ubuntu and Fedora containers on any Docker-compatible engine, Kiri

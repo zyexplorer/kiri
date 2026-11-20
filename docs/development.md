@@ -14,6 +14,19 @@ cargo xtask guest     # guest/out/initramfs.cpio
 cargo xtask host      # target/release/kiri, signed with the virtualization entitlement
 ```
 
+`cargo xtask app-dev <feature>` makes `target/dev/Kiri <Feature>.app`, a second
+Kiri with its own engine, for trying a change. It builds the host with
+`[profile.fast]`: optimized, but on every core and incremental, so the first
+build takes about half a minute and a rebuild after an edit a few seconds.
+The binary is bigger and a little slower than a release one; `app`, `release`
+and speed checks keep `[profile.release]`. The docker CLI, Compose and buildx
+downloads are cached once for every checkout, in `~/Library/Caches/kiri-build/cli`
+(`KIRI_CLI_CACHE` to move it), and checked against their pinned SHA-256 each time.
+
+`cargo xtask linux` builds the static Linux engine (`kiri`, `kiri-init`) in a
+Rust container into `target/linux/release`; `cargo xtask linux-dev` builds the
+same with `[profile.fast]` into `target/linux/fast`, for testing a change.
+
 For Intel Macs add `--arch x86_64` to `kernel`, `guest`, `host`, `app`,
 `dmg` and `release`: an x86-64 guest in `guest/out/x86_64` (a `bzImage`,
 cross-compiled on Apple Silicon), the host for `x86_64-apple-darwin`
@@ -26,7 +39,8 @@ no Rosetta for Linux: amd64 images run natively, and images with no amd64
 build are refused.
 
 On Windows, `cargo xtask windows-dev` builds the Linux engine, Kiri Linux and
-Docker tools into `target/kiri-windows-x86_64` with a debug `kiri-win.exe`.
+Docker tools into `target/kiri-windows-x86_64` with a debug `kiri-win.exe`,
+and the engine with `[profile.fast]`.
 `cargo run -p kiri-win` uses that bundle automatically. Use `cargo xtask
 windows` for the release bundle and `cargo xtask msi` for the installer.
 Add `--arch arm64` to any of the three for Windows on Arm
@@ -72,7 +86,9 @@ kiri UI ────┘
 - **VM**: Apple's Virtualization.framework, driven from Rust through objc2.
   A custom 10 MB kernel (`guest/kernel/`) built from allnoconfig, with one
   patch that cuts virtio-pci reset waits from a scheduler tick to
-  microseconds. Rosetta is shared in over virtiofs and registered with
+  microseconds, one that hands big TCP to the host as GSO, one that keeps
+  newly created FUSE files owner-readable, and an upstream GRO fix that keeps
+  forwarded packets segmentable. Rosetta is shared in over virtiofs and registered with
   binfmt_misc.
 - **Guest agent**: a ~900 KB static Rust binary that is PID 1. One `poll()`
   loop serves the host, reaps children, forwards container output, relays
@@ -105,3 +121,35 @@ kiri UI ────┘
 | `xtask` | build tasks |
 | `bench/results.json` | measured results; the website keeps a copy |
 | `brand/` | brand (the website and raw benchmark output live outside this repository) |
+
+## Unexpected VM stops
+
+The daemon keeps the guest's serial console, kernel oopses included, in
+`~/.kiri/logs/guest-console.log` (Kiri Dev: in its own state folder). The file and two
+rotations (`.1`, `.2`) hold at most 1 MiB each. Files are private, credential
+patterns are redacted, and lines over 16 KiB are omitted. The unexpected-stop
+log line names this file. The console stays local; crash reports do not send it.
+
+After a guest crash, Kiri automatically boots a new VM when containers were
+running with `always` or `unless-stopped`, then restarts them and increments
+their `RestartCount`. Crashes in a row back off from 100 ms to one minute;
+a VM that ran ten seconds starts the backoff over. A manual stop, kill or
+removal wins, including during that wait, and so does Kiri's Stop (Start
+brings them back); `no`, `on-failure` and containers that never ran stay
+down. If the new VM does not boot, recovery tries again, waiting longer
+each time up to a minute.
+
+Before a replacement opens the data disk, Kiri confirms that the previous
+VM has stopped and releases its resources, even if relay threads still
+hold old links. It allows ten seconds for shutdown, then up to ten seconds
+for a confirmed forced stop. Errors and timeouts keep the previous VM
+owned and block replacement; recovery retries with backoff. This wait does
+not hold container lifecycle locks, so stop, kill and removal can cancel
+pending starts. Linux gives each guest process its own socket directory,
+so late destruction of an old link cannot remove its successor's sockets.
+
+The real-VM regression is an opt-in ignored test:
+`vm_loss_live_recovers_without_a_request`. Run its signed test binary with
+an isolated `HOME` and `KIRI_DATA_DIR` containing `alpine:latest` and no
+containers, `KIRI_GUEST_DIR` pointing to matching guest assets, and
+`KIRI_LIVE_VM_RECOVERY=1`. It force-stops only the VM it creates.

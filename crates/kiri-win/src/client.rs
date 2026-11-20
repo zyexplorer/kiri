@@ -18,6 +18,11 @@ pub fn set_pipe(name: &str) {
     let _ = PIPE.set(name.to_owned());
 }
 
+/// The pipe the daemon is served on.
+pub fn pipe() -> String {
+    PIPE.get().cloned().unwrap_or_else(|| r"\\.\pipe\kiri".to_owned())
+}
+
 fn connect() -> io::Result<Arc<Pipe>> {
     Pipe::open(PIPE.get().map_or(r"\\.\pipe\kiri", String::as_str)).map(Arc::new)
 }
@@ -131,9 +136,16 @@ pub fn request_with(method: &str, path: &str, body: Option<&Value>, background: 
     request_within(method, path, body, background, None)
 }
 
-/// How long the ping waits for its answer. Nothing else in the window has
-/// a deadline, so this one must not hang the engine thread.
-const PING_WAIT: Duration = Duration::from_secs(20);
+/// How long Start's ping waits for its answer: as long as the bridge may
+/// take to start the engine (crates/kiri/src/bridge.rs, 25 s), then 5 s
+/// for the answer, and no more, so it never hangs the engine thread.
+const PING_WAIT: Duration = Duration::from_secs(30);
+
+/// How long the window's own background calls wait (its lists, the engine
+/// panel, the event watcher's ping): while the bridge starts the engine,
+/// they fail soon rather than hold the engine thread for its 25 s, so a
+/// Stop or Start clicked meanwhile runs next.
+const QUICK: Duration = Duration::from_secs(3);
 
 /// `request_with`, failing (TimedOut) when a read waits longer than `timeout`.
 pub fn request_within(method: &str, path: &str, body: Option<&Value>, background: bool, timeout: Option<Duration>) -> io::Result<Response> {
@@ -165,8 +177,24 @@ pub fn request_within(method: &str, path: &str, body: Option<&Value>, background
     Ok(Response { status, body })
 }
 
+/// Kiri's own version from a `/version` answer: `KiriVersion`, or `Version`
+/// from an engine older than that field (it reported Kiri's version there;
+/// it is now the Docker Engine version clients gate on).
+pub fn kiri_version(version: &Value) -> Option<&str> {
+    version["KiriVersion"].as_str().or_else(|| version["Version"].as_str())
+}
+
 pub fn get(path: &str) -> io::Result<Value> {
     let r = request("GET", path, None)?;
+    if !r.ok() {
+        return Err(io::Error::other(r.error()));
+    }
+    Ok(r.json())
+}
+
+/// A GET of the window's own refresh, failing after QUICK without an answer.
+pub fn get_quick(path: &str) -> io::Result<Value> {
+    let r = request_within("GET", path, None, false, Some(QUICK))?;
     if !r.ok() {
         return Err(io::Error::other(r.error()));
     }
@@ -241,9 +269,15 @@ pub fn post_lines_closable(path: &str, auth: Option<&str>, opened: impl FnOnce(C
     Ok(status)
 }
 
-/// Whether the daemon answers at all.
+/// Whether the daemon answers at all, waiting for a start the bridge has
+/// under way (Start).
 pub fn alive() -> bool {
     request_within("GET", "/_ping", None, false, Some(PING_WAIT)).is_ok_and(|r| r.ok())
+}
+
+/// `alive`, for the event watcher: false after QUICK without an answer.
+pub fn alive_quick() -> bool {
+    request_within("GET", "/_ping", None, false, Some(QUICK)).is_ok_and(|r| r.ok())
 }
 
 /// A long-lived streamed response (`/events`, `logs?follow=1`, `stats`),

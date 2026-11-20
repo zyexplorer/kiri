@@ -722,7 +722,9 @@ dependencies = [
 name = "kiri"
 version = "0.2.0"
 dependencies = [
+ "block2",
  "dispatch2",
+ "flate2",
  "gtk",
  "javascriptcore-rs",
  "kiri-image",
@@ -737,7 +739,9 @@ dependencies = [
  "objc2-foundation",
  "objc2-web-kit",
  "rcgen",
+ "regex-lite",
  "rustls",
+ "ruzstd",
  "serde",
  "serde_json",
  "sha2",
@@ -1142,6 +1146,12 @@ dependencies = [
  "x509-parser",
  "yasna",
 ]
+
+[[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "ring"

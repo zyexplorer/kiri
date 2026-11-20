@@ -13,10 +13,18 @@
 
 #[cfg(windows)]
 mod app;
+// The address the window's page is served at, from memory: plain code,
+// tested on any host.
+#[cfg(any(windows, test))]
+mod page;
 // The window's page, put together as on the Mac and Linux.
 #[cfg(windows)]
 #[path = "../../kiri/src/ui/assemble.rs"]
 mod assemble;
+// Its language, and the tray menu's words.
+#[cfg(windows)]
+#[path = "../../kiri/src/ui/lang.rs"]
+mod lang;
 #[cfg(windows)]
 #[path = "../../kiri/src/ui/notes.rs"]
 mod notes;
@@ -36,8 +44,18 @@ mod engine;
 mod pipe;
 #[cfg(windows)]
 mod serve;
+// A proxy on Windows' loopback, reached from WSL: relay.rs, over the
+// relay's frames shared with the WSL end.
+#[cfg(windows)]
+mod relay;
+#[cfg(windows)]
+#[path = "../../kiri/src/hostrelay.rs"]
+mod hostrelay;
 #[cfg(windows)]
 mod win;
+// The window's USB view, through usbipd-win.
+#[cfg(windows)]
+mod usb;
 #[cfg(windows)]
 mod setup;
 // The built-in terminal's shells, on ConPTY.
@@ -93,6 +111,18 @@ mod flavor;
 mod share;
 #[cfg(windows)]
 mod update;
+// The engine's files put into WSL, and what a docker client is told when
+// the engine there cannot be reached: plain code, tested on any host.
+#[cfg(any(windows, test))]
+mod wslsync;
+#[cfg(any(windows, test))]
+mod refuse;
+// Settings → Import from Docker Desktop: the Mac's and Linux's own
+// crates/kiri/src/import.rs, through the docker CLI's contexts.
+#[cfg(windows)]
+#[path = "../../kiri/src/import.rs"]
+#[allow(dead_code)]
+mod import;
 
 #[cfg(windows)]
 fn main() -> std::process::ExitCode {
@@ -138,6 +168,7 @@ fn main() -> std::process::ExitCode {
     // First run (or Kiri's Linux gone): the window opens on setup. Naming a
     // distro (--distro) is for development and skips it.
     let setup = !std::env::args().any(|a| a == "--distro") && setup::needed();
+    serve::set_setup_pending(setup);
     if let Err(e) = serve::start(cfg.clone()) {
         // Another kiri-win already serves the pipe: show its window instead.
         if app::running() {
@@ -177,11 +208,13 @@ fn main() -> std::process::ExitCode {
     // The engine starts when the page says `ready`, and with the window
     // hidden (--background, as from the login shortcut) no page loads: after
     // kiri-win restarted, docker got no answer until Start was pressed.
-    // Start it now. ensure_daemon runs kiri-start only when the daemon does
-    // not answer, and kiri-start does nothing while one runs, so a daemon
-    // already up is left alone and never doubled.
+    // Bring it up now. ensure_daemon runs kiri-start only when the daemon
+    // does not answer, and kiri-start does nothing while one runs, so a
+    // daemon already up is left alone and never doubled. An engine the
+    // person stopped stays stopped: that waits for Start, as when the
+    // window opens.
     if background && !setup {
-        engine::send(engine::Cmd::Start);
+        engine::send(engine::Cmd::Launch);
     }
     let result = app::run(
         !background || setup,

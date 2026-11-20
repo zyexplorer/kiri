@@ -1,0 +1,24 @@
+# Header: Linux 6.13 and later give every program an AT_HWCAP3 entry (type 29)
+# at start, even when it is 0. Apple's Rosetta for Linux on macOS 15 stops on
+# any entry type it doesn't know ("rosetta error: unhandled auxillary vector
+# type 29"), so no linux/amd64 container could start there. On arm64 the word
+# holds only MTE and LSFE, which Apple's virtual machines don't have, so in
+# Kiri's VM it is always 0. Give the entry only when it says something:
+# reading a missing entry gives 0 all the same.
+--- a/fs/binfmt_elf.c
++++ b/fs/binfmt_elf.c
+@@ -266,10 +266,12 @@
+ 	NEW_AUX_ENT(AT_HWCAP2, ELF_HWCAP2);
+ #endif
+ #ifdef ELF_HWCAP3
+-	NEW_AUX_ENT(AT_HWCAP3, ELF_HWCAP3);
++	if (ELF_HWCAP3)
++		NEW_AUX_ENT(AT_HWCAP3, ELF_HWCAP3);
+ #endif
+ #ifdef ELF_HWCAP4
+-	NEW_AUX_ENT(AT_HWCAP4, ELF_HWCAP4);
++	if (ELF_HWCAP4)
++		NEW_AUX_ENT(AT_HWCAP4, ELF_HWCAP4);
+ #endif
+ 	NEW_AUX_ENT(AT_EXECFN, bprm->exec);
+ 	if (k_platform) {

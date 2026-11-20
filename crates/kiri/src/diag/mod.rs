@@ -37,6 +37,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod console;
+
 pub mod redact;
 pub mod report;
 
@@ -319,6 +321,11 @@ pub fn rotated(path: &Path, n: usize) -> PathBuf {
 }
 
 fn append(part: Part, line: &str) -> io::Result<()> {
+    // Unit tests log too (a setup step that fails on purpose): never into
+    // the real ~/.kiri/logs of whoever runs them.
+    if cfg!(test) {
+        return Ok(());
+    }
     let path = log_path(part).ok_or_else(|| io::Error::other("HOME is not set"))?;
     append_to(&path, line, MAX_LOG)
 }
@@ -331,9 +338,13 @@ pub fn append_to(path: &Path, line: &str, max: u64) -> io::Result<()> {
     let _held = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     if std::fs::metadata(path).is_ok_and(|m| m.len() + line.len() as u64 + 1 > max) {
         for n in (1..KEEP).rev() {
-            let _ = std::fs::rename(rotated(path, n), rotated(path, n + 1));
+            if let Err(e) = std::fs::rename(rotated(path, n), rotated(path, n + 1))
+                && e.kind() != io::ErrorKind::NotFound
+            {
+                return Err(e);
+            }
         }
-        let _ = std::fs::rename(path, rotated(path, 1));
+        std::fs::rename(path, rotated(path, 1))?;
     }
     let open = || {
         std::fs::OpenOptions::new()

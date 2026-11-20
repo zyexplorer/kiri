@@ -61,13 +61,12 @@ case "$1" in
     # `systemctl enable --now kiri`). Installing alone runs nothing.
     if [ -d /run/systemd/system ]; then
       systemctl daemon-reload || true
-      # An upgrade ($2 is the version it replaced) leaves a running engine
-      # alone, so it keeps running the old binary until it restarts.
-      # Restarting stops its containers, so that's the user's call.
+      # An upgrade ($2 is the version it replaced) restarts a running engine
+      # on the new binary, as the Mac and Windows apps do after an update.
+      # Its containers stop; those with a restart policy start again.
       if [ -n "${2:-}" ] && systemctl is-active -q kiri.service; then
-        echo "Kiri is upgraded from $2. The engine keeps running $2 until it restarts:"
-        echo "  sudo systemctl restart kiri   (running containers stop; those with a restart policy start again)"
-        echo "or open Kiri and choose Restart engine. The next boot starts the new one either way."
+        echo "Kiri is upgraded from $2: restarting the engine on the new version."
+        systemctl try-restart kiri.service || echo "  The engine didn't restart: sudo systemctl restart kiri"
       fi
     fi
     stale_kiri

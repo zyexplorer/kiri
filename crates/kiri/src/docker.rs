@@ -63,6 +63,14 @@ pub const COMMANDS: &[&str] = &[
     "wait",
 ];
 
+/// `kiri update` is two commands. Alone or with `--check` it updates Kiri;
+/// with anything else it is Docker's `update`, which always names a
+/// container (`kiri update --memory 256m web`).
+#[cfg(any(target_os = "macos", test))]
+pub fn is_container_update(args: &[String]) -> bool {
+    args.iter().any(|a| !matches!(a.as_str(), "--check" | "-h" | "--help"))
+}
+
 pub fn handles(command: &str) -> bool {
     COMMANDS.contains(&command)
 }
@@ -130,4 +138,20 @@ fn buildx_knows(name: &str) -> bool {
             std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".docker/buildx"))
         });
     dir.is_some_and(|d| d.join("instances").join(name).is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_container_update;
+
+    #[test]
+    fn update_alone_is_kiris_and_with_a_container_is_dockers() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(!is_container_update(&a(&[])));
+        assert!(!is_container_update(&a(&["--check"])));
+        assert!(!is_container_update(&a(&["--help"])));
+        assert!(is_container_update(&a(&["--memory", "256m", "web"])));
+        assert!(is_container_update(&a(&["web"])));
+        assert!(is_container_update(&a(&["--restart", "always", "web"])));
+    }
 }

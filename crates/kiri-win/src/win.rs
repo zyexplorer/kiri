@@ -85,10 +85,18 @@ pub fn tool(name: &str) -> Command {
 /// between to carry it, and its console window shows (no
 /// `-WindowStyle Hidden`): Windows' approval prompt does anyway.
 pub fn elevated_script(script: &Path, args: &[&str]) -> io::Result<u32> {
-    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
     let script = script.to_string_lossy();
-    let params = PS_FILE.iter().copied().chain(Some(&*script)).chain(args.iter().copied()).map(quote).collect::<Vec<_>>().join(" ");
-    let (verb, file, params) = (wide("runas"), wide(&resolve("powershell.exe").to_string_lossy()), wide(&params));
+    let all: Vec<&str> = PS_FILE.iter().copied().chain(Some(&*script)).chain(args.iter().copied()).collect();
+    elevated(&resolve("powershell.exe"), &all)
+}
+
+/// Runs a program elevated (ShellExecuteEx's "runas": Windows asks for an
+/// administrator's approval first) and waits for it: its exit code, or
+/// ERROR_CANCELLED (1223) when the approval was declined.
+pub fn elevated(program: &Path, args: &[&str]) -> io::Result<u32> {
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let params = args.iter().copied().map(quote).collect::<Vec<_>>().join(" ");
+    let (verb, file, params) = (wide("runas"), wide(&program.to_string_lossy()), wide(&params));
     // SAFETY: the strings outlive the call and are NUL-terminated; the
     // process handle ShellExecuteExW returns (NOCLOSEPROCESS) is waited on,
     // read and closed here. COM is initialized as ShellExecuteEx asks, and
@@ -111,7 +119,7 @@ pub fn elevated_script(script: &Path, args: &[&str]) -> io::Result<u32> {
             return Err(error);
         }
         if info.hProcess == 0 {
-            return Err(io::Error::other("Windows started no PowerShell"));
+            return Err(io::Error::other("Windows started nothing"));
         }
         WaitForSingleObject(info.hProcess, INFINITE);
         let mut code = 0u32;

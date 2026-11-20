@@ -88,7 +88,7 @@ pub fn run(autostart: bool, view: Option<String>) -> io::Result<()> {
         settings.set_hardware_acceleration_policy(webkit2gtk::HardwareAccelerationPolicy::Never);
         settings.set_enable_write_console_messages_to_stdout(cfg!(debug_assertions));
     }
-    webview.load_html(&super::assemble::page(PAGE), None);
+    webview.load_html(&super::assemble::page(PAGE, super::prefs()["lang"].as_str()), None);
     window.add(&webview);
     // Before set_appearance, which gives it its background.
     WEBVIEW.with(|v| *v.borrow_mut() = Some(webview));
@@ -115,6 +115,10 @@ fn icon() -> Option<Pixbuf> {
 }
 
 /// Runs JavaScript in the page. Callable from any thread.
+/// The language setting changed: the page redraws its own words, and the
+/// GTK window draws none of its own.
+pub(super) fn relang() {}
+
 pub(super) fn eval(js: String) {
     glib::MainContext::default().invoke(move || {
         WEBVIEW.with(|v| {
@@ -215,6 +219,31 @@ pub(super) fn paste(done: impl FnOnce(String) + Send + 'static) {
     glib::MainContext::default().invoke(move || {
         gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD)
             .request_text(move |_, text| done(text.map(|t| t.to_string()).unwrap_or_default()));
+    });
+}
+
+/// Open a compose file…: GTK's own file chooser (the desktop's portal when
+/// there is one), on GTK's main thread. Compose's file names first, any
+/// YAML file second. `done` gets the path, or None when cancelled.
+pub(super) fn pick_compose_file(title: &str, filters: &[String; 2], done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let (title, filters) = (title.to_owned(), filters.clone());
+    glib::MainContext::default().invoke(move || {
+        let parent = WINDOW.with(|v| v.borrow().clone());
+        let dialog = gtk::FileChooserNative::new(Some(&title), parent.as_ref(), gtk::FileChooserAction::Open, None, None);
+        let names = gtk::FileFilter::new();
+        names.set_name(Some(&filters[0]));
+        for p in super::compose::FILE_NAMES {
+            names.add_pattern(p);
+        }
+        let yaml = gtk::FileFilter::new();
+        yaml.set_name(Some(&filters[1]));
+        yaml.add_pattern("*.yaml");
+        yaml.add_pattern("*.yml");
+        dialog.add_filter(names);
+        dialog.add_filter(yaml);
+        let picked = if dialog.run() == gtk::ResponseType::Accept { dialog.filename() } else { None };
+        dialog.destroy();
+        done(picked);
     });
 }
 

@@ -34,9 +34,18 @@ pub const INPUT_WINDOW: usize = 4 << 20;
 
 /// The wire version. The host refuses an agent with another one: 3 added
 /// `InputConsumed`, which the host waits on, so an older agent would leave
-/// a client's stdin blocked after `INPUT_WINDOW` bytes.
-pub const PROTOCOL: u16 = 3;
+/// a client's stdin blocked after `INPUT_WINDOW` bytes. 4 added
+/// `UsageQuery`, which has no reply: an older agent's "unexpected" error
+/// would be taken as the reply to the next request. 5 added `RunSpec::seccomp`,
+/// the container's own seccomp program: an older agent would ignore it and
+/// run the container under the default filter instead of its profile. 6
+/// added `Started::starting` and `AwaitStart`: an older host would read a
+/// start still filling a new volume as started, and let an exec in before
+/// the container's root is in place.
+pub const PROTOCOL: u16 = 6;
 
+// `Run` is the one big message and is built and read once per container.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Msg<'a> {
     /// Guest → host, sent once on connect.
@@ -62,7 +71,14 @@ pub enum Msg<'a> {
     /// Host → guest: start a container. Answered by `Started` (or `Error`),
     /// then any number of `Output`, then `Exited`.
     Run(RunSpec<'a>),
-    Started { id: &'a str, pid: u32 },
+    /// `starting`: the container's process is running but its root is not
+    /// in place yet (a new volume is still being filled); ask `AwaitStart`
+    /// until it is. Always false for an exec, and from older agents.
+    Started { id: &'a str, pid: u32, starting: bool },
+    /// Host → guest: is the root of a container that started `starting` in
+    /// place now? Answered by `Started` for that container (`starting`
+    /// false once it is), or `Error` when it is not running.
+    AwaitStart { id: &'a str },
     Output { id: &'a str, stream: Stream, data: &'a [u8] },
     Exited(Exited<'a>),
     /// Host → guest: send `signal` to the container's process. No reply;
@@ -98,6 +114,12 @@ pub enum Msg<'a> {
     /// digest), and any left half-written. Sent once after connecting,
     /// before anything runs. No reply.
     RetainLayers(StrList<'a>),
+    /// Asks how much disk the guest's layers, containers and volumes use.
+    UsageQuery,
+    /// The reply: one `KIND NAME BYTES` line per entry, KIND `l` (an
+    /// unpacked layer, by blob hex), `c` (a container's writable layer, by
+    /// id) or `v` (a volume, by name). BYTES is what it takes on disk.
+    Usage(StrList<'a>),
     /// Host → guest: metadata of a path inside a running container's root
     /// (symlinks are not followed). Answered by `FsStat` or `Error`.
     FsStatRequest { id: &'a str, path: &'a str },
@@ -133,7 +155,9 @@ pub enum Msg<'a> {
     ContainerStats(ContainerStats),
     /// Host → guest: the container's processes. Answered by `Top` or `Error`.
     TopQuery { id: &'a str },
-    /// Tab-separated `uid pid ppid c stime tty time cmd`, one process each.
+    /// Tab-separated `user pid ppid c stime tty time comm stat rss vsz %cpu
+    /// %mem etime-secs time-secs uid cmd`, one process each (cmd last; an
+    /// older agent sent only the first seven and cmd).
     Top(StrList<'a>),
     /// Host → guest: plug a running container into another bridge network
     /// as `ifname`. Answered by `Ack` or `Error`.
@@ -146,6 +170,14 @@ pub enum Msg<'a> {
     /// The container's `/proc/net/tcp` and `tcp6` lines in state LISTEN, as
     /// the kernel writes them.
     Listening(StrList<'a>),
+    /// Host → guest: where the USB devices passed through to the VM show
+    /// up. Answered by `UsbNodes` or `Error`; an older agent answers `Error`.
+    UsbNodesQuery,
+    /// One `PORT\tPATH\tWHAT` line per device node: PORT is the vhci port
+    /// the device was attached on (the agent's answer to it), PATH the node
+    /// (`/dev/ttyUSB0`, or a network interface's name), WHAT what it is
+    /// (`serial port`, `raw USB`, …).
+    UsbNodes(StrList<'a>),
     /// Host → guest: route `dst/prefix` through `via` in the VM (or remove
     /// that route), so the host's relay can reach addresses that live behind
     /// a container, such as a Kubernetes node's pods and services. Answered
@@ -160,6 +192,15 @@ pub enum Msg<'a> {
     /// the bridge's addresses and routes, its DNS server and, with the last
     /// IPv6 network, the IPv6 NAT table. No reply; an older agent ignores it.
     RemoveBridge { bridge: &'a str },
+    /// Host → guest, in the VM: files the Mac changed under bind mounts, one
+    /// `OP\tPATH` line each: OP is `C` (created), `M` (modified), `A`
+    /// (attributes changed) or `D` (deleted), PATH the file's path in the VM
+    /// (under /mnt/mac). The agent raises the inotify events Linux would for
+    /// a change made in the VM. No reply. An older agent answers an unknown
+    /// kind with an `Error`, which would be taken as the reply to the next
+    /// request; the VM runs inside the daemon process today, so the two
+    /// versions cannot differ.
+    FsEvents(StrList<'a>),
     /// Success, for requests with nothing else to say.
     Ack,
 }
@@ -171,6 +212,10 @@ pub const COPY_PORT: u32 = 1028;
 /// the VM's gateway resolver didn't answer as `u16 len | query`, as DNS over
 /// TCP frames it, and gets `u16 len | reply` back: one lookup per connection.
 pub const DNS_RELAY_PORT: u32 = 1037;
+
+/// vsock port of the guest's USB passthrough: one connection per device,
+/// `speed u32 | devid u32` then USB/IP (crates/kiri-init/src/linux/usb.rs).
+pub const USB_PORT: u32 = 1040;
 
 pub mod copy_op {
     pub const IN: u8 = 1;
@@ -355,6 +400,9 @@ pub mod run_flags {
     /// program as its child, forwards signals to it, reaps orphans and exits
     /// with the program's status, as tini does for Docker.
     pub const INIT: u32 = 1 << 16;
+    /// `--pid host`: no PID namespace of its own; the container sees the
+    /// VM's processes (on a Linux host, the host's).
+    pub const PID_HOST: u32 = 1 << 17;
 }
 
 /// A container's network, as `Run` carries it.
@@ -380,6 +428,9 @@ pub mod net_opts {
     /// `netns=<container id>`: join that running container's network
     /// namespace instead of getting one (`--network container:<id>`).
     pub const NETNS: &str = "netns";
+    /// `pidns=<container id>`: join that running container's PID namespace
+    /// instead of getting one (`--pid container:<id>`).
+    pub const PIDNS: &str = "pidns";
     /// `mac=02:42:ac:11:00:02`: the container side's MAC address.
     pub const MAC: &str = "mac";
     /// `nameserver=1.1.1.1` (`--dns`): with `DNS_GATEWAY` the gateway's DNS
@@ -404,6 +455,15 @@ pub mod net_opts {
     /// only the name the guest keeps it by: neither it nor the bridge gets
     /// one, and DNS has no A record for it.
     pub const NO_IPV4: &str = "noipv4";
+    /// `dnsbridge=kiri3`, one per network: a user network the container
+    /// joins once it runs (`NetAttach`). Its embedded DNS answers that
+    /// network's names from the start, as Docker's does with every network
+    /// joined before the program runs.
+    pub const DNS_BRIDGE: &str = "dnsbridge";
+    /// `network=frontend`: the Docker network's name. The guest only knows
+    /// bridges (`kiri3`); a container's embedded DNS searches its networks
+    /// in this name's order, as Docker does, not in the order it joined.
+    pub const NETWORK: &str = "network";
 
     /// The values given for `key`, in order.
     pub fn values<'a>(opts: super::StrList<'a>, key: &'a str) -> impl Iterator<Item = &'a str> + 'a {
@@ -436,6 +496,12 @@ pub struct RunSpec<'a> {
     /// container perms`, `devrule type major minor perms`, `group name`.
     /// Empty from an older daemon.
     pub opts: StrList<'a>,
+    /// The container's own seccomp profile, compiled by the daemon to a
+    /// classic-BPF program for the guest's architecture: instructions of
+    /// eight bytes each (code u16, jt u8, jf u8, k u32; little-endian). Empty
+    /// for the guest's built-in default. Execs run under the same program;
+    /// the guest keeps it with the container.
+    pub seccomp: &'a [u8],
 }
 
 /// cgroup limits (`--memory`, `--cpus`, `--cpu-shares`, `--pids-limit`).
@@ -645,6 +711,12 @@ mod kind {
     pub const UPLINK: u16 = 71;
     pub const REMOVE_BRIDGE: u16 = 72;
     pub const RETAIN_LAYERS: u16 = 73;
+    pub const USAGE_QUERY: u16 = 74;
+    pub const USAGE: u16 = 75;
+    pub const USB_NODES_QUERY: u16 = 76;
+    pub const USB_NODES: u16 = 77;
+    pub const FS_EVENTS: u16 = 78;
+    pub const AWAIT_START: u16 = 79;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -713,9 +785,24 @@ pub fn encode_net_attach<S: AsRef<str>>(out: &mut Vec<u8>, id: &str, ifname: &st
     });
 }
 
+/// Encodes a `Usage` reply from the sender's lines.
+pub fn encode_usage<S: AsRef<str>>(out: &mut Vec<u8>, lines: &[S]) {
+    frame(out, kind::USAGE, |out| StrList::put(out, lines));
+}
+
 /// Encodes a `Top` reply from the sender's lines.
 pub fn encode_top<S: AsRef<str>>(out: &mut Vec<u8>, lines: &[S]) {
     frame(out, kind::TOP, |out| StrList::put(out, lines));
+}
+
+/// Encodes a `UsbNodes` reply from the sender's lines.
+pub fn encode_usb_nodes<S: AsRef<str>>(out: &mut Vec<u8>, lines: &[S]) {
+    frame(out, kind::USB_NODES, |out| StrList::put(out, lines));
+}
+
+/// Encodes an `FsEvents` frame from the sender's `OP\tPATH` lines.
+pub fn encode_fs_events<S: AsRef<str>>(out: &mut Vec<u8>, lines: &[S]) {
+    frame(out, kind::FS_EVENTS, |out| StrList::put(out, lines));
 }
 
 /// Encodes a `Listening` reply from the sender's lines.
@@ -770,6 +857,7 @@ pub fn encode_run<S: AsRef<str>>(
     limits: &Limits,
     caps: u64,
     opts: &[S],
+    seccomp: &[u8],
 ) {
     frame(out, kind::RUN, |out| {
         put_str(out, id);
@@ -789,6 +877,7 @@ pub fn encode_run<S: AsRef<str>>(
         put_u64(out, caps);
         StrList::put(out, net.opts);
         StrList::put(out, opts);
+        put_bytes(out, seccomp);
     });
 }
 
@@ -854,11 +943,17 @@ impl Msg<'_> {
                 o.extend_from_slice(r.net.opts.raw);
                 put_u32(o, r.opts.count);
                 o.extend_from_slice(r.opts.raw);
+                put_bytes(o, r.seccomp);
             }),
-            Msg::Started { id, pid } => frame(out, kind::STARTED, |o| {
+            Msg::Started { id, pid, starting } => frame(out, kind::STARTED, |o| {
                 put_str(o, id);
                 put_u32(o, pid);
+                // Only when set: a normal start's frame stays as it was.
+                if starting {
+                    o.push(1);
+                }
             }),
+            Msg::AwaitStart { id } => frame(out, kind::AWAIT_START, |o| put_str(o, id)),
             Msg::Output { id, stream, data } => frame(out, kind::OUTPUT, |o| {
                 put_str(o, id);
                 o.push(stream as u8);
@@ -897,6 +992,11 @@ impl Msg<'_> {
             Msg::Retain(ids) => frame(out, kind::RETAIN, |o| {
                 put_u32(o, ids.count);
                 o.extend_from_slice(ids.raw);
+            }),
+            Msg::UsageQuery => frame(out, kind::USAGE_QUERY, |_| {}),
+            Msg::Usage(lines) => frame(out, kind::USAGE, |o| {
+                put_u32(o, lines.count);
+                o.extend_from_slice(lines.raw);
             }),
             Msg::RetainLayers(ids) => frame(out, kind::RETAIN_LAYERS, |o| {
                 put_u32(o, ids.count);
@@ -954,6 +1054,15 @@ impl Msg<'_> {
                 o.extend_from_slice(lines.raw);
             }),
             Msg::ListenQuery { id } => frame(out, kind::LISTEN_QUERY, |o| put_str(o, id)),
+            Msg::UsbNodesQuery => frame(out, kind::USB_NODES_QUERY, |_| {}),
+            Msg::UsbNodes(lines) => frame(out, kind::USB_NODES, |o| {
+                put_u32(o, lines.count);
+                o.extend_from_slice(lines.raw);
+            }),
+            Msg::FsEvents(lines) => frame(out, kind::FS_EVENTS, |o| {
+                put_u32(o, lines.count);
+                o.extend_from_slice(lines.raw);
+            }),
             Msg::Listening(lines) => frame(out, kind::LISTENING, |o| {
                 put_u32(o, lines.count);
                 o.extend_from_slice(lines.raw);
@@ -1136,6 +1245,7 @@ pub fn decode(frame: &[u8]) -> Result<Msg<'_>, DecodeError> {
                 limits: read_limits(&mut r)?,
                 caps: r.u64()?,
                 opts: StrList::default(),
+                seccomp: &[],
             };
             // Last, and absent from an older daemon.
             if r.remaining() >= 4 {
@@ -1144,9 +1254,18 @@ pub fn decode(frame: &[u8]) -> Result<Msg<'_>, DecodeError> {
             if r.remaining() >= 4 {
                 run.opts = r.list()?;
             }
+            if r.remaining() >= 4 {
+                run.seccomp = r.bytes()?;
+            }
             run
         }),
-        kind::STARTED => Msg::Started { id: r.str()?, pid: r.u32()? },
+        kind::STARTED => Msg::Started {
+            id: r.str()?,
+            pid: r.u32()?,
+            // An older agent doesn't say: its root was in place.
+            starting: r.remaining() >= 1 && r.u8()? != 0,
+        },
+        kind::AWAIT_START => Msg::AwaitStart { id: r.str()? },
         kind::OUTPUT => {
             let id = r.str()?;
             let stream = match r.u8()? {
@@ -1182,6 +1301,8 @@ pub fn decode(frame: &[u8]) -> Result<Msg<'_>, DecodeError> {
         }),
         kind::RETAIN => Msg::Retain(r.list()?),
         kind::RETAIN_LAYERS => Msg::RetainLayers(r.list()?),
+        kind::USAGE_QUERY => Msg::UsageQuery,
+        kind::USAGE => Msg::Usage(r.list()?),
         kind::FS_STAT_REQUEST => Msg::FsStatRequest { id: r.str()?, path: r.str()? },
         kind::FS_STAT => Msg::FsStat(read_entry(&mut r)?),
         kind::FS_LIST_REQUEST => Msg::FsListRequest { id: r.str()?, path: r.str()? },
@@ -1209,6 +1330,9 @@ pub fn decode(frame: &[u8]) -> Result<Msg<'_>, DecodeError> {
         kind::TOP => Msg::Top(r.list()?),
         kind::LISTEN_QUERY => Msg::ListenQuery { id: r.str()? },
         kind::LISTENING => Msg::Listening(r.list()?),
+        kind::USB_NODES_QUERY => Msg::UsbNodesQuery,
+        kind::USB_NODES => Msg::UsbNodes(r.list()?),
+        kind::FS_EVENTS => Msg::FsEvents(r.list()?),
         kind::NET_ATTACH => Msg::NetAttach {
             id: r.str()?,
             ifname: r.str()?,
@@ -1277,7 +1401,20 @@ mod tests {
         round(Msg::LayerStatus(true));
         round(Msg::LayerBegin(LayerBegin { digest: "sha256:ab", media_type: "x+gzip", size: 9 }));
         round(Msg::LayerStored(LayerStored { unpacked_bytes: 1, elapsed_ns: 2 }));
-        round(Msg::Started { id: "c1", pid: 42 });
+        round(Msg::Started { id: "c1", pid: 42, starting: false });
+        round(Msg::Started { id: "c1", pid: 42, starting: true });
+        // A normal start's frame is the one older agents send; and an older
+        // agent's Started, without the flag, reads as root in place.
+        let mut buf = Vec::new();
+        Msg::Started { id: "c1", pid: 42, starting: true }.encode(&mut buf);
+        let mut old = buf[..buf.len() - 1].to_vec();
+        let len = (old.len() - 4) as u32;
+        old[..4].copy_from_slice(&len.to_le_bytes());
+        assert_eq!(decode(&old).unwrap(), Msg::Started { id: "c1", pid: 42, starting: false });
+        let mut normal = Vec::new();
+        Msg::Started { id: "c1", pid: 42, starting: false }.encode(&mut normal);
+        assert_eq!(normal, old, "a normal start's frame is unchanged");
+        round(Msg::AwaitStart { id: "c1" });
         round(Msg::Output { id: "c1", stream: Stream::Stderr, data: b"hi\n" });
         round(Msg::Exited(Exited { id: "c1", code: -1, setup_ns: 3, run_ns: 4, oom_killed: false }));
         round(Msg::Exited(Exited { id: "c1", code: 137, setup_ns: 3, run_ns: 4, oom_killed: true }));
@@ -1301,7 +1438,7 @@ mod tests {
         let mut buf = Vec::new();
         let net = Net { bridge: "kiri0", ip: [172, 17, 0, 2], prefix: 16, gateway: [172, 17, 0, 1], extra_hosts: &["1.2.3.4 x"], dns_names: &["web"], opts: &["netns=c0", "nameserver=8.8.8.8"] };
         let limits = Limits { memory_max: 256 << 20, cpu_quota: 150_000, cpu_period: 100_000, cpu_weight: 100, pids_max: 64, shm_size: 1 << 20 };
-        encode_run(&mut buf, "c1", &["sha256:top", "sha256:base"], &["echo", "hi"], &["A=1"], "/", "", "c1", 3, net, &["/a\t/b\tro"], &limits, 0b101, &["rlimit\t7\t1024\t2048"]);
+        encode_run(&mut buf, "c1", &["sha256:top", "sha256:base"], &["echo", "hi"], &["A=1"], "/", "", "c1", 3, net, &["/a\t/b\tro"], &limits, 0b101, &["rlimit\t7\t1024\t2048"], &[]);
         let Msg::Run(r) = decode(&buf).unwrap() else { panic!() };
         assert_eq!(r.id, "c1");
         assert_eq!(r.layers.iter().collect::<Vec<_>>(), ["sha256:top", "sha256:base"]);
@@ -1314,10 +1451,54 @@ mod tests {
         assert_eq!(r.net.opts.iter().collect::<Vec<_>>(), ["netns=c0", "nameserver=8.8.8.8"]);
         assert_eq!(net_opts::values(r.net.opts, net_opts::NAMESERVER).collect::<Vec<_>>(), ["8.8.8.8"]);
         assert_eq!(r.opts.iter().collect::<Vec<_>>(), ["rlimit\t7\t1024\t2048"]);
+        assert!(r.seccomp.is_empty());
         // Re-encoding the borrowed view gives identical bytes.
         let mut again = Vec::new();
         Msg::Run(r).encode(&mut again);
         assert_eq!(buf, again);
+    }
+
+    #[test]
+    fn the_protocol_version_covers_starting() {
+        // A host from before `Started::starting` would take a start still
+        // filling a new volume for started and never ask `AwaitStart`; it
+        // speaks 5, and refuses this agent (and this host refuses an agent
+        // that speaks 5, which never answers `starting`).
+        const { assert!(PROTOCOL >= 6) };
+        let mut buf = Vec::new();
+        Msg::Hello(Hello { protocol: PROTOCOL, init_start_ns: 1, ready_ns: 2, mem_total_kib: 3, mem_available_kib: 4 }).encode(&mut buf);
+        let Msg::Hello(h) = decode(&buf).unwrap() else { panic!() };
+        assert_eq!(h.protocol, 6);
+    }
+
+    #[test]
+    fn the_protocol_version_covers_the_seccomp_field() {
+        // An agent from before `RunSpec::seccomp` says 4, and the host refuses
+        // it (guest.rs compares the Hello's version with this one).
+        assert!(PROTOCOL >= 5);
+        let mut buf = Vec::new();
+        Msg::Hello(Hello { protocol: PROTOCOL, init_start_ns: 1, ready_ns: 2, mem_total_kib: 3, mem_available_kib: 4 }).encode(&mut buf);
+        let Msg::Hello(h) = decode(&buf).unwrap() else { panic!() };
+        assert_eq!(h.protocol, PROTOCOL);
+    }
+
+    #[test]
+    fn run_spec_carries_a_seccomp_program() {
+        let net = Net { bridge: "", ip: [0; 4], prefix: 0, gateway: [0; 4], extra_hosts: &[] as &[&str], dns_names: &[], opts: &[] };
+        // Two instructions of eight bytes: a binary blob, not text.
+        let program: Vec<u8> = vec![0x20, 0, 0, 0, 4, 0, 0, 0, 0x06, 0, 0, 0, 0, 0, 0xff, 0x7f];
+        let mut buf = Vec::new();
+        encode_run(&mut buf, "c1", &[], &["sh"], &[], "/", "", "c1", 0, net, &[], &Limits::default(), 0, &["group\tvideo"], &program);
+        let Msg::Run(r) = decode(&buf).unwrap() else { panic!() };
+        assert_eq!(r.seccomp, &program[..]);
+        assert_eq!(r.opts.iter().collect::<Vec<_>>(), ["group\tvideo"]);
+        let mut again = Vec::new();
+        Msg::Run(r).encode(&mut again);
+        assert_eq!(buf, again);
+        // A daemon from before the field sends none: the default applies.
+        let Msg::Run(old) = decode(&buf[..buf.len() - 4 - program.len()]).unwrap() else { panic!() };
+        assert!(old.seccomp.is_empty());
+        assert_eq!(old.opts.len(), 1);
     }
 
     #[test]
@@ -1365,7 +1546,21 @@ mod tests {
         round(Msg::StatsQuery { id: "c1" });
         round(Msg::ContainerStats(ContainerStats { read_ns: 1, mem_current: 2, online_cpus: 4, rx_bytes: 9, io_write_bytes: 11, ..Default::default() }));
         round(Msg::TopQuery { id: "c1" });
+        round(Msg::UsageQuery);
+        let mut buf = Vec::new();
+        encode_usage(&mut buf, &["l 0a1b 4096", "c c1 0", "v data 12288"]);
+        let Msg::Usage(lines) = decode(&buf).unwrap() else { panic!() };
+        assert_eq!(lines.iter().collect::<Vec<_>>(), ["l 0a1b 4096", "c c1 0", "v data 12288"]);
         round(Msg::ListenQuery { id: "c1" });
+        round(Msg::UsbNodesQuery);
+        let mut buf = Vec::new();
+        encode_usb_nodes(&mut buf, &["0\t/dev/ttyUSB0\tserial port", "0\t/dev/bus/usb/003/002\traw USB"]);
+        let Msg::UsbNodes(lines) = decode(&buf).unwrap() else { panic!() };
+        assert_eq!(lines.iter().collect::<Vec<_>>(), ["0\t/dev/ttyUSB0\tserial port", "0\t/dev/bus/usb/003/002\traw USB"]);
+        let mut buf = Vec::new();
+        encode_fs_events(&mut buf, &["M\t/mnt/mac/Users/a/app/main.js", "D\t/mnt/mac/Users/a/app/old.js"]);
+        let Msg::FsEvents(lines) = decode(&buf).unwrap() else { panic!() };
+        assert_eq!(lines.iter().collect::<Vec<_>>(), ["M\t/mnt/mac/Users/a/app/main.js", "D\t/mnt/mac/Users/a/app/old.js"]);
         let mut buf = Vec::new();
         encode_listening(&mut buf, &["   0: 00000000:11D7 00000000:0000 0A"]);
         let Msg::Listening(lines) = decode(&buf).unwrap() else { panic!() };

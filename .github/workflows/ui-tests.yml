@@ -1,5 +1,6 @@
-# The window's page tests (scripts/ui-test.py) on every pull request, so a
-# change that breaks one shows on the PR before review.
+# The window's page tests (scripts/ui-test.py) and its translations
+# (scripts/i18n-check.py) on every pull request, so a change that breaks one
+# shows on the PR before review.
 #
 # Safe for pull requests from forks: it runs on GitHub's machines with a
 # read-only token and no secrets, and uses pull_request (never
@@ -16,7 +17,7 @@ permissions:
 
 concurrency:
   group: ui-tests-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ui:
@@ -26,6 +27,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check the translations match the words in use
+        run: python3 scripts/i18n-check.py
       - name: Run the page tests in headless Chrome
         run: |
           # The runner's Chrome, without the sandbox: it needs user

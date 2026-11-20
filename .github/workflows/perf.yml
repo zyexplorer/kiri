@@ -1,0 +1,79 @@
+# Kiri's speed check on every pull request: main and the change, built the
+# same way and run side by side on one machine (scripts/perf-run.sh), with
+# requests alternating between them. The table lands in the run's summary;
+# the check fails when the change is slower than main past the limits in
+# scripts/perf.py: docker run, API round trips, the daemon's memory and the
+# system calls one container costs.
+#
+# The limits come from main's copy of the script when it has one, so a pull
+# request can't loosen them for itself.
+#
+# Safe for pull requests from forks: it runs on GitHub's machines with a
+# read-only token and no secrets, and uses pull_request (never
+# pull_request_target), so a fork's code can't write to the repository.
+name: Speed
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: speed-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  speed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      # The change as it would merge (GitHub's merge commit), and main as
+      # that commit's first parent, so both sides start from the same main.
+      - name: Check out this change
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          path: head
+          persist-credentials: false
+      - name: Find main's commit
+        id: main
+        run: echo "sha=$(git -C head rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.main.outputs.sha }}
+          path: base
+          persist-credentials: false
+      - name: Build main and this change
+        run: |
+          # Static Linux builds, as `cargo xtask linux` makes them. Both use
+          # one target folder, so the second only rebuilds what changed.
+          # Cargo tells what changed by file times, and this change was
+          # checked out before main was built: give each side's files the
+          # time now, or the second build keeps the first one's binary.
+          for e in base head; do
+            find "$e" -type f -exec touch {} +
+            mkdir -p "$RUNNER_TEMP/$e-bin"
+            docker run --rm -v "$PWD/$e:/src" -v "$RUNNER_TEMP/$e-bin:/out" \
+              -v kiri-perf-target:/t -v kiri-perf-cargo:/usr/local/cargo/registry \
+              -w /src -e CARGO_TARGET_DIR=/t rust:1-alpine sh -c \
+              'apk add -q musl-dev && cargo build --release --locked -p kiri -p kiri-init && cp /t/release/kiri /t/release/kiri-init /out/'
+          done
+          ls -l "$RUNNER_TEMP"/base-bin "$RUNNER_TEMP"/head-bin
+      - name: Install strace
+        run: sudo apt-get install -y -qq strace >/dev/null
+      - name: Compare
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          scripts=base/scripts
+          [ -f "$scripts/perf.py" ] || scripts=head/scripts
+          set +e
+          sh "$scripts/perf-run.sh" "$RUNNER_TEMP/base-bin" "$RUNNER_TEMP/head-bin" "$RUNNER_TEMP/perf"
+          status=$?
+          if [ -f "$RUNNER_TEMP/perf/report.md" ]; then
+            [ -n "$PR" ] && echo "Pull request #$PR" >> "$GITHUB_STEP_SUMMARY"
+            cat "$RUNNER_TEMP/perf/report.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit $status

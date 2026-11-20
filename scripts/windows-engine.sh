@@ -4,10 +4,13 @@
 # Linux (Alpine) and in Ubuntu. x86_64 for x86-64 PCs, aarch64 for Windows
 # on Arm, from either kind of WSL. ring's C code is compiled by zig cc,
 # from a Python venv in ~/.cache, so the distro needs nothing installed.
-#   scripts/windows-engine.sh <repo> <out-dir> [x86_64|aarch64]
+# The profile is release (what ships) unless `fast` is given, as
+# `cargo xtask windows-dev` does: Cargo.toml's quicker, incremental profile.
+#   scripts/windows-engine.sh <repo> <out-dir> [x86_64|aarch64] [release|fast]
 set -euo pipefail
-repo=$1 out=$2 arch=${3:-x86_64}
+repo=$1 out=$2 arch=${3:-x86_64} profile=${4:-release}
 case "$arch" in x86_64|aarch64) ;; *) echo "arch is x86_64 or aarch64, not $arch" >&2; exit 2;; esac
+case "$profile" in release|fast) ;; *) echo "profile is release or fast, not $profile" >&2; exit 2;; esac
 target=$arch-unknown-linux-musl
 # Windows can leak HOME=C:\Users\... into WSL; rustup then looks in the wrong place.
 case "${HOME:-}" in /*) ;; *) export HOME=/root ;; esac
@@ -59,6 +62,6 @@ if [ ! -d "$tdir" ] && [ -d "$old/release" -o -d "$old/x86_64-unknown-linux-musl
   mv "$take" "$tdir"
 fi
 env "CC_${target//-/_}=$cc" "${link[@]}" CARGO_TARGET_DIR="$tdir" \
-  cargo build --release -p kiri -p kiri-init --target "$target"
+  cargo build --profile "$profile" -p kiri -p kiri-init --target "$target"
 mkdir -p "$out"
-install -m 755 "$tdir/$target/release/kiri" "$tdir/$target/release/kiri-init" "$out/"
+install -m 755 "$tdir/$target/$profile/kiri" "$tdir/$target/$profile/kiri-init" "$out/"

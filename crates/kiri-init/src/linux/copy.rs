@@ -3,6 +3,10 @@
 //! the event loop. The child chroots into the container (its live root, or a
 //! private mount of its layers when it is not running), so links resolve
 //! inside the container and nothing outside it is reachable.
+//!
+//! A stopped container's root is mounted by the agent, not the child: the
+//! child asks for it over a socket pair of its own, so a copy and a start at
+//! the same moment share one mount (see `roots`, #227).
 
 use std::fs;
 use std::io::{self, BufReader, BufWriter, Read, Write};
@@ -11,8 +15,24 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
 use kiri_proto::{COPY_PORT, CopySpec, FsEntry, Msg, copy_flags, copy_op};
 
-use super::container::{self, Paths};
+use std::cell::RefCell;
+use std::path::PathBuf;
+
+use super::container::Paths;
 use super::sys;
+
+/// A copy child as the agent sees it: its end of the child's socket pair
+/// and the container root it was given, released when the child exits.
+struct Child {
+    pid: libc::pid_t,
+    chan: OwnedFd,
+    asked: bool,
+    root: Option<PathBuf>,
+}
+
+thread_local! {
+    static CHILDREN: RefCell<Vec<Child>> = const { RefCell::new(Vec::new()) };
+}
 
 pub fn listen() -> io::Result<OwnedFd> {
     super::relay::listen_vsock(COPY_PORT)
@@ -29,11 +49,20 @@ pub fn accept(listener: &OwnedFd, running: &[(&str, libc::pid_t)], paths: &Paths
         }
         // SAFETY: a fresh descriptor from accept4.
         let sock = unsafe { OwnedFd::from_raw_fd(fd) };
+        let mut pair = [0; 2];
+        // SAFETY: socketpair fills two descriptors, owned immediately.
+        if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC, 0, pair.as_mut_ptr()) } != 0 {
+            eprintln!("kiri-init: copy: socketpair: {}", io::Error::last_os_error());
+            continue;
+        }
+        // SAFETY: fresh descriptors from socketpair.
+        let (ours, theirs) = unsafe { (OwnedFd::from_raw_fd(pair[0]), OwnedFd::from_raw_fd(pair[1])) };
         // SAFETY: the agent is single-threaded, so the child is a consistent
         // copy. The child only uses what it inherited, then exits.
         match unsafe { libc::fork() } {
             0 => {
-                let code = match job(sock, running, paths) {
+                drop(ours);
+                let code = match job(sock, theirs, running, paths) {
                     Ok(()) => 0,
                     Err(e) => {
                         eprintln!("kiri-init: copy: {e}");
@@ -44,20 +73,110 @@ pub fn accept(listener: &OwnedFd, running: &[(&str, libc::pid_t)], paths: &Paths
                 unsafe { libc::_exit(code) }
             }
             pid if pid < 0 => eprintln!("kiri-init: copy: fork: {}", io::Error::last_os_error()),
-            // The parent's copy closes here; the agent reaps the child like any other.
-            _ => drop(sock),
+            // The parent's copy closes here; the agent reaps the child like
+            // any other and then calls `exited`.
+            pid => {
+                drop((sock, theirs));
+                CHILDREN.with_borrow_mut(|c| c.push(Child { pid, chan: ours, asked: false, root: None }));
+            }
         }
     }
 }
 
-fn job(sock: OwnedFd, running: &[(&str, libc::pid_t)], paths: &Paths) -> io::Result<()> {
-    let fd = sock.as_raw_fd();
-    // Only the connection (and the console) stays open: the child must not
-    // hold the agent's pipes, which would keep containers' stdin from closing.
-    // SAFETY: closing descriptor ranges in this process.
+/// The copy children's sockets the agent waits on: those that haven't
+/// asked for a root yet.
+pub fn interest(fds: &mut Vec<libc::pollfd>) {
+    CHILDREN.with_borrow(|c| {
+        for ch in c.iter().filter(|ch| !ch.asked) {
+            fds.push(libc::pollfd { fd: ch.chan.as_raw_fd(), events: libc::POLLIN, revents: 0 });
+        }
+    });
+}
+
+/// Whether `fd` is a copy child's socket; if so, answers its request:
+/// `m<id>` and the container's layers, one per line, to mount its root or
+/// share the mount it has; `h<id>` to only hold a mount there is (a copy
+/// into a running container, which must not outlive a restart's unmount).
+/// The answer is `+`, or `-` and why not.
+pub fn on_readable(fd: i32, paths: &Paths) -> bool {
+    CHILDREN.with_borrow_mut(|c| {
+        let Some(ch) = c.iter_mut().find(|ch| ch.chan.as_raw_fd() == fd) else { return false };
+        let mut buf = vec![0u8; 64 << 10];
+        // SAFETY: receiving into a buffer we own from a descriptor we own.
+        let n = unsafe { libc::recv(fd, buf.as_mut_ptr().cast(), buf.len(), libc::MSG_DONTWAIT) };
+        if n < 0 && matches!(io::Error::last_os_error().raw_os_error(), Some(libc::EAGAIN | libc::EINTR)) {
+            return true;
+        }
+        ch.asked = true;
+        if n <= 0 {
+            // It exited without asking; `exited` tidies up.
+            return true;
+        }
+        let text = String::from_utf8_lossy(&buf[..n as usize]).into_owned();
+        let (kind, rest) = text.split_at(text.chars().next().map_or(0, char::len_utf8));
+        let mut lines = rest.split('\n');
+        let id = lines.next().unwrap_or("");
+        let layers: Vec<&str> = lines.collect();
+        let got = match kind {
+            "m" => super::roots::acquire(paths, id, &layers),
+            "h" => super::roots::hold(paths, id),
+            _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "unknown request")),
+        };
+        let answer = match got {
+            Ok(root) => {
+                ch.root = Some(root);
+                "+".to_owned()
+            }
+            Err(e) => format!("-{e}"),
+        };
+        // A child gone meanwhile can't be answered: its root goes back when
+        // it is reaped.
+        // SAFETY: sending from a buffer we own on a descriptor we own.
+        unsafe { libc::send(fd, answer.as_ptr().cast(), answer.len(), libc::MSG_NOSIGNAL) };
+        true
+    })
+}
+
+/// Linux host, the agent leaving: copies still running end with it, and
+/// their roots go back before the exit sweep unmounts what's left.
+pub fn stop_all() {
+    let pids: Vec<libc::pid_t> = CHILDREN.with_borrow(|c| c.iter().map(|ch| ch.pid).collect());
+    for pid in pids {
+        // SAFETY: killing and reaping a copy child we forked.
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+        }
+        exited(pid);
+    }
+}
+
+/// A reaped child: if it was a copy, the root it held is let go.
+pub fn exited(pid: libc::pid_t) {
+    let gone = CHILDREN.with_borrow_mut(|c| c.iter().position(|ch| ch.pid == pid).map(|i| c.swap_remove(i)));
+    if let Some(Child { root: Some(root), .. }) = gone
+        && let Some(base) = root.parent()
+    {
+        super::roots::release(base);
+    }
+}
+
+fn job(sock: OwnedFd, chan: OwnedFd, running: &[(&str, libc::pid_t)], paths: &Paths) -> io::Result<()> {
+    // Only the connection, the socket to the agent and the console stay
+    // open: the child must not hold the agent's pipes, which would keep
+    // containers' stdin from closing.
+    let (lo, hi) = {
+        let (a, b) = (sock.as_raw_fd(), chan.as_raw_fd());
+        (a.min(b), a.max(b))
+    };
+    // SAFETY: closing descriptor ranges in this process (an empty range,
+    // first above last, is refused and closes nothing).
     unsafe {
-        libc::syscall(libc::SYS_close_range, 3, (fd - 1).max(3) as libc::c_uint, 0);
-        libc::syscall(libc::SYS_close_range, (fd + 1) as libc::c_uint, libc::c_uint::MAX, 0);
+        for (first, last) in [(3, lo - 1), (lo + 1, hi - 1), (hi + 1, libc::c_int::MAX)] {
+            if first <= last {
+                libc::syscall(libc::SYS_close_range, first as libc::c_uint, last as libc::c_uint, 0);
+            }
+        }
     }
     let mut conn = fs::File::from(sock);
     let mut frame = Vec::new();
@@ -71,7 +190,7 @@ fn job(sock: OwnedFd, running: &[(&str, libc::pid_t)], paths: &Paths) -> io::Res
         // These read the writable layer itself, next to the image's layers.
         copy_op::DIFF | copy_op::COMMIT => layer_job(&mut conn, &spec, paths),
         _ => {
-            if let Err(e) = enter(&spec, running, paths) {
+            if let Err(e) = enter(&spec, running, paths, &chan) {
                 return reply_error(&mut conn, &format!("container {}: {e}", spec.id));
             }
             match spec.op {
@@ -89,22 +208,33 @@ fn job(sock: OwnedFd, running: &[(&str, libc::pid_t)], paths: &Paths) -> io::Res
 }
 
 /// Makes the container's root this process's `/`.
-fn enter(spec: &CopySpec<'_>, running: &[(&str, libc::pid_t)], paths: &Paths) -> io::Result<()> {
+fn enter(spec: &CopySpec<'_>, running: &[(&str, libc::pid_t)], paths: &Paths, chan: &OwnedFd) -> io::Result<()> {
     let root = match running.iter().find(|(id, _)| *id == spec.id) {
         // An export is the container's own filesystem, without its mounts:
         // the overlay the agent mounted for it.
-        Some(_) if spec.op == copy_op::EXPORT => paths.containers.join(spec.id).join("rootfs"),
+        // It may have stopped since: then the root is mounted for it.
+        Some(_) if spec.op == copy_op::EXPORT => {
+            if ask(chan, 'h', spec).is_err() {
+                if spec.layers.is_empty() {
+                    return Err(io::Error::new(io::ErrorKind::NotFound, "the container stopped"));
+                }
+                ask(chan, 'm', spec)?;
+            }
+            paths.containers.join(spec.id).join("rootfs")
+        }
         // Through /proc the root shows the container's mounts (volumes) too.
-        Some((_, pid)) => std::path::PathBuf::from(format!("/proc/{pid}/root")),
+        // The copy holds the container's root meanwhile, so a restart can't
+        // mount a second one over the same layer while it still writes.
+        Some((_, pid)) => {
+            let _ = ask(chan, 'h', spec);
+            std::path::PathBuf::from(format!("/proc/{pid}/root"))
+        }
         None => {
             if spec.layers.is_empty() {
                 return Err(io::Error::new(io::ErrorKind::NotFound, "no such container"));
             }
-            // A private namespace: the mount disappears with this process.
-            // SAFETY: unshare with a valid flag.
-            sys::check(unsafe { libc::unshare(libc::CLONE_NEWNS) } as _, "unshare")?;
-            sys::remount(c"/", libc::MS_REC | libc::MS_PRIVATE)?;
-            container::mount_rootfs(paths, spec.id, spec.layers)?
+            ask(chan, 'm', spec)?;
+            paths.containers.join(spec.id).join("rootfs")
         }
     };
     let c = sys::cstr(&root)?;
@@ -114,6 +244,30 @@ fn enter(spec: &CopySpec<'_>, running: &[(&str, libc::pid_t)], paths: &Paths) ->
         sys::check(libc::chdir(c"/".as_ptr()) as _, "chdir")?;
     }
     Ok(())
+}
+
+/// Asks the agent for the container's root (`m`: mounted, or shared with
+/// whatever has it mounted now, such as the container starting meanwhile)
+/// or to hold the mount a running container has (`h`). Either stays until
+/// this child exits.
+fn ask(chan: &OwnedFd, kind: char, spec: &CopySpec<'_>) -> io::Result<()> {
+    let mut ask = format!("{kind}{}", spec.id);
+    if kind == 'm' {
+        for l in spec.layers.iter() {
+            ask.push('\n');
+            ask.push_str(l);
+        }
+    }
+    // SAFETY: sending from a buffer we own on a descriptor we own.
+    sys::check(unsafe { libc::send(chan.as_raw_fd(), ask.as_ptr().cast(), ask.len(), libc::MSG_NOSIGNAL) } as _, "ask for the root")?;
+    let mut buf = [0u8; 4096];
+    // SAFETY: receiving into a buffer we own from a descriptor we own.
+    let n = unsafe { libc::recv(chan.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len(), 0) };
+    match buf[..n.max(0) as usize].split_first() {
+        Some((b'+', _)) => Ok(()),
+        Some((_, why)) => Err(io::Error::other(String::from_utf8_lossy(why).into_owned())),
+        None => Err(io::Error::other("the agent did not answer")),
+    }
 }
 
 /// Unpacks the archive that follows into `spec.path`, a directory.
@@ -237,7 +391,7 @@ fn append_tree(b: &mut tar::Builder<impl Write>, src: &std::path::Path, name: &s
     while let Some((src, name)) = stack.pop() {
         let meta = fs::symlink_metadata(&src)?;
         append_one(b, &src, &name, &meta)?;
-        if meta.is_dir() && src != std::path::Path::new("/proc") && src != std::path::Path::new("/sys") {
+        if meta.is_dir() && !is_kernel_fs(&src) {
             let mut children: Vec<_> = fs::read_dir(&src)?.flatten().collect();
             children.sort_by_key(|e| e.file_name());
             for e in children.into_iter().rev() {
@@ -248,6 +402,27 @@ fn append_tree(b: &mut tar::Builder<impl Write>, src: &std::path::Path, name: &s
     Ok(())
 }
 
+/// Whether `dir` is on procfs or sysfs. Asked of the filesystem, not of the
+/// path: a link to `/` inside the container leads to them by any name.
+fn is_kernel_fs(dir: &std::path::Path) -> bool {
+    let Ok(c) = sys::cstr(dir) else { return false };
+    // SAFETY: statfs into a zeroed struct, on a valid NUL-terminated path.
+    let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c.as_ptr(), &mut st) } != 0 {
+        return false;
+    }
+    matches!(st.f_type as i64, PROC_MAGIC | SYSFS_MAGIC)
+}
+
+const PROC_MAGIC: i64 = 0x9fa0;
+const SYSFS_MAGIC: i64 = 0x6265_6572;
+
+/// What a tar header's mode holds: the permission bits. The file type has
+/// its own field, and Docker's archives leave it out of the mode.
+fn mode_bits(meta: &fs::Metadata) -> u32 {
+    meta.mode() & 0o7777
+}
+
 fn append_one(b: &mut tar::Builder<impl Write>, src: &std::path::Path, name: &std::path::Path, meta: &fs::Metadata) -> io::Result<()> {
     let ft = meta.file_type();
     if ft.is_socket() {
@@ -256,12 +431,14 @@ fn append_one(b: &mut tar::Builder<impl Write>, src: &std::path::Path, name: &st
     if ft.is_file() {
         let mut h = tar::Header::new_gnu();
         h.set_metadata(meta);
+        h.set_mode(mode_bits(meta));
         let mut f = fs::File::open(src)?;
         return b.append_data(&mut h, name, &mut f);
     }
     if ft.is_dir() || ft.is_symlink() || ft.is_fifo() || ft.is_char_device() || ft.is_block_device() {
         let mut h = tar::Header::new_gnu();
         h.set_metadata(meta);
+        h.set_mode(mode_bits(meta));
         h.set_size(0);
         if ft.is_symlink() {
             return b.append_link(&mut h, name, fs::read_link(src)?);
@@ -336,16 +513,23 @@ fn layer_job(conn: &mut fs::File, spec: &CopySpec<'_>, paths: &Paths) -> io::Res
     // swap a directory for a link to `/` between our look and our read
     // (`docker diff`, `commit --pause=false`). Inside a chroot of the layer
     // that link leads back into the layer, as `enter` does for the others.
-    let c = sys::cstr(&paths.containers.join(spec.id).join("upper"))?;
-    // SAFETY: valid NUL-terminated paths.
-    unsafe {
-        sys::check(libc::chroot(c.as_ptr()) as _, "chroot")?;
-        sys::check(libc::chdir(c"/".as_ptr()) as _, "chdir")?;
+    let layer = paths.containers.join(spec.id).join("upper");
+    // A container that never started has no writable layer yet: nothing
+    // changed, and there is nothing to enter (the walk below must not run
+    // on this process's own root).
+    let fresh = matches!(fs::symlink_metadata(&layer), Err(e) if e.kind() == io::ErrorKind::NotFound);
+    if !fresh {
+        let c = sys::cstr(&layer)?;
+        // SAFETY: valid NUL-terminated paths.
+        unsafe {
+            sys::check(libc::chroot(c.as_ptr()) as _, "chroot")?;
+            sys::check(libc::chdir(c"/".as_ptr()) as _, "chdir")?;
+        }
     }
     let upper = std::path::PathBuf::from("/");
     // Every path in the writable layer, parents first.
     let mut entries: Vec<(std::path::PathBuf, fs::Metadata)> = Vec::new();
-    let mut stack = vec![std::path::PathBuf::new()];
+    let mut stack = if fresh { Vec::new() } else { vec![std::path::PathBuf::new()] };
     while let Some(rel) = stack.pop() {
         let dir = upper.join(&rel);
         let Ok(list) = fs::read_dir(&dir) else { continue };

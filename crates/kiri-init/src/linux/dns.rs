@@ -99,6 +99,9 @@ pub struct Dns {
     /// bridge → name → (the container's IPv4 address there, its IPv6 one):
     /// the IPv4 address is what `unregister` names the container by.
     names6: HashMap<String, HashMap<String, Owned6>>,
+    /// bridge → its Docker network's name: the order a container's server
+    /// searches its networks in.
+    networks: HashMap<String, String>,
     /// Container address → its `--dns` servers, used instead of the VM's.
     clients: HashMap<[u8; 4], Vec<[u8; 4]>>,
     pending: Vec<Pending>,
@@ -176,6 +179,23 @@ impl Dns {
         }
     }
 
+    /// The address container `pid`'s 127.0.0.11 server keeps its `--dns`
+    /// servers under (`set_upstream`), if it has one.
+    pub fn owner_of(&self, pid: i32) -> Option<[u8; 4]> {
+        self.servers.iter().find_map(|s| s.container.filter(|(p, _)| *p == pid).map(|(_, owner)| owner))
+    }
+
+    /// Whether the agent answers DNS at `ip` on a bridge (its gateway).
+    pub fn serves_at(&self, ip: [u8; 4]) -> bool {
+        self.servers.iter().filter(|s| s.container.is_none()).any(|s| {
+            // SAFETY: sockaddr_in is plain data; getsockname fills at most `len` bytes.
+            let mut a: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+            let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+            let named = unsafe { libc::getsockname(s.sock.as_raw_fd(), (&mut a as *mut libc::sockaddr_in).cast(), &mut len) } == 0;
+            named && a.sin_addr.s_addr.to_ne_bytes() == ip
+        })
+    }
+
     /// Container `pid` is gone: its 127.0.0.11 server goes.
     pub fn drop_container(&mut self, pid: i32) {
         self.servers.retain(|s| !s.container.is_some_and(|(p, _)| p == pid));
@@ -210,6 +230,13 @@ impl Dns {
         }
     }
 
+    /// `bridge` is Docker network `name` (`net_opts::NETWORK`).
+    pub fn name_network(&mut self, bridge: &str, name: &str) {
+        if self.networks.get(bridge).is_none_or(|n| n != name) {
+            self.networks.insert(bridge.to_owned(), name.to_owned());
+        }
+    }
+
     /// A removed network's bridge: its server and names go.
     pub fn forget_bridge(&mut self, bridge: &str) {
         self.servers.retain(|s| s.container.is_some() || !s.bridges.iter().any(|b| b == bridge));
@@ -218,6 +245,7 @@ impl Dns {
         }
         self.names.remove(bridge);
         self.names6.remove(bridge);
+        self.networks.remove(bridge);
         self.forget_pending();
     }
 
@@ -309,10 +337,16 @@ impl Dns {
     fn answer(&self, server: usize, q: &[u8]) -> Option<Vec<u8>> {
         let (name, qtype, end) = parse_question(q)?;
         let host = vec![super::net::HOST_ADDR];
-        // The first of the server's networks that has the name answers.
-        let bridge = self.servers[server].bridges.iter().find(|b| {
-            self.names.get(*b).is_some_and(|t| t.contains_key(&name)) || self.names6.get(*b).is_some_and(|t| t.contains_key(&name))
-        });
+        // Of the server's networks that have the name, the first by Docker
+        // network name answers, as with Docker: not the first joined. A
+        // name Compose gives a service on every network it joins then
+        // answers from the project's own network rather than a shared one
+        // where another project's service has it too (#294).
+        let bridge = self.servers[server]
+            .bridges
+            .iter()
+            .filter(|b| self.names.get(*b).is_some_and(|t| t.contains_key(&name)) || self.names6.get(*b).is_some_and(|t| t.contains_key(&name)))
+            .min_by_key(|b| self.networks.get(*b).map_or(b.as_str(), String::as_str));
         let addrs = bridge.and_then(|b| self.names.get(b)).and_then(|t| t.get(&name));
         let addrs6 = bridge.and_then(|b| self.names6.get(b)).and_then(|t| t.get(&name));
         // The host's names answer A with the host's address, and AAAA with
@@ -577,6 +611,9 @@ fn parse_question(q: &[u8]) -> Option<(String, u16, usize)> {
         i += 1 + len;
     }
     let qtype = u16::from_be_bytes([*q.get(i)?, *q.get(i + 1)?]);
+    // QCLASS must be there too: both callers copy q[12..end], and a slice
+    // past the packet would abort PID 1 (panic = "abort"), and with it the VM.
+    q.get(12..i + 4)?;
     Some((name, qtype, i + 4))
 }
 
@@ -616,6 +653,36 @@ mod tests {
         assert!(dns.answer(0, &query("db", 1)).is_none(), "gone with the network");
         dns.drop_container(42);
         assert!(dns.servers.is_empty());
+    }
+
+    /// #294: a container on its project's network and on a shared one, both
+    /// with a `db`, joining the shared one first. Docker searches the
+    /// networks by name, whatever the join order.
+    #[test]
+    fn a_containers_networks_are_searched_by_docker_network_name() {
+        // (shared network, project network, which one answers)
+        for (shared, project, shared_answers) in [("kiri_shared_t", "kra_default", true), ("ddev_default", "ddev-a_default", false), ("zz_shared", "kca_default", false)] {
+            let mut dns = Dns::default();
+            dns.servers.push(Server { bridges: vec!["kiri1".into(), "kiri2".into()], sock: udp_socket().unwrap(), container: Some((42, [10, 1, 0, 2])) });
+            dns.name_network("kiri1", shared);
+            dns.name_network("kiri2", project);
+            // This project's db on both networks, another project's on the shared one.
+            dns.register("kiri1", ["db"].iter(), [10, 1, 0, 3]);
+            dns.register("kiri1", ["db"].iter(), [10, 1, 0, 4]);
+            dns.register("kiri2", ["db"].iter(), [10, 2, 0, 3]);
+            let q = query("db", 1);
+            let got = answers(&dns.answer(0, &q).unwrap(), q.len());
+            let want = if shared_answers { vec![(1, vec![10, 1, 0, 3]), (1, vec![10, 1, 0, 4])] } else { vec![(1, vec![10, 2, 0, 3])] };
+            assert_eq!(got, want, "{shared} and {project}");
+        }
+    }
+
+    #[test]
+    fn a_removed_networks_name_goes_with_its_bridge() {
+        let mut dns = Dns::default();
+        dns.name_network("kiri1", "frontend");
+        dns.forget_bridge("kiri1");
+        assert!(dns.networks.is_empty());
     }
 
     #[test]
@@ -860,6 +927,25 @@ mod tests {
         let n = client.recv(&mut buf).unwrap();
         assert_eq!(&buf[..2], &[0, 7], "the client's own ID");
         assert_eq!(&buf[2..n], &reply[2..]);
+    }
+
+    /// A question cut off after QTYPE (no QCLASS) is not a question: one
+    /// such 36-byte packet to 127.0.0.11 used to abort kiri-init and the VM.
+    #[test]
+    fn a_question_without_its_class_is_refused() {
+        let mut q = vec![0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
+        for label in ["host", "docker", "internal"] {
+            q.push(label.len() as u8);
+            q.extend_from_slice(label.as_bytes());
+        }
+        q.extend_from_slice(&[0, 0, 1]);
+        assert_eq!(q.len(), 36);
+        assert!(super::parse_question(&q).is_none(), "QCLASS missing");
+        q.extend_from_slice(&[0]);
+        assert!(super::parse_question(&q).is_none(), "half a QCLASS");
+        q.extend_from_slice(&[1]);
+        let (name, qtype, end) = super::parse_question(&q).expect("a whole question parses");
+        assert_eq!((name.as_str(), qtype, end), ("host.docker.internal", 1, 38));
     }
 
     #[test]

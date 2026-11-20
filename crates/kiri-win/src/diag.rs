@@ -43,11 +43,12 @@ fn stamp(secs: u64) -> Option<String> {
     Some(format!("{}.000Z", t.get(..19)?))
 }
 
-/// The window's line `1793282688 bridge started`, as the page's
+/// The window's line `2026-11-09T03:29:27.230Z bridge started` (or, as
+/// it was written before 0.1.19, `1793282688 bridge started`), as the page's
 /// `{time, level, part, msg}`. Panics are errors; failures warnings.
 fn window_line(line: &str) -> Option<Value> {
-    let (secs, msg) = line.split_once(' ')?;
-    let secs: u64 = secs.parse().ok()?;
+    let (time, msg) = line.split_once(' ')?;
+    let time = if time.len() == 24 && time.ends_with('Z') && time.as_bytes()[10] == b'T' { time.to_owned() } else { stamp(time.parse().ok()?)? };
     let lower = msg.to_lowercase();
     let level = if lower.starts_with("panic") {
         "error"
@@ -56,7 +57,7 @@ fn window_line(line: &str) -> Option<Value> {
     } else {
         "info"
     };
-    Some(json!({"time": stamp(secs)?, "level": level, "part": "ui", "msg": redact::patterns(msg.trim())}))
+    Some(json!({"time": time, "level": level, "part": "ui", "msg": redact::patterns(msg.trim())}))
 }
 
 /// The engine's line `2026-10-29T14:07:36.584Z INFO  container start id=9138 name="a b"`:
@@ -331,6 +332,8 @@ mod tests {
         assert_eq!(window_line("1793282688 panic: at x").unwrap()["level"], "error");
         assert_eq!(window_line("1793282688 bridge failed: gone").unwrap()["level"], "warn");
         assert!(window_line("not a line").is_none());
+        let v = window_line("2026-11-09T03:29:27.230Z setup engine: couldn't pull alpine").unwrap();
+        assert_eq!((v["time"].as_str(), v["level"].as_str()), (Some("2026-11-09T03:29:27.230Z"), Some("warn")));
         // Two threads once wrote their timestamps back to back; that line is skipped, not a panic.
         assert!(window_line("17933419751793341975 DBG conn 14 \"POST /x\" end=4").is_none());
     }
