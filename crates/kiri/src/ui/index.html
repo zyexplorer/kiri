@@ -126,7 +126,7 @@ body.rail aside { padding-left: 10px; padding-right: 10px; }
 body.rail .navlabel { height: 0; padding: 0; margin: 9px 6px; overflow: hidden; border-top: 1px solid var(--line); }
 body.rail .navlabel > * { display: none; }
 body.rail nav button { justify-content: center; padding: 0; }
-body.rail nav .lbl, body.rail nav .count { display: none; }
+body.rail nav .lbl, body.rail nav .count, body.rail nav .beta { display: none; }
 /* Share's live-links badge rides on the icon's corner. */
 body.rail nav button { position: relative; }
 body.rail nav .sh-globes { position: absolute; top: 1px; right: 1px; transform: scale(.7); transform-origin: top right; }
@@ -150,6 +150,7 @@ nav button[aria-current=page] { background: color-mix(in srgb, var(--nav-ico) 14
 nav svg.i { width: 17px; height: 17px; color: var(--nav-ico); }
 /* A colour per view so the rail isn't a grey column of the same stroke. */
 nav button[data-view="containers"] { --nav-ico: #5B9CF5; }
+nav button[data-view="compose"] { --nav-ico: #38BDF8; }
 nav button[data-view="images"] { --nav-ico: #2DD4BF; }
 nav button[data-view="volumes"] { --nav-ico: #E8A317; }
 nav button[data-view="networks"] { --nav-ico: #A78BFA; }
@@ -162,6 +163,7 @@ nav button[data-view="notes"] { --nav-ico: var(--blue); }
 nav button[data-view="settings"] { --nav-ico: #818CF8; }
 @media (prefers-color-scheme: light) {
   nav button[data-view="containers"] { --nav-ico: #2563EB; }
+  nav button[data-view="compose"] { --nav-ico: #0369A1; }
   nav button[data-view="images"] { --nav-ico: #0F766E; }
   nav button[data-view="volumes"] { --nav-ico: #B45309; }
   nav button[data-view="networks"] { --nav-ico: #7C3AED; }
@@ -172,6 +174,10 @@ nav button[data-view="settings"] { --nav-ico: #818CF8; }
 }
 nav .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 nav .count { margin-left: auto; font-size: var(--fs); color: var(--faint); font-variant-numeric: tabular-nums; }
+nav button > .beta, nav .count { flex: none; }
+nav button > .beta.gone { display: none; }
+.beta { display: inline-block; margin-left: 6px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: var(--fs-small); font-weight: 600; line-height: 1.5; vertical-align: 2px; letter-spacing: .02em; }
+h2 .beta { vertical-align: 3px; }
 
 .vm { margin-top: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; }
 .vm-head { display: flex; align-items: center; gap: 7px; font-weight: 600; }
@@ -311,6 +317,23 @@ table.pin tr[data-imgrow] td[data-img] { cursor: pointer; }
 .gcard.ctr .gstats .v.ports .port, .gcard.ctr .gstats .v.ports .port-more { font-size: var(--fs-small); }
 .gcard.ctr .gstatus .gaddr { min-width: 0; flex: 1 1 auto; height: 24px; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line)); border-radius: 999px; background: color-mix(in srgb, var(--blue) 10%, var(--raised)); color: var(--blue-light); font: 550 var(--fs-small) var(--ui-font); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .gcard.ctr .gstatus .gaddr:hover { background: color-mix(in srgb, var(--blue) 16%, var(--raised)); border-color: color-mix(in srgb, var(--blue) 50%, var(--line)); }
+/* Compose project cards: one card per project, services as chips. */
+.gcard.cmp { gap: 14px; min-height: 210px; padding: 16px 16px 12px; background: linear-gradient(180deg, color-mix(in srgb, var(--raised) 55%, var(--panel)) 0%, var(--panel) 42%); }
+.gcard.cmp:hover { background: color-mix(in srgb, var(--blue) 18%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 50%, var(--line)); }
+.gcard.cmp .ghead .tile { width: 40px; height: 40px; border-radius: 11px; color: var(--blue-light); background: color-mix(in srgb, var(--blue) 14%, var(--raised)); }
+.gcard.cmp .ghead .tile svg { width: 22px; height: 22px; fill: currentColor; }
+.gcard.cmp .gbadge { display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; height: 24px; padding: 0 9px; border-radius: 999px; font-size: var(--fs-small); font-weight: 600; border: 1px solid var(--line); background: var(--raised); color: var(--muted); }
+.gcard.cmp .gbadge .pill { border: 0; padding: 0; background: none; height: auto; }
+.gcard.cmp .gsvcs { display: flex; flex-wrap: wrap; gap: 6px; min-height: 24px; align-content: flex-start; }
+.gcard.cmp .gsvcs .chip { display: inline-flex; align-items: center; max-width: 100%; height: 22px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--raised); color: var(--muted); font-size: var(--fs-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcard.cmp .gsvcs .chip.more { color: var(--faint); }
+.gcard.cmp .gstats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--bg) 55%, transparent); border: 1px solid color-mix(in srgb, var(--line) 80%, transparent); }
+.gcard.cmp:hover .gstats { background: color-mix(in srgb, var(--blue) 10%, var(--bg)); border-color: color-mix(in srgb, var(--blue) 28%, var(--line)); }
+.gcard.cmp .gstats .cell { min-width: 0; display: grid; gap: 2px; }
+.gcard.cmp .gstats .k { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+.gcard.cmp .gstats .v { font-size: var(--fs-small); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcard.cmp .gstats .v.mono { font: 500 var(--fs-mono) var(--mono-font); color: var(--text); }
+.gcard.cmp .gacts { padding-top: 12px; border-top-color: color-mix(in srgb, var(--line) 85%, transparent); }
 /* Quiet: no frame until the pointer is on it. */
 .btn.quiet { border-color: transparent; background: none; color: var(--muted); padding: 0 10px; }
 .btn.quiet:hover { color: var(--text); background: var(--raised); border-color: var(--line); }
@@ -473,7 +496,7 @@ tr.prow .btn svg { width: 12px; height: 12px; fill: currentColor; flex: none; }
 
 /* padding-top must stay 0 when a sticky thead is present: Chromium sticks below
    the padding edge, so any top padding becomes a scroll "window" that leaks rows. */
-.content { flex: 1; overflow: auto; padding: 0 24px 20px 20px; }
+.content { flex: 1; overflow: auto; padding: 0 24px calc(20px + var(--hold, 0px)) 20px; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; }
 th { white-space: nowrap; text-align: left; font-size: var(--fs-small); font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .05em;
      padding: 6px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; background: var(--bg);
@@ -728,6 +751,12 @@ textarea.field::placeholder { color: var(--faint); font-family: var(--mono); }
 tr.group { cursor: pointer; }
 tr.group td { background: color-mix(in srgb, var(--raised) 55%, transparent); }
 tr.group .chev { width: 16px; color: var(--muted); font-size: calc(var(--fs) + 4px); line-height: 1; flex: none; text-align: center; }
+tr.group button.chev { border: 0; background: none; padding: 0; margin: 0; font: inherit; cursor: pointer; border-radius: 4px; color: var(--muted); }
+tr.group button.chev:focus-visible { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 45%, transparent); }
+tr.group b.gopen { cursor: pointer; }
+tr.group b.gopen:hover, tr.group b.gopen:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+tr.member .tree + .tile-wrap > .tile, table[data-view="cmpsvcs"] td .tile-wrap > .tile { width: 24px; height: 24px; border-radius: 6px; }
+tr.member .tree + .tile-wrap > .tile svg, table[data-view="cmpsvcs"] td .tile-wrap > .tile svg { width: 14px; height: 14px; }
 tr.member td.ck + td { padding-left: 10px; }
 /* A project's containers hang off it on a line from under its arrow. */
 tr.member .tree { width: 16px; align-self: stretch; position: relative; flex: none; }
@@ -759,6 +788,160 @@ tr.member .tree::after { content: ""; position: absolute; left: 7.5px; top: 50%;
 .dfacts dd { margin-top: 2px; display: flex; align-items: center; gap: 4px; color: color-mix(in srgb, var(--text) 58%, var(--muted)); }
 .cproj { display: inline-flex; align-items: center; gap: 5px; }
 .cproj svg { width: 13px; height: 13px; fill: var(--blue-light); flex: none; }
+/* A project's head (Compose): its facts wrap to more rows, and one too long for a row ends in …; its title has the whole. */
+#cmp-head .dfacts { flex-basis: calc(100% - 52px); min-width: 0; }
+#cmp-head .dfacts > div { min-width: 0; max-width: 100%; }
+#cmp-head .dfacts dd { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cproj { display: inline-flex; align-items: center; gap: 5px; }
+.cproj svg { width: 13px; height: 13px; fill: var(--blue-light); flex: none; }
+/* The pills and the buttons take their own line when there's no room beside the tabs (#cmp-tabs wraps). */
+.cmp-sf { order: 2; padding-inline: 8px; } #cmp-tabs > .spacer { order: 1; } #cmp-acts { order: 3; margin-inline-start: auto; }
+.tile.cmp { color: var(--blue-light); background: color-mix(in srgb, var(--blue) 12%, var(--raised)); }
+.tile.cmp svg { fill: currentColor; }
+/* Compose's own rows in Containers' list: a project's notice (⚠, or ⓘ when it is managed by name), a container row's shape. */
+.tile.warn { color: var(--sun); } .tile.note { color: var(--blue-light); } :is(.tile.warn, .tile.note) svg { fill: currentColor; }
+tr.warnrow .wtitle { color: var(--sun-text); font-weight: 600; } tr.warnrow.info .wtitle { color: var(--text); }
+tr.warnrow .name > div:last-child { min-width: 0; } tr.warnrow :is(.wtitle, .sub-name) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A project's head and its crumb: a long project name ends in …, the whole in its title. */
+#cmp-head .who { flex: 0 1 auto; max-width: calc(100% - 200px); } #cmp-head .who b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#cmp-head > .pill { flex: none; }
+#title:has(> .crumb) { min-width: 0; overflow: hidden; } #title .crumb { display: flex; min-width: 0; max-width: 100%; } #title .crumb > * { flex: none; white-space: nowrap; } #title .crumb > span:last-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* With many services, the tab bar stays put while the tab scrolls under it. */
+#cmp-tabs { position: sticky; top: 0; z-index: 3; background: var(--bg); flex-wrap: wrap; }
+/* Map cards, file outline, plan and logs: a long service name ends in … */
+.card .nm .nmt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.plan li .why { overflow-wrap: anywhere; min-width: 0; }
+.role { display: inline-block; font: 600 calc(var(--fs-small) - 1.5px)/1 var(--ui-font); letter-spacing: .06em; text-transform: uppercase; padding: 3px 5px; border-radius: 4px; color: var(--faint); background: var(--raised); border: 1px solid var(--line); vertical-align: 1px; margin-inline-end: 4px; }
+.role.app { color: var(--blue-light); border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); background: color-mix(in srgb, var(--blue) 10%, var(--raised)); }
+.pill.busy::before { background: var(--blue-light); animation: cmp-pulse .7s infinite alternate; }
+@keyframes cmp-pulse { to { opacity: .3; } }
+.dtabs .edot { width: 6px; height: 6px; border-radius: 50%; background: var(--sun); display: inline-block; margin-inline-start: 6px; }
+.hspin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor; animation: cmp-spin .9s linear infinite; display: inline-block; vertical-align: -2px; }
+@keyframes cmp-spin { to { transform: rotate(360deg); } }
+.cmp-asedited { margin-bottom: 8px; }
+/* Structure */
+.map { position: relative; display: flex; flex-direction: column; height: 470px; border: 1px solid var(--line); border-radius: 10px; background: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text) 6%, transparent) 1px, transparent 0) 0 0 / 18px 18px, var(--panel); overflow: hidden; }
+.mtools { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.msearch input { height: 26px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: var(--fs) var(--ui-font); width: 160px; outline: none; }
+.msearch input:focus { border-color: var(--blue); }
+.mcount, .mfocus { color: var(--faint); font-size: var(--fs-small); } .mfocus { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); }
+.zoom { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.zoom button { height: 26px; min-width: 28px; padding: 0 8px; border: 0; border-inline-start: 1px solid var(--line); background: var(--bg); color: var(--muted); font: var(--fs-small) var(--ui-font); cursor: pointer; }
+.zoom button:first-child { border-inline-start: 0; } .zoom button:hover, .zoom button[aria-pressed=true] { color: var(--text); background: var(--raised); }
+.viewport { flex: 1; min-height: 0; overflow: auto; display: flex; cursor: grab; }
+.viewport.grab { cursor: grabbing; }
+.sizer { margin: auto; flex: none; position: relative; }
+.map .canvas { transform-origin: 0 0; position: absolute; top: 0; left: 0; }
+.map svg.wires { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.wires path { fill: none; stroke: color-mix(in srgb, var(--faint) 70%, transparent); stroke-width: 1.5; transition: opacity .15s; }
+.wires path.hot, .wires path.lit { stroke: var(--blue-light); } .wires path.lit { stroke-width: 1.8; }
+.wires path.add { stroke: var(--moss); stroke-dasharray: 4 3; } .wires path.rm { stroke: var(--red); stroke-dasharray: 3 3; opacity: .6; }
+.wires path.dim { opacity: .08; }
+.wires marker path { fill: color-mix(in srgb, var(--faint) 70%, transparent); stroke: none; }
+.wires marker.hot path, .wires marker.lit path { fill: var(--blue-light); } .wires marker.add path { fill: var(--moss); } .wires marker.rm path { fill: var(--red); }
+.card { position: absolute; height: 84px; padding: 9px 10px; border-radius: 9px; background: var(--bg); border: 1px solid var(--line); display: grid; grid-template-columns: 24px 1fr; gap: 2px 9px; align-content: start; cursor: pointer; transition: opacity .15s, border-color .2s, box-shadow .2s; direction: ltr; }
+.card:hover { border-color: var(--faint); }
+.card .tile { grid-row: span 2; width: 24px; height: 24px; border-radius: 6px; } .card .tile svg { width: 13px; height: 13px; }
+.card .nm { display: flex; align-items: center; gap: 6px; font-weight: 600; min-width: 0; overflow: hidden; white-space: nowrap; }
+.card .nm .pill { margin-inline-start: auto; font-weight: 400; font-size: var(--fs-small); }
+/* A long state ("Up Less than a second") ends in … on its card; the whole of it is the pill's title. */
+.card .nm .pill { display: block; flex: 0 0 auto; max-width: 70%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .nm .pill::before { display: inline-block; margin-inline-end: 6px; vertical-align: 1px; }
+/* Apply finished, but a service it made or started stopped right after. */
+.cmp-conflict { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; padding: 8px 11px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--sun) 45%, var(--line)); background: color-mix(in srgb, var(--sun) 10%, var(--bg)); font-size: var(--fs); }
+.cmp-conflict .spacer { flex: 1; }
+.cmp-failed { margin: 10px 0 0; padding: 9px 11px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--red) 40%, var(--line)); background: color-mix(in srgb, var(--red) 8%, var(--bg)); font-size: var(--fs); }
+.cmp-failed b { color: var(--red-text); }
+.cmp-failed div + div { margin-top: 4px; }
+.cmp-failed .linkish { margin-inline-start: 6px; }
+.card .img { font: var(--fs-small) var(--mono-font); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .img.lang { font-family: var(--ui-font); color: var(--muted); }
+.card .meta { grid-column: 1 / -1; display: flex; gap: 4px; align-items: center; margin-top: 5px; overflow: hidden; }
+.card .meta .vol { display: inline-flex; align-items: center; gap: 3px; color: var(--faint); font-size: var(--fs-small); margin-inline-start: auto; }
+.card .meta .vol svg { width: 11px; height: 11px; fill: currentColor; }
+.card .tag { position: absolute; top: -8px; right: 8px; font-size: var(--fs-small); line-height: 1.2; font-weight: 700; letter-spacing: .03em; padding: 1px 6px; border-radius: 99px; background: var(--raised); }
+.card.add { border-color: var(--moss); } .card.add .tag { color: var(--moss); }
+.card.chg { border-color: var(--blue); } .card.chg .tag { color: var(--blue-light); }
+.card.rm { border-style: dashed; border-color: var(--red); opacity: .55; } .card.rm .tag { color: var(--red-text); }
+.card.err { border-color: color-mix(in srgb, var(--red) 60%, var(--line)); }
+.card.app { box-shadow: inset 3px 0 0 var(--acc, var(--faint)); }
+.card.mini { grid-template-columns: 20px 1fr; gap: 0 8px; padding: 7px 9px; align-content: center; }
+.card.mini .tile { width: 20px; height: 20px; border-radius: 5px; } .card.mini .tile svg { width: 11px; height: 11px; }
+.card.mini .img { font-size: var(--fs-small); }
+.card .sdot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); margin-inline-start: auto; flex: none; } .card .sdot.r { background: var(--moss); } .card .sdot.f { background: var(--red); }
+.card.dim { opacity: .18; } .card.sel { border-color: var(--blue-light); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 28%, transparent); } .card.hit { border-color: var(--sun); }
+.mapfoot { display: flex; gap: 18px; padding: 9px 12px; border-top: 1px solid var(--line); color: var(--faint); font-size: var(--fs-small); flex-wrap: wrap; align-items: center; }
+.mapfoot b { color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin-inline-end: 4px; }
+.mapfoot .chip { display: inline-flex; align-items: center; gap: 4px; margin-inline-end: 8px; } .mapfoot .chip svg { width: 12px; height: 12px; fill: currentColor; }
+.mapfoot .mhint { margin-inline-start: auto; }
+.cnet { display: inline-block; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+/* Compose file */
+.cmp-file { display: grid; grid-template-columns: 176px minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; height: 470px; }
+.cmp-edcol { display: flex; flex-direction: column; min-height: 0; }
+.outline { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: auto; padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+.outline .oh { font: 600 var(--fs-small) var(--ui-font); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); padding: 4px 6px 6px; }
+.outline button { display: flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--muted); font: var(--fs) var(--ui-font); padding: 4px 6px; border-radius: 6px; cursor: pointer; text-align: start; }
+.outline button:hover { background: var(--row-hover); color: var(--text); }
+.outline button .on { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.outline button .ln { margin-inline-start: auto; flex: none; white-space: nowrap; color: var(--faint); font: calc(var(--fs-small) - .5px) var(--ui-font); }
+.outline button i { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.outline button i.add { background: var(--moss); } .outline button i.chg { background: var(--blue-light); } .outline button i.rm, .outline button i.bad { background: var(--red); }
+.outline .tile.xs { width: 16px; height: 16px; border-radius: 4px; } .outline .tile.xs svg { width: 10px; height: 10px; }
+.edhead { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 0 8px; color: var(--faint); min-width: 0; }
+.edhead svg { width: 14px; height: 14px; fill: currentColor; flex: none; }
+.edhead .path { font: var(--fs-mono) var(--mono-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; flex: 1 1 120px; min-width: 0; }
+/* A long state ("Saved, not applied: Bind for 0.0.0.0:8080 failed…") ends in … in its column; the whole of it is its title. */
+.edhead .state { margin-inline-start: auto; display: block; flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.edhead .state.dirty { color: var(--sun-text); } .edhead .state.dirty::before { content: ""; display: inline-block; vertical-align: 1px; margin-inline-end: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--sun); }
+.ed { flex: 1; position: relative; display: grid; grid-template-columns: 40px 1fr; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; min-height: 0; direction: ltr; }
+.ed .gut { padding: 10px 8px 10px 0; text-align: right; color: var(--faint); font: var(--fs-mono)/1.6 var(--mono-font); user-select: none; overflow: hidden; border-right: 1px solid var(--line); }
+.ed .gut .bad { color: var(--red-text); }
+.ed .body { position: relative; min-width: 0; overflow: hidden; }
+.ed pre, .ed textarea { position: absolute; inset: 0; margin: 0; padding: 10px 12px; font: var(--fs-mono)/1.6 var(--mono-font); white-space: pre; overflow: auto; tab-size: 2; border: 0; }
+.ed pre { color: var(--text); pointer-events: none; }
+.ed textarea { background: transparent; color: transparent; caret-color: var(--text); resize: none; outline: none; }
+.ed textarea::selection { background: color-mix(in srgb, var(--blue) 28%, transparent); color: transparent; }
+.ed .k { color: var(--blue-light); } .ed .s { color: var(--moss); } .ed .c { color: var(--faint); font-style: italic; } .ed .top { color: var(--blue-light); font-weight: 600; }
+.ed .chl { background: color-mix(in srgb, var(--sun) 9%, transparent); box-shadow: inset 2px 0 0 var(--sun); display: inline-block; width: 100%; }
+.ed .chl.bad { background: color-mix(in srgb, var(--red) 12%, transparent); box-shadow: inset 2px 0 0 var(--red); }
+.plan { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.plan h4 { font-size: var(--fs-head); padding: 12px 14px 4px; margin: 0; }
+.plan .lede { color: var(--muted); padding: 0 14px 10px; margin: 0; }
+.plan ul { list-style: none; padding: 0 8px; margin: 0; flex: 1; overflow: auto; }
+.plan li { display: grid; grid-template-columns: 18px minmax(0, 1fr) minmax(0, max-content); gap: 4px 8px; padding: 8px 6px; border-top: 1px solid var(--line); align-items: start; }
+.plan li .what, .plan li .act { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan li:first-child { border-top: 0; }
+/* A narrow window (900 px and less): no outline, the editor takes the page's width and the plan sits under it.
+   After the rules above, so it wins over them. */
+@media (max-width: 900px) {
+  .cmp-file { grid-template-columns: minmax(0, 1fr); grid-template-rows: 400px minmax(160px, auto); height: auto; }
+  .cmp-file .outline { display: none; }
+  .cmp-file .plan { max-height: 340px; }
+}
+.plan li[data-cmpgoto] { cursor: pointer; } .plan li[data-cmpgoto]:hover .what { text-decoration: underline; text-underline-offset: 3px; }
+.plan li .ic { width: 16px; height: 16px; border-radius: 4px; display: grid; place-items: center; font-size: var(--fs-small); font-weight: 700; }
+.plan li .what { font-weight: 600; } .plan li .why { grid-column: 2 / -1; color: var(--muted); font-size: var(--fs-small); }
+.plan li .why del { color: var(--red-text); text-decoration: none; } .plan li .why ins { color: var(--moss); text-decoration: none; }
+.plan li .act { font-size: var(--fs-small); font-weight: 600; padding: 1px 7px; border-radius: 99px; }
+.a-add .ic, .a-add .act, .chipsum.a-add, .a-start .ic, .a-start .act { color: var(--moss); background: color-mix(in srgb, var(--moss) 16%, transparent); }
+.a-chg .ic, .a-chg .act, .chipsum.a-chg { color: var(--blue-light); background: color-mix(in srgb, var(--blue) 18%, transparent); }
+.plan li .act.live { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
+.a-rm .ic, .a-rm .act, .chipsum.a-rm { color: var(--red-text); background: color-mix(in srgb, var(--red) 16%, transparent); }
+.a-same { color: var(--faint); } .a-same .ic { background: var(--raised); }
+.chipsum { display: inline-flex; align-items: center; font-size: var(--fs-small); font-weight: 600; padding: 2px 8px; border-radius: 99px; }
+#cmp-warn, .plan .err { white-space: pre-line; }
+#cmp-warn, .plan .err, .cmp-logs .warn { overflow-wrap: anywhere; }
+.plan .err { margin: 0 14px 10px; padding: 9px 11px; border-radius: 8px; background: color-mix(in srgb, var(--red) 10%, var(--panel)); border: 1px solid color-mix(in srgb, var(--red) 35%, transparent); color: var(--red-text); }
+.plan .err b { color: var(--text); }
+.plan .cmp-run { margin: 0 14px 8px; font: var(--fs-small)/1.5 var(--mono-font); color: var(--muted); white-space: pre-wrap; max-height: 120px; overflow: auto; }
+.plan .foot { padding: 10px 14px; border-top: 1px solid var(--line); color: var(--faint); font-size: var(--fs-small); }
+/* Logs */
+.cmp-logs { font: var(--fs-small)/1.65 var(--mono-font); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; height: 440px; overflow: auto; direction: ltr; }
+.cmp-logs .t { color: var(--faint); margin-inline-end: 8px; }
+.logbar .cmp-logsvcs { flex-wrap: wrap; min-width: 0; --c0: #6EA8FE; --c1: #3FB68B; --c2: #A78BFA; --c3: #E0A060; --c4: #F87171; }
+.card.sel { cursor: pointer; -webkit-user-select: none; user-select: none; }
+#cmp-warn { color: var(--sun-text); }
+
 .dhead .kbadge { right: -3px; bottom: -3px; }
 /* A digest in a name: set back, short; the whole one in its title. */
 .dg { color: var(--muted); font-weight: 400; } .dg .mono { font-size: .85em; }
@@ -2009,6 +2192,9 @@ body.share nav button.shareonly { display: flex; }
 .addr .sh-spin { width: 11px; height: 11px; }
 /* flex: none: in a tight flex row it would be squeezed into an oval. */
 .sh-spin { flex: none; width: 14px; height: 14px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--sun) 25%, transparent); border-top-color: var(--sun-text); animation: spin .9s linear infinite; }
+/* Compose waiting on the engine: the spinner and its word; in the header, taking no room, so nothing moves. */
+.cmp-wait { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
+.cmp-hwait { position: relative; width: 0; align-self: center; } .cmp-hwait > .sh-spin { position: absolute; left: 8px; top: -7px; }
 .kside i.sh-calm { position: relative; }
 /* "You're sharing": over the window, lightly; a click outside closes it. */
 .sh-float { position: fixed; inset: 0; z-index: 8; display: grid; place-items: center; background: rgba(0, 0, 0, .28);
@@ -2282,6 +2468,8 @@ body.beat { --beat: ring 1.6s ease-out; }
 .dg-part { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; font: 600 var(--fs-small) var(--ui-font); letter-spacing: .02em;
            color: var(--muted); background: var(--row-hover); box-shadow: inset 0 0 0 1px var(--line); white-space: nowrap; }
 .lnk { border: 0; background: none; padding: 0; font: inherit; color: var(--blue-light); cursor: pointer; }
+.ctr-more { margin: 10px 0 0; padding-left: 16px; padding-right: 16px; color: var(--muted); font-size: var(--fs); }
+.ctr-more .lnk:hover, .ctr-allcmp .lnk:hover { text-decoration: underline; text-underline-offset: 3px; }
 .lnk:hover { text-decoration: underline; }
 .diag .pref .dg-acts { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: 8px; }
 .diag .btn svg, .dt-foot .btn svg, .rp-dialog .btn svg, .updcard .btn svg { width: 14px; height: 14px; fill: currentColor; }
@@ -2500,6 +2688,7 @@ main { position: relative; }
   <div class="navlabel" id="docker-label"><span data-i18n="Docker">Docker</span><button class="kwrench" id="theme-toggle"><svg class="i" viewBox="0 0 256 256"></svg></button></div>
   <nav>
     <button data-view="containers"><svg class="i" viewBox="0 0 256 256" data-ph="cube"></svg><span class="lbl" data-i18n="Containers">Containers</span><span class="count" id="n-containers">0</span></button>
+    <button data-view="compose"><svg class="i" viewBox="0 0 256 256" data-ph="stack"></svg><span class="lbl" data-i18n="Compose">Compose</span><span class="count" id="n-compose"></span></button>
     <button data-view="images"><svg class="i" viewBox="0 0 256 256" data-ph="stack"></svg><span class="lbl" data-i18n="Images">Images</span><span class="count" id="n-images">0</span></button>
     <button data-view="volumes"><svg class="i" viewBox="0 0 256 256" data-ph="database"></svg><span class="lbl" data-i18n="Volumes">Volumes</span><span class="count" id="n-volumes">0</span></button>
     <button data-view="networks"><svg class="i" viewBox="0 0 256 256" data-ph="network"></svg><span class="lbl" data-i18n="Networks">Networks</span><span class="count" id="n-networks">0</span></button>
@@ -2535,7 +2724,7 @@ main { position: relative; }
 
 <main>
   <div class="toolbar">
-    <h2 id="title">Containers</h2><span class="sub num" id="subtitle"></span>
+    <h2 id="title">Containers</h2><span class="cmp-hwait" id="cmp-hwait" role="status" data-i18n-aria="Loading…" aria-label="Loading…" hidden><i class="sh-spin"></i></span><span class="sub num" id="subtitle"></span>
     <span class="spacer"></span>
     <div class="ltabs" id="ltabs" role="group" data-i18n-aria="Show" aria-label="Show" hidden></div>
     <div class="hright" id="hright"></div>
@@ -3803,6 +3992,161 @@ const ZH = {
   "i/o timeout": "读写超时",
   "TLS handshake timeout": "TLS 握手超时",
   "Couldn't find an image called {name}. Check the name; if it's private, sign in with docker login.": "找不到名为 {name} 的镜像。请检查名称；若是私有镜像，请先 docker login。",
+
+  "A project named {name} already runs from {dir}. Open that one, or give this file its own name: line.": "名为 {name} 的项目已在 {dir} 中运行。请打开那个项目，或为此文件设置自己的 name: 行。",
+  "Actual size": "实际大小",
+  "All {n} containers are in <a>Compose projects</a>": "全部 {n} 个容器都在 <a>Compose 项目</a>中",
+  "Applied {name}": "已应用 {name}",
+  "Applied {name}, but {svcs} stopped": "已应用 {name}，但 {svcs} 已停止",
+  "Applied {name}, but {svc} stopped": "已应用 {name}，但 {svc} 停止了",
+  "Apply": "应用",
+  "Apply cancelled": "已取消应用",
+  "Apply cancelled. No service was changed.": "已取消应用。没有服务被更改。",
+  "Apply cancelled. {n} services had already changed; the rest were not changed.": "已取消应用。{n} 个服务已经更改；其余服务未更改。",
+  "Apply cancelled. {svc} had already changed; the rest were not changed.": "已取消应用。{svc} 已经更改；其余服务未更改。",
+  "Apply the compose file to create it": "应用 compose 文件以创建它",
+  "Arrows point at what a service needs; Compose starts those first.": "箭头指向服务所依赖的对象；Compose 会先启动它们。",
+  "Beta": "测试版",
+  "CHANGES": "变更",
+  "Cache": "缓存",
+  "Compose file": "Compose 文件",
+  "Compose rejects this file with its real values. Kiri can't show why with secrets hidden.": "Compose 用真实值读取时拒绝了此文件。隐藏机密时，Kiri 无法显示原因。",
+  "Compose rejects this file. A required variable may not be set: {name}.": "Compose 拒绝了此文件。可能有必需的变量未设置：{name}。",
+  "Compose rejects this file: YAML error in an included file, line {n}": "Compose 拒绝了此文件：所包含的文件第 {n} 行有 YAML 错误",
+  "Compose rejects this file: YAML error in {file}, line {n}": "Compose 拒绝了此文件：{file} 第 {n} 行有 YAML 错误",
+  "Compose rejects this file: YAML error on line {n}": "Compose 拒绝了此文件：第 {n} 行有 YAML 错误",
+  "Couldn't apply {name}: {error}": "无法应用 {name}：{error}",
+  "Couldn't change {name}: {error}": "无法更改 {name}：{error}",
+  "Couldn't open the compose file: {error}": "无法打开 compose 文件：{error}",
+  "Couldn't read env file {file}: it isn't a local regular file": "无法读取 env 文件 {file}：它不是本地的普通文件",
+  "Couldn't run docker compose: {error}": "无法运行 docker compose：{error}",
+  "Couldn't save the compose file: {error}": "无法保存 Compose 文件：{error}",
+  "Create": "创建",
+  "Discard": "放弃",
+  "Edited, not applied": "已编辑，未应用",
+  "File": "文件",
+  "Find a service": "查找服务",
+  "Fit": "适应",
+  "Fit the whole project": "适应整个项目",
+  "Fix the file first.": "请先修复文件。",
+  "Hide {name}'s containers": "隐藏 {name} 的容器",
+  "Its logs, Start, Stop and Remove still work.": "日志、启动、停止和删除仍然可用。",
+  "Keep editing": "继续编辑",
+  "Kiri can't check this file with {name} hidden. Compose accepts it, so Apply still works.": "隐藏 {name} 时，Kiri 无法检查此文件。Compose 接受它，所以“应用”仍然可用。",
+  "Kiri can't check this file's variables, so it manages this project by name. Apply changes from a terminal.": "Kiri 无法检查此文件的变量，因此按名称管理此项目。请在终端中应用更改。",
+  "Kiri can't find the docker CLI. Restart Kiri to set it up again.": "Kiri 找不到 docker CLI。请重启 Kiri 以重新设置。",
+  "Kiri can't find this project's compose file.": "Kiri 找不到此项目的 compose 文件。",
+  "Kiri can't read the compose file: {error}": "Kiri 无法读取 compose 文件：{error}",
+  "Kiri can't show the plan with {name} hidden. {apply} will run docker compose up.": "隐藏 {name} 时 Kiri 无法显示计划。“{apply}”将运行 docker compose up。",
+  "Kiri can't show this service's details with its secrets hidden": "隐藏机密时，Kiri 无法显示此服务的详细信息",
+  "Kiri doesn't know that action": "Kiri 不认识该操作",
+  "Kiri has no state folder": "Kiri 没有状态文件夹",
+  "Kiri has nothing to put back": "Kiri 没有可恢复的内容",
+  "Line {n}.": "第 {n} 行。",
+  "Metrics": "指标",
+  "NEW": "新增",
+  "Names Docker shows may contain secret values.": "Docker 显示的名称可能包含机密值。",
+  "New service from {image}.": "来自 {image} 的新服务。",
+  "New service, built from its folder.": "新服务，从其文件夹构建。",
+  "Newest container created {time}": "最新容器创建于 {time}",
+  "No Compose projects yet": "还没有 Compose 项目",
+  "No logs yet.": "暂无日志。",
+  "Not applied": "未应用",
+  "Not created": "未创建",
+  "Not in the file any more: stopped and removed. Its volumes stay.": "文件中已没有它：将停止并移除。其卷会保留。",
+  "Not started": "未启动",
+  "Not started yet. Apply on the Compose file tab brings every service up.": "尚未启动。在“Compose 文件”标签页点“应用”即可启动所有服务。",
+  "Nothing yet: the file matches what's running. Change it and this lists what happens to each service.": "暂无内容：文件与运行中的一致。修改文件后，这里会列出每个服务将发生的变化。",
+  "Overwrite": "覆盖",
+  "Overwrite their changes": "覆盖他们的更改",
+  "Overwrite their changes?": "覆盖他们的更改？",
+  "Pick a .yaml or .yml compose file": "请选择 .yaml 或 .yml Compose 文件",
+  "Projects you start with {cmd} show up here once they have run on Kiri.": "用 {cmd} 启动的项目在 Kiri 上运行后会显示在这里。",
+  "Put back the file as it was before Apply saved over it": "将文件恢复为应用覆盖保存之前的样子",
+  "Queue": "队列",
+  "REMOVED": "已移除",
+  "Recreate": "重建",
+  "Refresh": "刷新",
+  "Reload (lose your edits)": "重新加载（丢弃你的编辑）",
+  "Remove from the list": "从列表中移除",
+  "Restarting": "正在重启",
+  "Saved": "已保存",
+  "Saved {name}, not applied: {error}": "已保存 {name}，未应用：{error}",
+  "Saved, but an included file has an error": "已保存，但所包含的文件有错误",
+  "Saved, but line {n} has an error": "已保存，但第 {n} 行有错误",
+  "Saved, but the file has an error": "已保存，但文件有错误",
+  "Saved, matches what runs": "已保存，与运行中的一致",
+  "Saved, not applied": "已保存，未应用",
+  "Saved, not applied: {error}": "已保存，未应用：{error}",
+  "Saved, not started yet": "已保存，尚未启动",
+  "Saves the file, then runs {cmd}. Unchanged services keep running.": "保存文件，然后运行 {cmd}。未改变的服务会继续运行。",
+  "Scheduler": "定时任务",
+  "Search": "搜索",
+  "See its logs": "查看它的日志",
+  "Service": "服务",
+  "Show in file": "在文件中显示",
+  "Show {name}'s containers": "显示 {name} 的容器",
+  "Showing the file as edited, not applied yet.": "正在显示编辑后的文件，尚未应用。",
+  "Storage": "存储",
+  "Structure": "结构",
+  "That project is gone": "该项目已不存在",
+  "The compose file is back, and differs from your edits.": "Compose 文件已恢复，但与你的编辑不同。",
+  "The compose file is gone from its folder.": "Compose 文件已不在其文件夹中。",
+  "The compose file is read-only, so Kiri can't save it. Make it writable, then Apply again.": "Compose 文件为只读，Kiri 无法保存。请将其设为可写，然后再次应用。",
+  "The compose file isn't on this computer: {error}": "compose 文件不在这台电脑上：{error}",
+  "The file changed outside Kiri": "文件在 Kiri 之外被修改",
+  "The file changed outside Kiri since Apply saved it": "自应用保存以来，文件在 Kiri 之外被修改",
+  "The file changed outside Kiri.": "文件在 Kiri 之外被修改。",
+  "The file changed outside Kiri. Apply writes your edits over it, and those changes are lost.": "文件在 Kiri 之外被修改。应用会用你的编辑覆盖它，那些更改将丢失。",
+  "The image name from {name} isn't valid": "来自 {name} 的镜像名称无效",
+  "The other Apply of {name} finished. Your edit isn't applied yet.": "{name} 的另一次应用已完成。你的编辑尚未应用。",
+  "There's no Compose project {name} on Kiri": "Kiri 上没有 Compose 项目 {name}",
+  "This file isn't a compose file: it has no services": "此文件不是 Compose 文件：没有任何服务",
+  "This file's name uses {vars}. Kiri uses the folder's name, {name}, so it never puts a secret in a name.": "此文件的名称使用了 {vars}。Kiri 使用文件夹的名称 {name}，因此绝不会把机密放进名称里。",
+  "Unchanged": "不变",
+  "Web": "网页",
+  "What Apply does": "应用会做什么",
+  "Worker": "后台任务",
+  "Your edits stay here. Apply waits until the file is back.": "你的编辑会保留在这里。应用会等到文件恢复。",
+  "Your only container is in a <a>Compose project</a>": "你唯一的容器在 <a>Compose 项目</a>中",
+  "Zoom in": "放大",
+  "Zoom out": "缩小",
+  "a newer image": "更新的镜像",
+  "a variable it uses changed": "它使用的变量被修改",
+  "build": "构建",
+  "depends on": "依赖",
+  "docker compose took longer than {secs} seconds": "docker compose 用时超过 {secs} 秒",
+  "docker compose up failed": "docker compose up 失败",
+  "docker compose up stopped": "docker compose up 已停止",
+  "environment": "环境变量",
+  "line {n}": "第 {n} 行",
+  "needs {list}": "依赖 {list}",
+  "needs {n}": "依赖 {n} 个",
+  "not started": "未启动",
+  "ports": "端口",
+  "the file changed outside Kiri": "文件在 Kiri 之外被修改",
+  "{name} are used in a name or folder path. Docker shows those in plain text.": "{name} 用在了名称或文件夹路径中。Docker 以明文显示这些内容。",
+  "{name} is already being applied. Wait for it to finish, or cancel it.": "{name} 正在应用中。请等待完成，或取消。",
+  "{name} is used in a name or folder path. Docker shows those in plain text.": "{name} 用在了名称或文件夹路径中。Docker 以明文显示这些内容。",
+  "{n} more": "还有 {n} 个",
+  "{n} more in <a>Compose projects</a>": "另有 {n} 个在 <a>Compose 项目</a>中",
+  "{n} more in a <a>Compose project</a>": "另有 {n} 个在 <a>Compose 项目</a>中",
+  "{n} need it": "{n} 个依赖它",
+  "{n} needs it": "{n} 个依赖它",
+  "{n} new": "{n} 个新增",
+  "{n} recreated": "{n} 个重建",
+  "{n} service": "{n} 个服务",
+  "{n} services": "{n} 个服务",
+  "{n} unchanged": "{n} 个不变",
+  "{running} of {all} running": "{running}/{all} 运行中",
+  "{svc} stopped after Apply": "{svc} 在“应用”后停止了",
+
+  "Applying…": "正在应用…",
+  "Creating…": "正在创建…",
+  "Open a compose file…": "打开 compose 文件…",
+  "Recreating…": "正在重新创建…",
+  "Removing…": "正在移除…",
+  "Starts on line {n} · click to jump there": "从第 {n} 行开始 · 点击跳转",
 
 }
 const ZH_TW = {
@@ -5131,8 +5475,163 @@ const ZH_TW = {
   "TLS handshake timeout": "TLS 握手超時",
   "Couldn't find an image called {name}. Check the name; if it's private, sign in with docker login.": "找不到名為 {name} 的鏡像。請檢查名稱；若是私有鏡像，請先 docker login。",
   "繁體中文": "繁體中文",
+  "A project named {name} already runs from {dir}. Open that one, or give this file its own name: line.": "名為 {name} 的專案已從 {dir} 執行中。請開啟那個專案，或為此檔案設定自己的 name: 行。",
+  "Actual size": "實際大小",
+  "All {n} containers are in <a>Compose projects</a>": "全部 {n} 個容器都在 <a>Compose 專案</a>中",
+  "Applied {name}": "已套用 {name}",
+  "Applied {name}, but {svcs} stopped": "已套用 {name}，但 {svcs} 已停止",
+  "Applied {name}, but {svc} stopped": "已套用 {name}，但 {svc} 停止了",
+  "Apply": "套用",
+  "Apply cancelled": "已取消套用",
+  "Apply cancelled. No service was changed.": "已取消套用。沒有服務被變更。",
+  "Apply cancelled. {n} services had already changed; the rest were not changed.": "已取消套用。{n} 個服務已經變更；其餘服務未變更。",
+  "Apply cancelled. {svc} had already changed; the rest were not changed.": "已取消套用。{svc} 已經變更；其餘服務未變更。",
+  "Apply the compose file to create it": "套用 compose 檔案以建立它",
+  "Arrows point at what a service needs; Compose starts those first.": "箭頭指向服務所依賴的對象；Compose 會先啟動它們。",
+  "Beta": "測試版",
+  "CHANGES": "變更",
+  "Cache": "快取",
+  "Compose file": "Compose 檔案",
+  "Compose rejects this file with its real values. Kiri can't show why with secrets hidden.": "Compose 以真實值讀取時拒絕了此檔案。隱藏機密時，Kiri 無法顯示原因。",
+  "Compose rejects this file. A required variable may not be set: {name}.": "Compose 拒絕了此檔案。可能有必要的變數未設定：{name}。",
+  "Compose rejects this file: YAML error in an included file, line {n}": "Compose 拒絕了此檔案：所包含的檔案第 {n} 行有 YAML 錯誤",
+  "Compose rejects this file: YAML error in {file}, line {n}": "Compose 拒絕了此檔案：{file} 第 {n} 行有 YAML 錯誤",
+  "Compose rejects this file: YAML error on line {n}": "Compose 拒絕了此檔案：第 {n} 行有 YAML 錯誤",
+  "Couldn't apply {name}: {error}": "無法套用 {name}：{error}",
+  "Couldn't change {name}: {error}": "無法變更 {name}：{error}",
+  "Couldn't open the compose file: {error}": "無法開啟 compose 檔案：{error}",
+  "Couldn't read env file {file}: it isn't a local regular file": "無法讀取 env 檔案 {file}：它不是本機的一般檔案",
+  "Couldn't run docker compose: {error}": "無法執行 docker compose：{error}",
+  "Couldn't save the compose file: {error}": "無法儲存 Compose 檔案：{error}",
+  "Create": "建立",
+  "Discard": "捨棄",
+  "Edited, not applied": "已編輯，未套用",
+  "File": "檔案",
+  "Find a service": "尋找服務",
+  "Fit": "符合",
+  "Fit the whole project": "符合整個專案",
+  "Fix the file first.": "請先修正檔案。",
+  "Hide {name}'s containers": "隱藏 {name} 的容器",
+  "Its logs, Start, Stop and Remove still work.": "記錄、啟動、停止和移除仍可使用。",
+  "Keep editing": "繼續編輯",
+  "Kiri can't check this file with {name} hidden. Compose accepts it, so Apply still works.": "隱藏 {name} 時，Kiri 無法檢查此檔案。Compose 接受它，所以「套用」仍然可用。",
+  "Kiri can't check this file's variables, so it manages this project by name. Apply changes from a terminal.": "Kiri 無法檢查此檔案的變數，因此依名稱管理此專案。請在終端機中套用變更。",
+  "Kiri can't find the docker CLI. Restart Kiri to set it up again.": "Kiri 找不到 docker CLI。請重新啟動 Kiri 以重新設定。",
+  "Kiri can't find this project's compose file.": "Kiri 找不到此專案的 compose 檔案。",
+  "Kiri can't read the compose file: {error}": "Kiri 無法讀取 compose 檔案：{error}",
+  "Kiri can't show the plan with {name} hidden. {apply} will run docker compose up.": "隱藏 {name} 時 Kiri 無法顯示計畫。「{apply}」將執行 docker compose up。",
+  "Kiri can't show this service's details with its secrets hidden": "隱藏機密時，Kiri 無法顯示此服務的詳細資訊",
+  "Kiri doesn't know that action": "Kiri 不認得該操作",
+  "Kiri has no state folder": "Kiri 沒有狀態資料夾",
+  "Kiri has nothing to put back": "Kiri 沒有可還原的內容",
+  "Line {n}.": "第 {n} 行。",
+  "Metrics": "指標",
+  "NEW": "新增",
+  "Names Docker shows may contain secret values.": "Docker 顯示的名稱可能包含機密值。",
+  "New service from {image}.": "來自 {image} 的新服務。",
+  "New service, built from its folder.": "新服務，從其資料夾建置。",
+  "Newest container created {time}": "最新容器建立於 {time}",
+  "No Compose projects yet": "尚無 Compose 專案",
+  "No logs yet.": "尚無記錄。",
+  "Not applied": "未套用",
+  "Not created": "未建立",
+  "Not in the file any more: stopped and removed. Its volumes stay.": "檔案中已沒有它：將停止並移除。其磁碟區會保留。",
+  "Not started": "未啟動",
+  "Not started yet. Apply on the Compose file tab brings every service up.": "尚未啟動。在「Compose 檔案」分頁按「套用」即可啟動所有服務。",
+  "Nothing yet: the file matches what's running. Change it and this lists what happens to each service.": "尚無內容：檔案與執行中的一致。修改檔案後，這裡會列出每個服務將發生的變化。",
+  "Overwrite": "覆寫",
+  "Overwrite their changes": "覆寫他們的變更",
+  "Overwrite their changes?": "覆寫他們的變更？",
+  "Pick a .yaml or .yml compose file": "請選擇 .yaml 或 .yml Compose 檔案",
+  "Projects you start with {cmd} show up here once they have run on Kiri.": "以 {cmd} 啟動的專案在 Kiri 上執行後會顯示在這裡。",
+  "Put back the file as it was before Apply saved over it": "將檔案還原為套用覆寫儲存之前的樣子",
+  "Queue": "佇列",
+  "REMOVED": "已移除",
+  "Recreate": "重建",
+  "Refresh": "重新整理",
+  "Reload (lose your edits)": "重新載入（捨棄你的編輯）",
+  "Remove from the list": "從清單中移除",
+  "Restarting": "正在重新啟動",
+  "Saved": "已儲存",
+  "Saved {name}, not applied: {error}": "已儲存 {name}，未套用：{error}",
+  "Saved, but an included file has an error": "已儲存，但所包含的檔案有錯誤",
+  "Saved, but line {n} has an error": "已儲存，但第 {n} 行有錯誤",
+  "Saved, but the file has an error": "已儲存，但檔案有錯誤",
+  "Saved, matches what runs": "已儲存，與執行中的一致",
+  "Saved, not applied": "已儲存，未套用",
+  "Saved, not applied: {error}": "已儲存，未套用：{error}",
+  "Saved, not started yet": "已儲存，尚未啟動",
+  "Saves the file, then runs {cmd}. Unchanged services keep running.": "儲存檔案，然後執行 {cmd}。未變更的服務會繼續執行。",
+  "Scheduler": "排程",
+  "Search": "搜尋",
+  "See its logs": "查看它的記錄",
+  "Service": "服務",
+  "Show in file": "在檔案中顯示",
+  "Show {name}'s containers": "顯示 {name} 的容器",
+  "Showing the file as edited, not applied yet.": "正在顯示編輯後的檔案，尚未套用。",
+  "Storage": "儲存裝置",
+  "Structure": "結構",
+  "That project is gone": "該專案已不存在",
+  "The compose file is back, and differs from your edits.": "Compose 檔案已回來，但與你的編輯不同。",
+  "The compose file is gone from its folder.": "Compose 檔案已不在其資料夾中。",
+  "The compose file is read-only, so Kiri can't save it. Make it writable, then Apply again.": "Compose 檔案為唯讀，Kiri 無法儲存。請將其設為可寫入，然後再次套用。",
+  "The compose file isn't on this computer: {error}": "compose 檔案不在這台電腦上：{error}",
+  "The file changed outside Kiri": "檔案在 Kiri 之外被修改",
+  "The file changed outside Kiri since Apply saved it": "自套用儲存以來，檔案在 Kiri 之外被修改",
+  "The file changed outside Kiri.": "檔案在 Kiri 之外被修改。",
+  "The file changed outside Kiri. Apply writes your edits over it, and those changes are lost.": "檔案在 Kiri 之外被修改。套用會以你的編輯覆寫它，那些變更將會遺失。",
+  "The image name from {name} isn't valid": "來自 {name} 的映像名稱無效",
+  "The other Apply of {name} finished. Your edit isn't applied yet.": "{name} 的另一次套用已完成。你的編輯尚未套用。",
+  "There's no Compose project {name} on Kiri": "Kiri 上沒有 Compose 專案 {name}",
+  "This file isn't a compose file: it has no services": "此檔案不是 Compose 檔案：沒有任何服務",
+  "This file's name uses {vars}. Kiri uses the folder's name, {name}, so it never puts a secret in a name.": "此檔案的名稱使用了 {vars}。Kiri 使用資料夾的名稱 {name}，因此絕不會把機密放進名稱裡。",
+  "Unchanged": "不變",
+  "Web": "網頁",
+  "What Apply does": "套用會做什麼",
+  "Worker": "背景工作",
+  "Your edits stay here. Apply waits until the file is back.": "你的編輯會保留在這裡。套用會等到檔案回來。",
+  "Your only container is in a <a>Compose project</a>": "您唯一的容器在 <a>Compose 專案</a>中",
+  "Zoom in": "放大",
+  "Zoom out": "縮小",
+  "a newer image": "較新的映像檔",
+  "a variable it uses changed": "它使用的變數被修改",
+  "build": "建置",
+  "depends on": "依賴",
+  "docker compose took longer than {secs} seconds": "docker compose 花費超過 {secs} 秒",
+  "docker compose up failed": "docker compose up 失敗",
+  "docker compose up stopped": "docker compose up 已停止",
+  "environment": "環境變數",
+  "line {n}": "第 {n} 行",
+  "needs {list}": "依賴 {list}",
+  "needs {n}": "依賴 {n} 個",
+  "not started": "未啟動",
+  "ports": "連接埠",
+  "the file changed outside Kiri": "檔案在 Kiri 之外被修改",
+  "{name} are used in a name or folder path. Docker shows those in plain text.": "{name} 用在了名稱或資料夾路徑中。Docker 以明文顯示這些內容。",
+  "{name} is already being applied. Wait for it to finish, or cancel it.": "{name} 正在套用中。請等待完成，或取消。",
+  "{name} is used in a name or folder path. Docker shows those in plain text.": "{name} 用在了名稱或資料夾路徑中。Docker 以明文顯示這些內容。",
+  "{n} more": "還有 {n} 個",
+  "{n} more in <a>Compose projects</a>": "另有 {n} 個在 <a>Compose 專案</a>中",
+  "{n} more in a <a>Compose project</a>": "另有 {n} 個在 <a>Compose 專案</a>中",
+  "{n} need it": "{n} 個依賴它",
+  "{n} needs it": "{n} 個依賴它",
+  "{n} new": "{n} 個新增",
+  "{n} recreated": "{n} 個重建",
+  "{n} service": "{n} 個服務",
+  "{n} services": "{n} 個服務",
+  "{n} unchanged": "{n} 個不變",
+  "{running} of {all} running": "{running}/{all} 執行中",
+  "{svc} stopped after Apply": "{svc} 在「套用」後停止了",
+
+  "Applying…": "正在套用…",
+  "Creating…": "正在建立…",
+  "Open a compose file…": "開啟 compose 檔案…",
+  "Recreating…": "正在重新建立…",
+  "Removing…": "正在移除…",
+  "Starts on line {n} · click to jump there": "從第 {n} 行開始 · 點擊跳轉",
+
 };
-const VIEW_LABEL = { containers: "Containers", images: "Images", volumes: "Volumes", networks: "Networks", builds: "Builds", pods: "Pods", services: "Services", settings: "Settings", share: "Share", notes: "Notes" };
+const VIEW_LABEL = { containers: "Containers", images: "Images", volumes: "Volumes", networks: "Networks", builds: "Builds", pods: "Pods", services: "Services", settings: "Settings", share: "Share", notes: "Notes", compose: "Compose" };
 /* Codes offered in Settings → Appearance → Language → Custom. Add here to grow the menu. */
 /*I18N_NEWLANGS*/
 /* ja/ko/fr/de/es/pt/ru: gzip+base64, inflated once after load so NavigateToString
@@ -5175,6 +5674,8 @@ function tr(en, vars) {
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.replaceAll(`{${k}}`, String(v));
   return s;
 }
+const rlm = () => "";
+function trn(n, one, other, vars) { return tr(Number(n) === 1 ? one : other, { n, ...(vars || {}) }); }
 /* Engine / registry errors arrive as English fragments (often concatenated).
    Exact catalog hit first, then known templates, then longest-phrase replace. */
 const ERR_PHRASES = [
@@ -5239,12 +5740,13 @@ function paintSearchPlaceholder() {
   // View id stays lower-case in English ("containers"), matching the old
   // `Search ${view}…` placeholders; other locales translate the id via tr().
   el.placeholder = v === "notes" ? tr("Search notes…")
+    : v === "compose" && !ui.detail && !cmp.open ? tr("Search {view}…", { view: "Compose" })
     : ["containers", "images", "volumes", "networks", "builds", "pods", "services"].includes(v) && !ui.detail && !ui.imgd
     ? tr("Search {view}…", { view: tr(v) })
     : tr("Search Kiri…");
 }
 
-const ui = { running: new Set(), launched: new Map(), runWatch: new Map(), need: null, probed: new Map(), probing: new Set(), why: new Map(), startErr: {}, fixed: null, openTab: null, listening: new Map(), starting: new Map(), scans: new Map(), scanf: { sev: "", fix: false, own: false }, view: "containers", vm: "stopped", containers: [], images: [], volumes: [], networks: [], sort: { images: { key: "pulled", desc: true } }, filter: "", suffix: "kiri.localhost", collapsed: new Set(), res: null, resDraft: {}, proxy: null, pxDraft: {}, daemon: null, mirrorsDraft: "", mirrorsSaving: false, mirrorsMsg: "", mirrorsMsgKind: "",
+const ui = { gacting: new Map(), running: new Set(), launched: new Map(), runWatch: new Map(), need: null, probed: new Map(), probing: new Set(), why: new Map(), startErr: {}, fixed: null, openTab: null, listening: new Map(), starting: new Map(), scans: new Map(), scanf: { sev: "", fix: false, own: false }, view: "containers", vm: "stopped", containers: [], images: [], volumes: [], networks: [], sort: { images: { key: "pulled", desc: true } }, filter: "", suffix: "kiri.localhost", collapsed: new Set(), res: null, resDraft: {}, proxy: null, pxDraft: {}, daemon: null, mirrorsDraft: "", mirrorsSaving: false, mirrorsMsg: "", mirrorsMsgKind: "",
   imp: { sources: null, source: null, inv: null, picked: { images: new Set(), volumes: new Set(), containers: new Set() }, steps: {}, running: false, summary: "" },
   upd: null, engineStale: null, staleHidden: false,
   // The Builds view: the list, the picked build and its detail, and how its steps show.
@@ -5502,9 +6004,15 @@ const ansi = /\x1b\[[0-9;?]*[ -\/]*[@-~]/g;
 const DTABS = [["overview", "Overview"], ["logs", "Logs"], ["terminal", "Terminal"], ["files", "Files"]];
 const dtabLabel = (label) => tr(label);
 
+const ctrHome = (c) => (c?.Labels?.["com.docker.compose.project"] ? "compose" : "containers");
+function openDetailLogs(id) {
+  if (!ui.containers.some((x) => x.Id === id)) { cmp.tab = "logs"; cmp.logs = null; return render(); }
+  openDetail(id); setTab("logs");
+}
 function openDetail(id) {
   const c = ui.containers.find((x) => x.Id === id);
   if (!c) return;
+  if (ui.view !== ctrHome(c)) { const nav = navState(), was = nav.going; nav.going = true; try { show(ctrHome(c)); } finally { nav.going = was; } }
   closeDetail();
   const name = c.Names[0].replace(/^\//, "");
   ui.detail = { id, name, tab: "overview", info: null, logsOn: false, follow: true, logFilter: "", logLevel: "",
@@ -6002,9 +6510,12 @@ function renderDetail() {
   const d = ui.detail;
   const c = ui.containers.find((x) => x.Id === d.id);
   if (!c) { closeDetail(); return render(); }
+  const project = c.Labels?.["com.docker.compose.project"];
   const running = c.State === "running";
-  // The title row becomes the breadcrumb: Containers › name.
-  $("title").innerHTML = `<span class="crumb"><button data-back>${tr("Containers")}</button><span aria-hidden="true">›</span><span>${esc(d.name)}</span></span>`;
+  const pe = esc(project || ""), sep = '<span aria-hidden="true">›</span>';
+  setHTML($("title"), project
+    ? `<span class="crumb"><button data-cmpback>Compose</button>${sep}<button data-cdproj="${pe}" title="${pe}">${pe}</button>${sep}<span title="${esc(d.name)}">${esc(d.name)}</span></span>`
+    : `<span class="crumb"><button data-back>${tr("Containers")}</button>${sep}<span>${esc(d.name)}</span></span>`);
   $("subtitle").textContent = "";
   const body = $("dbody");
   // Keep the live log / terminal mounted across list refreshes so text
@@ -7004,6 +7515,898 @@ function renderSettings() {
   $("pref-mono")?.addEventListener("change", (ev) => setPref("mono", ev.target.value));
 }
 
+const restart0 = () => ibtn("restart", tr("Start it to restart it"), "disabled", "ghost");
+
+/* The rows of a list of a project's containers, each Compose project's as a group (Compose's list; Containers draws
+   the same containerRow, ungrouped).
+   o.row: containerRow's options for every container row; o.group(project, members): groupRow's options for a project;
+   o.lead(project, members) and o.extra(project, members): rows of another kind before and after a project's
+   containers (a notice; a service with no container), each a function of `last` (the tree line ends on the last
+   row); o.empty: projects with no container at all, as groups after the rest. */
+function groupedRows(items, o = {}) {
+  // A Compose project shows where its newest container would, as one group.
+  const rows = [], seen = new Set();
+  const group = (project, members) => {
+    rows.push(groupRow(project, members, o.group?.(project, members)));
+    if (ui.collapsed.has(project)) return;
+    const lead = o.lead?.(project, members) || [], more = o.extra?.(project, members) || [], k = lead.length, n = k + members.length + more.length;
+    rows.push(...lead.map((f, i) => f(i === n - 1)), ...members.map((m, i) => containerRow(m, k + i === n - 1 ? "last" : true, o.row)), ...more.map((f, i) => f(k + members.length + i === n - 1)));
+  };
+  for (const c of items) {
+    const project = c.Labels?.["com.docker.compose.project"];
+    if (!project || seen.has(project)) continue;
+    seen.add(project);
+    group(project, items.filter((x) => x.Labels?.["com.docker.compose.project"] === project));
+  }
+  for (const project of o.empty || []) if (!seen.has(project)) { seen.add(project); group(project, []); }
+  return rows;
+}
+
+/* A group row's fold: ▾ open, ▸ folded; its words say what it hides or shows. */
+const foldBtn = (open, label) => `<button type="button" class="chev" aria-expanded="${open}" aria-label="${label}">${open ? "▾" : "▸"}</button>`;
+/* A project's row (Compose's list). o.view: the list it is in (LISTS[view].groupMenu's items first in its ⋯);
+   o.sub: its line under the name, in place of "Compose · x of y running"; o.gopen: its name opens the project's page;
+   o.idle: a button in Start all's place when it has none (a project not started: Apply's). */
+function groupRow(project, members, o = {}) {
+  const running = members.filter((m) => m.State === "running").length;
+  const open = !ui.collapsed.has(project);
+  const p = esc(project);
+  const name = o.gopen ? `<b class="gopen" data-gopen="${p}" role="link" tabindex="0">${p}</b>` : `<b>${p}</b>`;
+  // Start all, Stop all, and the ⋯ for Restart all and Remove project: rolling till the engine is done (groupActing).
+  const busy = ui.gacting.get(project)?.action, roll = (...a) => (a.includes(busy) ? " rolling" : "");
+  return `<tr class="row group" data-group="${p}" aria-expanded="${open}">
+    <td colspan="${shareOn() ? 7 : 6}" data-fill><div class="name">${foldBtn(open, open ? tr("Hide {name}'s containers", { name: p }) : tr("Show {name}'s containers", { name: p }))}<div class="tile"><svg viewBox="0 0 256 256"><path d="${PH.stack}"/></svg></div>
+      <div>${name}<div class="sub-name">${o.sub ?? `${rlm()}Compose · ${tr("{running} of {all} running", { running, all: members.length })}`}</div></div></div></td>
+    <td class="actions"><div class="acts-row">
+      ${running < members.length ? ibtn("play", tr("Start all"), `data-g="start" data-project="${p}"`, "go" + roll("start")) : o.idle || ""}
+      ${running ? ibtn("stop", tr("Stop all"), `data-g="stop" data-project="${p}"`, "halt" + roll("stop")) : ""}
+      ${btn("⋯", `data-gmore="${p}"${o.view ? ` data-gview="${esc(o.view)}"` : ""} aria-label="${tr("More actions for {name}", { name: p })}" aria-haspopup="menu"`, "more" + roll("restart", "remove"))}
+    </div></td></tr>`;
+}
+
+function projectAction(project, action) {
+  // In Compose: Compose itself, by the project's name: depends_on order, and Remove takes its network too.
+  const compose = ui.view === "compose" && !!cmpProject(project);
+  groupActing(project, action, compose);
+  if (compose) { send("composeaction", { name: project, value: { action } }); return render(); }
+  const members = ui.containers.filter((c) => c.Labels?.["com.docker.compose.project"] === project);
+  const pick = action === "start" ? members.filter((c) => c.State !== "running" && c.State !== "paused")
+    : action === "stop" || action === "restart" ? members.filter((c) => c.State === "running" || c.State === "paused") : members;
+  for (const c of pick) send("container", { action, id: c.Id });
+  render();
+}
+/* A project's Start all, Stop all, Restart all or Remove rolls, in either list and on its page, till it's done:
+   Compose's answer (composeaction), or a list that shows the change; or after 20 s (by the containers) or 5 min (Compose). */
+function groupActing(project, action, compose) {
+  const was = Object.fromEntries(ui.containers.filter((c) => cmpOf(c) === project).map((c) => [c.Id, c.State + c.Status]));
+  clearTimeout(ui.gacting.get(project)?.t);
+  ui.gacting.set(project, { action, was, t: setTimeout(() => { if (ui.gacting.delete(project)) render(); }, compose ? 300000 : 20000) });
+}
+function groupActed(project) {
+  for (const [p, a] of ui.gacting) {
+    if (project != null && p !== project) continue;
+    const ms = ui.containers.filter((c) => cmpOf(c) === p), up = (c) => c.State === "running" || c.State === "paused";
+    const done = project != null || (a.action === "remove" ? !ms.length : a.action === "stop" ? !ms.some(up)
+      : a.action === "start" ? ms.length && ms.every(up) && !cmpUnmade(cmpProject(p)).length
+      : Object.entries(a.was).filter(([, w]) => /^(running|paused)/.test(w)).every(([id, w]) => { const c = ms.find((x) => x.Id === id); return !c || c.State + c.Status !== w; }));
+    if (done) { clearTimeout(a.t); ui.gacting.delete(p); }
+  }
+}
+
+// ---------- Compose: its own place under Docker ----------
+// A list of the projects that have run on Kiri (from their containers' labels; the
+// engine reads each file with docker compose config), each folding its services open
+// under it; a project's page has Structure (what depends on what), Services, its
+// Compose file (edit, then Apply: save, then docker compose up -d) and Logs.
+// What each service is made of (its logo, language and role) is the engine's work
+// (ui/composetech.rs); the page only draws it. Each logo goes into the page once,
+// as a <symbol>, and every tile points at it.
+const cmp = { list: null, asked: 0, opening: null, failed: null, open: null, tab: "structure", sfilter: "all", logSvc: null, file: null, draft: null, plan: null, seq: 0, applying: null, logs: null, map: { z: null, focus: null, q: "" }, key: "", conflict: null, kept: null, unapplied: null, sig: "" };
+const LOGO_HEX = {};
+function cmpLogos(logos) {
+  let host = document.getElementById("cmp-logos");
+  if (!host) { document.body.insertAdjacentHTML("afterbegin", '<svg id="cmp-logos" width="0" height="0" style="position:absolute" aria-hidden="true"></svg>'); host = document.getElementById("cmp-logos"); }
+  const add = Object.entries(logos || {}).filter(([k]) => !(k in LOGO_HEX));
+  for (const [k, [hex]] of add) LOGO_HEX[k] = hex;
+  if (add.length) host.insertAdjacentHTML("beforeend", add.map(([k, [, d]]) => `<symbol id="lg-${esc(k)}" viewBox="0 0 24 24"><path d="${d}"/></symbol>`).join(""));
+}
+// A service's tile: its logo (one <use> of the page's symbol), or a plain icon.
+function cmpTile(t, s, cls = "") {
+  const hex = t?.slug && LOGO_HEX[t.slug];
+  if (!hex) return `<div class="tile ${cls}">${svgOf(s?.build ? "hammer" : "cube")}</div>`;
+  const n = parseInt(hex, 16), lum = (0.2126 * (n >> 16) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255;
+  const fg = lum < 0.22 ? `color-mix(in srgb, #${hex} 45%, var(--text))` : `#${hex}`;
+  return `<div class="tile ${cls}" style="background:color-mix(in srgb, #${hex} 14%, var(--raised));box-shadow:none;color:${fg}"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#lg-${esc(t.slug)}"/></svg></div>`;
+}
+// A role's word (the engine's names are the English keys; i18n list at the end).
+const roleWord = (r) => (!r || r === "API" ? r || "" : tr(r));
+const cmpRole = (t) => t?.role ? `<span class="role${t.app ? " app" : ""}" title="${esc(roleWord(t.role))}">${esc(roleWord(t.role))}</span>` : "";
+// "Node.js · Next.js" for your code; the image for the rest.
+const cmpBuilt = (t, s) => t?.app ? (t.lang ? t.lang + (t.fw ? ` · ${t.fw}` : "") : s.build ? `${tr("build")} ${s.build.replace(/^.*[\\/]/, "")}` : s.image) : s.image;
+const cmpAccent = (t) => t?.app && t.slug && LOGO_HEX[t.slug] ? `--acc:#${LOGO_HEX[t.slug]};` : "";
+const cmpProject = (name) => cmp.list?.projects?.find((p) => p.name === name);
+const cmpMember = (p, svc) => p.containers.find((c) => c.service === svc);
+// The project page's buttons: Restart all, Start all or Stop all, Remove project; ⋯ only while
+// it runs in part, for Stop all. One opened from its file and never started: Remove from the list on the trash.
+function cmpProjBtns(p) {
+  const c = cmpCounts(p), pe = esc(p.name), g = (a) => `data-g="${a}" data-project="${pe}"`, roll = (a) => ui.gacting.get(p.name)?.action === a ? " rolling" : "";
+  return p.fresh ? ["", "", ibtn("trash", tr("Remove from the list"), `data-cmpforget="${pe}"`), ""]
+    : [c.run ? ibtn("restart", tr("Restart all"), g("restart"), roll("restart").trim()) : restart0(), c.run < c.all ? ibtn("play", tr("Start all"), g("start"), "go" + roll("start")) : ibtn("stop", tr("Stop all"), g("stop"), "halt" + roll("stop")),
+      ibtn("trash", tr("Remove project"), g("remove"), "danger" + roll("remove")), c.run && c.run < c.all ? btn("⋯", `data-gmore="${pe}" aria-label="${tr("More actions for {name}", { name: pe })}" aria-haspopup="menu"`, "more") : ""];
+}
+const cmpState = (p, svc) => cmpMember(p, svc)?.state || "";
+// Its containers, as the list's row counts them, so the page and the list never disagree.
+function cmpCounts(p) {
+  const cs = kept("compose").filter((c) => cmpOf(c) === p.name);
+  return { all: cs.length, run: cs.filter((c) => c.State === "running").length };
+}
+// The services the page lists (Services tab): those with a container and those without; — when Kiri couldn't read the file.
+const cmpSvcCount = (p) => new Set([...ui.containers.filter((c) => cmpOf(c) === p.name).map((c) => c.Labels?.["com.docker.compose.service"]), ...cmpUnmade(p).map((s) => s.name)]).size || (p.error ? "—" : 0);
+function cmpPill(p) {
+  const pill = (k, full) => `<span class="pill ${k}" title="${esc(full)}">${esc(full)}</span>`;
+  if (cmp.applying?.name === p.name) return pill("busy", tr("Applying…"));
+  if (p.fresh) return pill("", tr("Not started"));
+  const c = cmpCounts(p);
+  return c.run === c.all && c.all ? pill("running", tr("Running")) : !c.run ? pill("exited", tr("Stopped")) : pill("paused", tr("{running} of {all} running", { running: c.run, all: c.all }));
+}
+// A service's state on its map card: short beside a long name, the whole of it in the title.
+function cmpSvcPill(p, svc) {
+  const m = cmpMember(p, svc);
+  if (!m) return `<span class="pill" title="${tr("Not created")}">${tr("Not created")}</span>`;
+  const c = ui.containers.find((x) => x.Id === m.id);
+  // On a map card the state stays readable beside a long name: its short form, the whole of it in the title.
+  const state = c?.State || m.state, full = c ? statusTitle(c) : m.status;
+  const word = state === "restarting" ? tr("Restarting") : c ? statusText(c) : m.status;
+  return `<span class="pill ${esc(state)}${c ? exitClass(c) : ""}"${c && state !== "restarting" ? ` data-live="${esc(c.Id)}"` : ""} title="${esc(full)}">${esc(word)}</span>`;
+}
+// A project's warning (a file Kiri can't check with its secrets hidden): the project's page says it in full, its row in the list too.
+// A secret used in a container name or image (namewarn) says so too, with the other warning or alone.
+const cmpWarns = (p) => [p.warn && !p.error ? cmpErr({ ...p.warn, error: p.warn.text }) : "", cmpNameWarn(p), p.namefolder ? cmpErr({ ...p.namefolder, error: p.namefolder.text }) : ""].filter(Boolean);
+const cmpNameWarn = (p) => p.namewarn ? cmpErr({ ...p.namewarn, error: p.namewarn.text }) : "";
+// The project's networks: the first, "+N" for the others, all of them in the title.
+const cmpNet = (p) => { const n = p.networks || []; const t = esc(n.join("\n")); return n.length ? `<span class="cnet" title="${t}">${esc(n[0])}</span>${n.length > 1 ? ` <span class="cnet-more" title="${t}">+${n.length - 1}</span>` : ""}` : "—"; };
+// The sidebar's count: projects among the containers, before the engine's answer.
+function cmpCount() {
+  const ran = ui.containers.map((c) => c.Labels?.["com.docker.compose.project"]).filter(Boolean);
+  return new Set([...ran, ...(cmp.list?.projects || []).filter((p) => p.fresh).map((p) => p.name)]).size;
+}
+// Open a compose file…: the system's own file dialog; the engine keeps the path and answers with the project.
+const cmpOpenBtn = () => `<button class="btn primary" data-cmpopenfile title="${tr("Open a compose file…")}">${svgOf("folder")}<span class="hlbl">${tr("Open a compose file…")}</span></button>`;
+// A project opened from its file that has never run: Apply brings it up.
+const cmpFresh = () => !!cmpProject(cmp.open)?.fresh;
+// Compose can't list the file's variables: managed by name, its file read-only, no plan or Apply.
+const cmpByName = () => !!cmpProject(cmp.open)?.byname;
+function cmpAsk() {
+  if (Date.now() - cmp.asked < 1500) return;
+  cmp.asked = Date.now(); send("composeprojects", { value: { ask: cmp.askN = (cmp.askN || 0) + 1 } });
+  // A later list that takes a while: a small spinner by the title till it comes (the first has its own, in the page).
+  if (cmp.list && !cmp.waitT) cmp.waitT = setTimeout(() => cmpHWait(true), 600);
+}
+// Compose's spinner: Kiri's own (sh-spin), with its word (Loading…) unless `quiet`.
+const cmpSpin = (quiet = false) => `<span class="cmp-wait" role="status" aria-label="${tr("Loading…")}"><i class="sh-spin"></i>${quiet ? "" : `<span>${tr("Loading…")}</span>`}</span>`;
+function cmpHWait(on) {
+  if (!on) { clearTimeout(cmp.waitT); cmp.waitT = 0; }
+  const el = $("cmp-hwait"); if (el) el.hidden = !(on && ui.view === "compose" && !ui.detail);
+}
+// Open `name` once a list has it: gone only when the answer to a list asked for from now on comes without it.
+function cmpAwait(name) { cmp.opening = name; cmp.asked = 0; cmpAsk(); cmp.openFrom = cmp.askN; }
+function cmpOpen(name, focus = null) {
+  closeDetail();
+  // Not in the list we have (it started since): ask again, and open it once the list has it.
+  if (cmp.list && !cmpProject(name)) { cmpAwait(name); if (ui.view !== "compose") show("compose"); else { cmp.open = null; render(); } return; }
+  if (ui.view !== "compose") show("compose");
+  cmp.open = name; cmp.tab = "structure"; cmp.sfilter = "all"; cmp.logSvc = null; cmp.file = null; cmp.draft = null; cmp.plan = null; cmp.logs = null; cmp.key = ""; cmp.conflict = null; cmp.kept = null; cmp.gone = false; cmp.sig = "";
+  if (cmp.unapplied?.name !== name) cmp.unapplied = null;
+  cmp.map = { z: null, focus, q: "" };
+  send("composefile", { name });
+  render();
+  $("content").scrollTop = 0;
+}
+
+// The list: Containers' grouped rows, drawn by the same code (groupedRows, groupRow, containerRow, table) from
+// the same containers, so the two can't disagree. The engine's list adds what containers can't say: projects
+// with no container, services with no container, a project's notices, by name, and its file.
+const cmpOf = (c) => c.Labels?.["com.docker.compose.project"];
+// A project's services with no container yet. By name, Compose can't list them.
+const cmpUnmade = (p) => (p?.byname ? [] : (p?.services || []).filter((s) => !ui.containers.some((c) => cmpOf(c) === p.name && c.Labels?.["com.docker.compose.service"] === s.name)));
+// A service with no container: a container's row, its tile the service's, its state Not created, its Start Apply's.
+// `member`: under its project in the list (its tree line; the row opens the project's Services tab); on that tab, none.
+function cmpSvcRow(p, s, member) {
+  const pe = esc(p.name), se = esc(s.name), what = s.image ? refLabel(s.image) : cmpBuilt(s.tech, s) || "";
+  return `<tr class="row${member ? " member" : ""} unmade"${member ? ` data-cmpsvc="${pe}"` : ""} data-svc="${se}">
+      <td><div class="name">${member ? `<span class="tree${member === "last" ? " last" : ""}" aria-hidden="true"></span>` : ""}<div class="tile-wrap">${cmpTile(s.tech, s)}</div><div title="${se}"><span class="link"${member ? "" : ` data-mfile="${pe}"`}>${se}</span><div class="sub-name" title="${esc(s.image || what)}">${esc(what)}</div></div></div></td>
+      <td class="clip col-state"><span class="pill created">${tr("Not created")}</span></td>
+      <td class="num nowrap"><span class="muted">—</span></td>
+      ${shareOn() ? `<td class="col-share">${shareCell({ State: "created", Names: [], Ports: [] }, s.name)}</td>` : ""}
+      <td class="r num"><span class="muted">—</span></td>
+      <td class="muted col-created">—</td>
+      <td class="actions"><div class="acts-row">
+        ${ibtn("restart", tr("Apply the compose file to create it"), "disabled", "ghost")}
+        ${ibtn("play", tr("Apply the compose file to create it"), "disabled", "go")}
+        ${btn("⋯", `data-smore="${pe}" data-svc="${se}" aria-label="${tr("More actions for {name}", { name: se })}" aria-haspopup="menu"`, "more")}
+      </div></td></tr>`;
+}
+// A project's notices: what Compose rejects, what Kiri can't check, a secret in a name, the folder's name, and by name (ⓘ).
+// Each with its line in the file, when it has one.
+const CMP_INFILE = new Set(["reqUnset", "rejectReal", "yamlLine", "yamlIn", "yamlInc", "hiddenCheck", "nameSecret", "nameFolder"]);
+function cmpNotes(p) {
+  const vars = (e) => e.errkey === "yamlIn" || e.errkey === "yamlInc" ? [] : [...new Set(Object.values(e.errargs || {}).flat().join(" ").match(/\$\{?[A-Za-z_]\w*|^[A-Za-z_]\w*$/g) || [])].map((v) => v.replace(/^\$\{?/, ""));
+  const out = [], add = (text, e = {}) => text && out.push({ text, info: e.errkey === "byName", file: CMP_INFILE.has(e.errkey), line: e.errkey === "yamlLine" ? +e.errargs?.n || 0 : 0, vars: vars(e) });
+  if (p.error) add(p.error === CMP_NO_FILE ? cmpNoFile(p.error) : p.error, p);
+  if (p.warn && !p.error) add(cmpErr({ ...p.warn, error: p.warn.text }), p.warn);
+  if (p.namewarn) add(cmpErr({ ...p.namewarn, error: p.namewarn.text }), p.namewarn);
+  if (p.namefolder) add(cmpErr({ ...p.namefolder, error: p.namefolder.text }), p.namefolder);
+  return out;
+}
+// A notice's row, a container row's shape: ⚠ (ⓘ by name), its first sentence, the rest under it; each line ends in …, the whole in the title.
+function cmpNoteRow(p, n, last) {
+  const pe = esc(p.name), [, head = n.text, rest = ""] = n.text.match(/^(.+?(?:[.:]\s+|[。：]))(\S[\s\S]*)$/) || [];
+  return `<tr class="row member warnrow${n.info ? " info" : ""}" data-cmpnote="${pe}"><td data-fill colspan="${shareOn() ? 6 : 5}"><div class="name"><span class="tree${last ? " last" : ""}" aria-hidden="true"></span><div class="tile-wrap"><div class="tile ${n.info ? "note" : "warn"}">${svgOf(n.info ? "info" : "warning")}</div></div>
+      <div title="${esc(n.text)}"><span class="wtitle">${esc(head.trim())}</span><div class="sub-name"${rest ? "" : ' aria-hidden="true"'}>${rest ? esc(rest) : "&nbsp;"}</div></div></div></td>
+    <td class="actions"><div class="acts-row">${n.file ? btn(tr("Show in file"), `data-mfile="${pe}" data-line="${n.line || ""}" data-vars="${esc(n.vars.join(" "))}"`, "quiet") : ""}</div></td></tr>`;
+}
+// Not started (opened from its file): Start all is Apply's, in the words of a not-created service's Start.
+const cmpIdleStart = () => ibtn("play", tr("Apply the compose file to create it"), "disabled", "go");
+/* Projects shown on Compose's list/grid: containers matching the tab/search, then idle projects with no container. */
+function cmpListProjects() {
+  const projects = cmp.list?.projects || [];
+  const items = sortBy(listed("compose"), "compose", CONTAINER_SORT), all = tabOf("compose") === "all";
+  const unmade = (p) => (all ? cmpUnmade(p).filter((s) => match(p.name, s.name, s.image)) : []);
+  const own = (name) => kept("compose").filter((c) => cmpOf(c) === name), drawn = new Set(items.map(cmpOf));
+  const idle = projects.filter((p) => !drawn.has(p.name) && (unmade(p).length || (all && match(p.name) && !own(p.name).length))).map((p) => p.name);
+  const out = [], seen = new Set();
+  for (const c of items) {
+    const name = cmpOf(c);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, members: items.filter((x) => cmpOf(x) === name) });
+  }
+  for (const name of idle) if (!seen.has(name)) { seen.add(name); out.push({ name, members: [] }); }
+  return { items, all, unmade, own, idle, out };
+}
+/* One project card: name opens the project; Start/Stop/⋯ match the list's group row. */
+function composeCard(name, members) {
+  const p = cmpProject(name), pe = esc(name);
+  const running = members.filter((m) => m.State === "running" || m.State === "paused").length;
+  const all = members.length, missing = cmpUnmade(p);
+  const svcs = [...new Set([...members.map((c) => c.Labels?.["com.docker.compose.service"]).filter(Boolean), ...missing.map((s) => s.name)])];
+  const chips = svcs.slice(0, 8).map((s) => `<span class="chip" title="${esc(s)}">${esc(s)}</span>`).join("")
+    + (svcs.length > 8 ? `<span class="chip more">+${svcs.length - 8}</span>` : "");
+  const sub = all
+    ? `${tr("{running} of {all} running", { running, all })}`
+    : missing.length
+      ? `${tr("not started")} · ${trn(p?.services?.length || missing.length, "{n} service", "{n} services")}`
+      : tr("not started");
+  const file = p?.files?.[0] || "";
+  const fileName = file ? file.replace(/^.*[\\/]/, "") : "—";
+  const cell = (k, v, cls = "") => `<div class="cell"><span class="k">${tr(k)}</span><span class="v${cls ? ` ${cls}` : ""}">${v}</span></div>`;
+  const busy = ui.gacting.get(name)?.action, roll = (...a) => (a.includes(busy) ? " rolling" : "");
+  const start = running < all
+    ? ibtn("play", tr("Start all"), `data-g="start" data-project="${pe}"`, "go" + roll("start"))
+    : (!all && missing.length ? cmpIdleStart() : "");
+  const stop = running ? ibtn("stop", tr("Stop all"), `data-g="stop" data-project="${pe}"`, "halt" + roll("stop")) : "";
+  const more = btn("⋯", `data-gmore="${pe}" data-gview="compose" aria-label="${tr("More actions for {name}", { name: pe })}" aria-haspopup="menu"`, "more" + roll("restart", "remove"));
+  return `<div class="gcard cmp" role="button" tabindex="-1" data-gopen="${pe}" data-key="${pe}" title="${pe}">
+    <div class="ghead"><div class="tile cmp">${svgOf("stack")}</div><div class="who"><div class="gtitle"><span class="link">${pe}</span></div><div class="sub">${esc(sub)}</div></div></div>
+    <div class="gbadge">${cmpPill(p || { name, fresh: !all, containers: [], services: [] })}</div>
+    <div class="gsvcs">${chips || `<span class="muted">${tr("No services")}</span>`}</div>
+    <div class="gstats">
+      ${cell("Services", String(svcs.length || cmpSvcCount(p) || 0))}
+      ${cell("Running", `${running}/${all || svcs.length || 0}`)}
+      ${cell("File", `<span class="mono" title="${esc(file || "")}">${esc(fileName)}</span>`, "mono")}
+      ${cell("Created", p?.updated ? ago(p.updated) : (all ? ago(Math.max(...members.map((m) => m.Created || 0))) : "—"))}
+    </div>
+    <div class="gacts" data-cmpacts><span class="gacts-l">${start}${stop}</span><span class="spacer"></span>${more}</div>
+  </div>`;
+}
+function renderCompose() {
+  if (!cmp.list) { cmpAsk(); return setHTML($("content"), `<div class="empty">${cmpSpin()}</div>`); }
+  if (cmp.opening && cmpProject(cmp.opening)) { const n = cmp.opening; cmp.opening = null; return cmpOpen(n); }
+  if (cmp.open && !cmpProject(cmp.open)) { cmp.open = null; renderHead(); }
+  if (cmp.open) return renderComposePage();
+  const projects = cmp.list.projects || [];
+  if (!kept("compose").length && !projects.length) return setHTML($("content"), `<div class="empty"><h3>${tr("No Compose projects yet")}</h3><p>${tr("Projects you start with {cmd} show up here once they have run on Kiri.", { cmd: "<code>docker compose up</code>" })}</p></div>`);
+  const { items, unmade, own, idle, out } = cmpListProjects();
+  if (listLayout("compose") === "grid") {
+    if (!out.length) return noMatch();
+    morph($("content"), `<div class="ggrid-wrap" data-view="compose" tabindex="0"><div class="ggrid">${out.map(({ name, members }) => composeCard(name, members)).join("")}</div></div>`);
+    return;
+  }
+  // The containers as Containers sorts them; a project sits where its first one lands.
+  // Under All only, as the tabs count containers: services with no container, and projects with none (after the rest).
+  // A search takes every row alike: a container as on Containers, a service with no container by its name or image,
+  // a project by its name (then all its rows). A project is drawn when any of its rows match, with only those under it.
+  const rows = groupedRows(items, {
+    row: { view: "compose", remove: false, file: true },
+    // No container of a started project matches: its line still counts all of them; "not started" is for one with none.
+    group: (name, ms) => { const p = cmpProject(name), cs = ms.length ? ms : own(name);
+      return { view: "compose", gopen: true, idle: !cs.length && cmpUnmade(p).length ? cmpIdleStart() : "",
+        sub: ms.length ? undefined : cs.length ? `${rlm()}Compose · ${tr("{running} of {all} running", { running: cs.filter((c) => c.State === "running").length, all: cs.length })}`
+          : `${rlm()}Compose · ${tr("not started")} · ${trn(p?.services.length || 0, "{n} service", "{n} services")}` }; },
+    lead: (name) => { const p = cmpProject(name); return p ? cmpNotes(p).map((n) => (last) => cmpNoteRow(p, n, last)) : []; },
+    extra: (name) => { const p = cmpProject(name); return p ? unmade(p).map((s) => (last) => cmpSvcRow(p, s, last ? "last" : true)) : []; },
+    empty: idle,
+  });
+  if (!rows.length) return noMatch();
+  table(CTR_COLS(), rows, "compose");
+}
+
+// The engine's words when a project's file is gone, or isn't one it will read: plain, and what still works.
+const CMP_NO_FILE = "Kiri can't find this project's compose file";
+const cmpNoFile = (e) => e === CMP_NO_FILE ? `${tr("Kiri can't find this project's compose file.")} ${tr("Its logs, Start, Stop and Remove still work.")}` : tr("The compose file isn't on this computer: {error}", { error: esc(e) });
+const CMP_TABS = [["structure", "Structure"], ["services", "Services"], ["file", "Compose file"], ["logs", "Logs"]];
+/* i18n */ void [tr("Structure"), tr("Services"), tr("Compose file"), tr("Logs")];
+const cmpDirty = () => cmp.file && cmp.draft != null && cmp.draft !== cmp.file.text;
+// Saved, but what runs isn't it: Apply failed after saving, or the plan (compared with
+// what runs, not the saved file) says something would change.
+const cmpUnapplied = () => cmp.unapplied?.name === cmp.open ? cmp.unapplied : null;
+const cmpPending = () => !cmp.plan?.error && (cmp.plan?.steps || []).some((s) => s.act !== "same");
+const cmpCanApply = () => !cmpByName() && !!cmp.file && !cmp.gone && !cmp.file.error && !!cmp.file.hash && !cmp.plan?.error && !cmp.conflict && cmp.applying?.name !== cmp.open && (cmpDirty() || cmpFresh() || cmpPending() || !!cmpUnapplied());
+// Apply waits for the file and its plan: busy, and says so, not a silent grey button.
+const cmpPlanning = () => !cmpByName() && !cmp.gone && !cmp.conflict && (!cmp.file || (!cmp.file.error && cmp.plan?.seq !== cmp.seq));
+function cmpActs() {
+  if (cmpByName()) return "";
+  const d = cmpDirty(), run = cmp.applying?.name === cmp.open, back = !d && cmpUnapplied() && cmp.file?.restore;
+  return `${d && !run ? `<span class="muted">${tr("Not applied")}</span>${btn(tr("Discard"), "data-cmpdiscard")}` : ""}${back && !run ? btn(tr("Discard"), `data-cmprestore title="${tr("Put back the file as it was before Apply saved over it")}"`) : ""}${run ? btn(tr("Cancel"), "data-cmpcancel") : ""}${!run && !cmpCanApply() && cmpPlanning() ? `<button class="btn sm primary" data-cmpapply disabled aria-busy="true" title="${tr("Loading…")}"><span class="hspin"></span> ${tr("Apply")}</button>`
+    : `<button class="btn sm primary" data-cmpapply${!cmpCanApply() ? " disabled" : ""}>${run ? `<span class="hspin"></span> ${tr("Applying…")}` : tr("Apply")}</button>`}`;
+}
+function renderComposePage() {
+  const p = cmpProject(cmp.open), pe = esc(p.name), c = cmpCounts(p);
+  setHTML($("title"), `<span class="crumb"><button data-cmpback>Compose</button><span aria-hidden="true">›</span><span title="${pe}">${pe}</span></span>`);
+  $("subtitle").textContent = "";
+  const key = `${p.name}/${cmp.tab}`;
+  const head = `<div class="tile cmp">${svgOf("stack")}</div><div class="who"><b title="${pe}">${pe}</b></div>${cmpPill(p)}<span class="spacer"></span>
+      <span class="acts-row">${cmpProjBtns(p).join("")}</span>
+      <dl class="dfacts"><div><dt>${tr("File")}</dt><dd class="mono" title="${esc(p.files?.[0] || "")}">${esc(p.files?.[0] || "—")}</dd></div><div><dt>${tr("Services")}</dt><dd>${cmpSvcCount(p)}</dd></div><div><dt>${tr("Network")}</dt><dd>${cmpNet(p)}</dd></div>${p.updated ? `<div><dt>${tr("Created")}</dt><dd title="${tr("Newest container created {time}", { time: ago(p.updated) })}">${ago(p.updated)}</dd></div>` : ""}</dl>`;
+  const sf = (k, label, dot, n, bad) => n || cmp.sfilter === k ? `<button class="ltab${bad && n ? " bad" : ""}" data-cmpsf="${k}" aria-pressed="${cmp.sfilter === k}">${dot ? `<i class="${dot}"></i>` : ""}${tr(label)}<span class="n">${n}</span></button>` : "";
+  // The Services tab's pills, as Containers' tabs: its containers by state; a service with no container under All only.
+  const cs = ui.containers.filter((c) => cmpOf(c) === p.name), nst = (k) => cs.filter((c) => ctrState(c) === k).length;
+  const tabs = CMP_TABS.map(([k, l]) => `<button data-cmptab="${k}" aria-current="${cmp.tab === k}">${tr(l)}${k === "file" && cmpDirty() ? `<span class="edot" title="${tr("Not applied")}"></span>` : ""}</button>`).join("")
+    + (cmp.tab === "services" ? `<span class="ltabs cmp-sf">${sf("all", "All", "", cs.length + cmpUnmade(p).length)}${sf("running", "Running", "moss", nst("running"))}${sf("stopped", "Stopped", "", nst("stopped"))}${sf("failed", "Failed", "red", nst("failed"), true)}</span>` : "");
+  // The file's own tab says when its file can't be found: said there once, not here too.
+  // A file read since that found it: the list's "can't find" is stale.
+  // By name, the file's tab says it where the plan would be: not twice.
+  const pw = cmpWarns(p).filter((w) => !(p.byname && cmp.tab === "file" && w === CMP_ERR.byName()));
+  const warn = p.error && !(p.error === CMP_NO_FILE && cmp.file && (!cmp.file.error || cmp.tab === "file")) ? `<p class="warn">${p.error === CMP_NO_FILE ? cmpNoFile(p.error) : tr("Kiri can't read the compose file: {error}", { error: esc(p.error) })}</p>${pw.map((w) => `<p class="warn">${esc(w)}</p>`).join("")}` : pw.map((w) => `<p class="warn">${esc(w)}</p>`).join("");
+  // The file's tab keeps its editor while the lists refresh: only the head, actions and warning change.
+  if (cmp.key === key && $("cmp-tab")) {
+    morph($("cmp-head"), head); morph($("cmp-tabs"), `${tabs}<span class="spacer"></span><span class="dacts" id="cmp-acts">${cmpActs()}</span>`); setHTML($("cmp-warn"), warn);
+    if (cmp.tab !== "file") cmpTab(p);
+    return;
+  }
+  cmp.key = key;
+  $("content").innerHTML = `<div class="dhead" id="cmp-head">${head}</div>
+    <div class="dtabs" role="tablist" id="cmp-tabs">${tabs}<span class="spacer"></span><span class="dacts" id="cmp-acts">${cmpActs()}</span></div>
+    <div id="cmp-warn">${warn}</div>
+    ${p.fresh && !p.byname ? `<p class="muted cmp-asedited">${tr("Not started yet. Apply on the Compose file tab brings every service up.")}</p>` : ""}
+    <div id="cmp-tab"></div>`;
+  cmpTab(p);
+}
+function cmpTab(p) {
+  const el = $("cmp-tab");
+  if (cmp.tab === "structure" && p.byname && !p.services.length) morph(el, `<div class="empty"><p>${tr("No services")}</p></div>`);
+  else if (cmp.tab === "structure") {
+    const draft = (cmpDirty() || p.fresh) && cmp.plan?.services;
+    // Profile-gated services that already run (`--profile mysql`) belong on the
+    // map even when the default reading left them out; Prefer the file's view.
+    let svcs = draft ? cmp.plan.services.map((s) => ({ ...s, tech: p.services.find((x) => x.name === s.name)?.tech })) : [...(p.services || [])];
+    if (!draft) {
+      const have = new Set(svcs.map((s) => s.name));
+      for (const c of ui.containers.filter((x) => cmpOf(x) === p.name)) {
+        const n = c.Labels?.["com.docker.compose.service"];
+        if (!n || have.has(n)) continue;
+        have.add(n);
+        const known = p.services.find((s) => s.name === n);
+        svcs.push(known || { name: n, image: c.Image || "", build: "", ports: [], volumes: [], depends: [], networks: [], kinds: [] });
+      }
+    }
+    const draw = () => { morph(el, `${draft && !p.fresh ? `<p class="muted cmp-asedited">${tr("Showing the file as edited, not applied yet.")}</p>` : ""}${cmpMap(p, svcs, draft ? cmp.plan.steps : null)}`); cmpMapSize(); };
+    draw();
+    // Laid out for the box it really has: once more when its size is new.
+    const vp = $("cmp-vp"), room = vp ? { w: vp.clientWidth, h: vp.clientHeight } : null, was = cmp.map.room;
+    if (room && (!was || Math.abs(room.w - was.w) > 4 || Math.abs(room.h - was.h) > 4)) { cmp.map.room = room; draw(); }
+    cmpFit();
+  } else if (cmp.tab === "services") {
+    // The project's rows as the list draws them, without the project's own row: its containers, then its services with none.
+    const f = cmp.sfilter, cs = sortBy(ui.containers.filter((c) => cmpOf(c) === p.name && (f === "all" || ctrState(c) === f)), "cmpsvcs", CONTAINER_SORT);
+    const rows = [...cs.map((c) => containerRow(c, false, { view: "compose", remove: false, file: true })), ...(f === "all" ? cmpUnmade(p).map((s) => cmpSvcRow(p, s, false)) : [])];
+    morph(el, rows.length ? `<table data-view="cmpsvcs"><thead><tr>${heads(CTR_COLS(), "cmpsvcs")}<th class="r">${tr("Actions")}</th></tr></thead><tbody>${rows.join("")}</tbody></table>` : `<div class="empty"><p>${tr("No services")}</p></div>`);
+    spanRows(); fitColumns();
+  } else if (cmp.tab === "logs") {
+    if (!cmp.logs) { send("composelogs", { name: p.name }); cmp.logs = { loading: true }; }
+    const lines = cmp.logs.lines || [];
+    // One service at a time: merged project logs are hard to read. Prefer the
+    // file's service order, then any name that only appears in the log stream.
+    const fromFile = (p.services || []).map((s) => s.name);
+    const fromRun = ui.containers.filter((c) => cmpOf(c) === p.name).map((c) => c.Labels?.["com.docker.compose.service"]).filter(Boolean);
+    const fromLog = lines.map((l) => l.svc).filter(Boolean);
+    const svcs = [...new Set([...fromFile, ...fromRun, ...fromLog])];
+    if (svcs.length && (!cmp.logSvc || !svcs.includes(cmp.logSvc))) cmp.logSvc = svcs[0];
+    const svc = cmp.logSvc, shown = svc ? lines.filter((l) => l.svc === svc) : lines;
+    const pills = svcs.map((s, i) => `<button class="ltab" data-cmplogsvc="${esc(s)}" aria-pressed="${svc === s}"><i class="dot" style="background:var(--c${i % 5})"></i>${esc(s)}<span class="n">${lines.filter((l) => l.svc === s).length || ""}</span></button>`).join("");
+    morph(el, `<div class="logbar"><span class="ltabs cmp-logsvcs">${pills}</span><span class="spacer" style="flex:1"></span>${btn(tr("Refresh"), "data-cmplogs")}</div><div class="cmp-logs">${cmp.logs.loading ? `<p>${cmpSpin()}</p>` : cmp.logs.error ? `<p class="warn">${esc(cmp.logs.error)}</p>` : !svcs.length ? `<p class="muted">${tr("No logs yet.")}</p>` : !shown.length ? `<p class="muted">${tr("No logs yet.")}</p>`
+      : shown.map((l) => `<div><span class="t">${esc(l.t.slice(11, 19))}</span>${esc(l.text)}</div>`).join("")}</div>`);
+    cmpFill(el.querySelector(".cmp-logs"));
+  } else cmpFileTab(p, el);
+}
+
+// ---------- Structure: laid out left to right by what depends on what ----------
+// What nothing depends on sits left; databases and queues right. Columns are ordered
+// by where their links go, so wires cross as little as they can. Over 10 services the
+// cards go compact and the map opens fitted to its box.
+function cmpMap(p, svcs, steps) {
+  // Keyed by service names, which may be any word (constructor, toString): objects with no prototype.
+  const dict = () => Object.create(null);
+  const act = dict(); (steps || []).forEach((s) => act[s.n] = s.act);
+  const all = Object.assign(dict(), Object.fromEntries(svcs.map((s) => [s.name, s])));
+  if (steps) for (const s of steps.filter((x) => x.act === "rm")) { const was = p.services.find((x) => x.name === s.n); if (was) all[s.n] = was; }
+  const names = Object.keys(all), deps = (n) => (all[n].depends || []).filter((d) => all[d]);
+  const lvl = dict(), L = (n, seen = new Set()) => { if (lvl[n] != null) return lvl[n]; if (seen.has(n)) return 0; seen.add(n); const d = deps(n); return (lvl[n] = d.length ? 1 + Math.max(...d.map((x) => L(x, seen))) : 0); };
+  names.forEach((n) => L(n));
+  const max = Math.max(0, ...names.map((n) => lvl[n]));
+  const cols = Array.from({ length: max + 1 }, () => []); names.forEach((n) => cols[max - lvl[n]].push(n));
+  const users = dict(); names.forEach((n) => deps(n).forEach((d) => (users[d] ||= []).push(n)));
+  const row = dict(), idx = () => cols.forEach((c) => c.forEach((n, i) => row[n] = i / Math.max(1, c.length - 1)));
+  cols[max].sort((a, b) => (users[b]?.length || 0) - (users[a]?.length || 0)); idx();
+  const mean = (arr) => arr.length ? arr.reduce((s, x) => s + row[x], 0) / arr.length : .5;
+  for (let k = 0; k < 2; k++) {
+    for (let c = max - 1; c >= 0; c--) { cols[c].sort((a, b) => mean(deps(a)) - mean(deps(b))); idx(); }
+    for (let c = 1; c <= max; c++) { cols[c].sort((a, b) => mean(users[a] || []) - mean(users[b] || [])); idx(); }
+  }
+  const mini = names.length > 10;
+  const W = mini ? 168 : 206, H = mini ? 46 : 84, GX = mini ? 64 : 74, GY = mini ? 10 : 18, PAD = 20;
+  // Many services: a column taller than the box is wrapped into evenly filled columns side by side
+  // (never one card left alone), as many as make the whole map fit its box best. Fit stops at
+  // readable (CMP_FIT_MIN): then the columns still fit the box's height and the map scrolls sideways.
+  const room = cmp.map.room;
+  if (mini && room?.w > 0 && room?.h > 0) {
+    let best = null;
+    for (let r = Math.max(1, ...cols.map((c) => c.length)); r >= 1; r--) {
+      const sub = cols.flatMap((c) => { const k = Math.max(1, Math.ceil(c.length / r)); return Array.from({ length: k }, (_, i) => c.slice(Math.round(i * c.length / k), Math.round((i + 1) * c.length / k))); });
+      const w = sub.length * (W + GX) - GX + PAD * 2, h = Math.max(...sub.map((c) => c.length)) * (H + GY) - GY + PAD * 2;
+      const z = Math.max(CMP_FIT_MIN, Math.min(1, (room.w - 8) / w, (room.h - 8) / h)), tall = h * z > room.h - 8;
+      if (!best || (best.tall && !tall) || (best.tall === tall && z > best.z + 0.001)) best = { z, sub, tall };
+    }
+    cols.splice(0, cols.length, ...best.sub);
+  }
+  // Fit still a little too wide at readable: the columns close up (to 24 px) so the whole map fits.
+  const need = room?.w > 0 && cmp.map.z == null && cols.length > 1 ? ((room.w - 8) / CMP_FIT_MIN - PAD * 2 - cols.length * W) / (cols.length - 1) : GX, gx = mini ? Math.min(GX, Math.max(24, Math.floor(need))) : GX;
+  const tallest = Math.max(1, ...cols.map((c) => c.length));
+  const height = Math.max(tallest * (H + GY) - GY + PAD * 2, 180), width = cols.length * (W + gx) - gx + PAD * 2;
+  const pos = dict();
+  cols.forEach((c, ci) => { const h = c.length * (H + GY) - GY, top = (height - h) / 2; c.forEach((n, ri) => pos[n] = { x: PAD + ci * (W + gx), y: top + ri * (H + GY) }); });
+  let wires = "";
+  for (const n of names) for (const d of deps(n)) {
+    const a = pos[n], b = pos[d], x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2, mx = (x1 + x2) / 2;
+    const cls = act[n] === "rm" ? "rm" : act[n] === "add" ? "add" : act[n] === "chg" || act[d] === "chg" ? "hot" : "";
+    wires += `<path class="${cls}" data-a="${esc(n)}" data-b="${esc(d)}" marker-end="url(#cmp-arr${cls ? "-" + cls : ""})" d="M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2 - 2} ${y2}"/>`;
+  }
+  const tags = { add: tr("NEW"), chg: tr("CHANGES"), rm: tr("REMOVED") };
+  const cards = names.map((n) => {
+    const s = all[n], t = s.tech, a = act[n], st = cmpState(p, n);
+    const cls = `card${t?.app ? " app" : ""}${mini ? " mini" : ""}${a && a !== "same" ? ` ${a}` : ""}${st === "exited" && !a ? " err" : ""}`;
+    const tip = [`${n} · ${roleWord(t?.role)}`, cmpBuilt(t, s), t?.app && t.how ? t.how : "", s.ports?.length ? s.ports.join(", ") : "", deps(n).length ? tr("needs {list}", { list: deps(n).join(", ") }) : ""].filter(Boolean).join("\n");
+    const live = cmp.applying?.name === p.name ? cmp.applying.svc[n] : null;
+    const tag = live ? `<span class="tag live">${cmpStep(live)}</span>` : tags[a] ? `<span class="tag">${tags[a]}</span>` : "";
+    const style = `${cmpAccent(t)}left:${pos[n].x}px;top:${pos[n].y}px;width:${W}px${mini ? `;height:${H}px` : ""}`;
+    if (mini) return `<div class="${cls}" data-cmpcard="${esc(n)}" style="${style}" title="${esc(tip)}">${tag}${cmpTile(t, s)}<div class="nm"><span class="nmt">${esc(n)}</span><span class="sdot ${st === "running" ? "r" : st === "exited" ? "f" : ""}"></span></div><div class="img">${esc(t?.app ? `${t.lang || "?"} · ${roleWord(t.role)}` : `${roleWord(t?.role)} · ${(s.image || "").replace(/^.*\//, "")}`)}</div></div>`;
+    const vol = s.volumes?.length ? `<span class="vol">${svgOf("database")}${esc(s.volumes[0].split(":")[0].replace(/^.*[\\/]/, ""))}${s.volumes.length > 1 ? ` +${s.volumes.length - 1}` : ""}</span>` : "";
+    return `<div class="${cls}" data-cmpcard="${esc(n)}" style="${style}" title="${esc(tip)}">${tag}${cmpTile(t, s)}
+      <div class="nm"><span class="nmt">${esc(n)}</span>${a === "add" ? `<span class="pill">${tr("Not created")}</span>` : cmpSvcPill(p, n)}</div><div class="img${t?.app && t.lang ? " lang" : ""}">${esc(cmpBuilt(t, s))}</div>
+      <div class="meta">${cmpRole(t)}${(s.ports || []).map((x) => `<span class="port">${esc(x.replace(":", "→"))}</span>`).join("")}${vol}</div></div>`;
+  }).join("");
+  const vols = [...new Set(svcs.flatMap((s) => s.kinds || []))].map((v) => `<span class="chip">${svgOf("database")}${esc(v)}</span>`).join("") || `<span class="muted">${tr("None")}</span>`;
+  const z = cmp.map.z ?? 1;
+  return `<div class="map" data-w="${width}" data-h="${height}">
+    <div class="mtools"><label class="msearch"><input id="cmp-find" placeholder="${tr("Find a service")}" spellcheck="false" value="${esc(cmp.map.q)}"></label>
+      <span class="mcount">${trn(names.length, "{n} service", "{n} services")}</span><span class="mfocus" id="cmp-focus">${cmpFocusLine(names, deps, users)}</span><span class="spacer" style="flex:1"></span>
+      <div class="zoom"><button data-cmpz="-" title="${tr("Zoom out")}">−</button><button data-cmpz="fit" title="${tr("Fit the whole project")}" aria-pressed="${cmp.map.z == null}">${tr("Fit")}</button><button data-cmpz="1" title="${tr("Actual size")}" aria-pressed="${cmp.map.z === 1}">100%</button><button data-cmpz="+" title="${tr("Zoom in")}">+</button></div></div>
+    <div class="viewport" id="cmp-vp"><div class="sizer" style="width:${width * z}px;height:${height * z}px"><div class="canvas" style="width:${width}px;height:${height}px;transform:scale(${z})"><svg class="wires" width="${width}" height="${height}"><defs>${["", "hot", "add", "rm", "lit"].map((k) => `<marker id="cmp-arr${k ? "-" + k : ""}" class="arr ${k}" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z"/></marker>`).join("")}</defs>${wires}</svg>${cards}</div></div></div>
+    <div class="mapfoot"><span><b>${tr("Network")}</b>${p.networks?.length ? `<span class="chip">${svgOf("network")}${cmpNet(p)}</span>` : "—"}</span><span><b>${tr("Volumes")}</b>${vols}</span><span class="mhint">${tr("Arrows point at what a service needs; Compose starts those first.")}</span></div></div>`;
+}
+// What the picked service needs and what needs it, or how many the search found.
+function cmpFocusLine(names, deps, users) {
+  const f = cmp.map.focus;
+  if (f && names.includes(f)) {
+    const walk = (x, g, set) => (g(x) || []).forEach((y) => { if (!set.has(y)) { set.add(y); walk(y, g, set); } });
+    const up = new Set(), down = new Set(); walk(f, deps, up); walk(f, (x) => users[x], down);
+    cmp.map.on = new Set([f, ...up, ...down]);
+    return `<b>${esc(f)}</b> ${tr("needs {n}", { n: up.size })} · ${trn(down.size, "{n} needs it", "{n} need it")} <button class="linkish" data-cmpjump="${esc(f)}">${tr("Show in file")}</button><button class="linkish" data-cmpclear>${tr("Clear")}</button>`;
+  }
+  cmp.map.on = null;
+  return "";
+}
+// After drawing: the fit zoom (it needs the box's size), the lit chain, the search's hits.
+// A tab's box (the Structure map, the file tab, the log) fills the page down to the window's bottom
+// (at least 360 px), so the page itself doesn't scroll; what's in it scrolls inside.
+function cmpFill(el) {
+  const c = $("content");
+  if (!el) return;
+  const cs = getComputedStyle(c), top = el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+  el.style.height = `${Math.max(360, Math.floor(c.clientHeight - top - parseFloat(cs.paddingBottom || 0)))}px`;
+}
+const cmpMapSize = () => cmpFill($("content").querySelector(".map"));
+// The file tab fills it too, except in a narrow window: there the plan sits under the editor and the page scrolls.
+function cmpFileSize() {
+  const f = $("content").querySelector(".cmp-file");
+  if (!f) return;
+  if (matchMedia("(max-width: 900px)").matches) f.style.height = ""; else cmpFill(f);
+}
+addEventListener("resize", () => {
+  if (ui.view !== "compose" || !cmp.open) return;
+  if (cmp.tab === "structure") render(); else if (cmp.tab === "file") cmpFileSize(); else if (cmp.tab === "logs") cmpFill($("content").querySelector(".cmp-logs"));
+});
+// Fit never shrinks the cards past where their names stay readable: past that, the map scrolls.
+const CMP_FIT_MIN = 0.75;
+function cmpFit() {
+  const m = $("content").querySelector(".map"), vp = $("cmp-vp");
+  if (!m || !vp) return;
+  const W = +m.dataset.w, H = +m.dataset.h, z = cmp.map.z ?? Math.max(CMP_FIT_MIN, Math.min(1, (vp.clientWidth - 8) / W, (vp.clientHeight - 8) / H));
+  m.querySelector(".canvas").style.transform = `scale(${z})`;
+  Object.assign(m.querySelector(".sizer").style, { width: `${W * z}px`, height: `${H * z}px` });
+  const on = cmp.map.on, q = cmp.map.q.trim().toLowerCase();
+  m.querySelectorAll(".card").forEach((c) => {
+    const n = c.dataset.cmpcard;
+    c.classList.toggle("dim", on ? !on.has(n) : !!q && !n.toLowerCase().includes(q));
+    c.classList.toggle("sel", n === cmp.map.focus);
+    c.classList.toggle("hit", !on && !!q && n.toLowerCase().includes(q));
+  });
+  m.querySelectorAll("path[data-a]").forEach((w) => { const lit = on && on.has(w.dataset.a) && on.has(w.dataset.b); w.classList.toggle("dim", !!(on ? !lit : q)); w.classList.toggle("lit", !!lit); });
+}
+
+// ---------- The compose file: outline, editor, and what Apply does ----------
+function cmpLines(text) {
+  // Each service's line, under the top-level services: key.
+  const out = new Map(); let inS = false;
+  text.split("\n").forEach((l, i) => {
+    if (/^\S/.test(l)) inS = /^services\s*:/.test(l);
+    else if (inS) { const m = l.match(/^ {2}([\w.-]+)\s*:/) || l.match(/^\t([\w.-]+)\s*:/); if (m && !out.has(m[1])) out.set(m[1], i + 1); }
+  });
+  return out;
+}
+function cmpHl(text, saved, bad) {
+  const was = new Set(saved.split("\n"));
+  return text.split("\n").map((l, i) => {
+    let h = esc(l);
+    if (/^\s*#/.test(l)) h = `<span class="c">${h}</span>`;
+    else h = h.replace(/^(\s*)(- )?([\w.-]+)(:)(\s|$)/, (m, sp, dash, k, c, after) => `${sp}${dash || ""}<span class="${sp.length ? "k" : "top"}">${k}</span>${c}${after}`)
+      .replace(/(&quot;[^&]*&quot;|&#39;[^&]*&#39;)/g, '<span class="s">$1</span>');
+    const line = h || " ";
+    return bad === i + 1 ? `<span class="chl bad">${line}</span>` : !was.has(l) ? `<span class="chl">${line}</span>` : line;
+  }).join("\n");
+}
+function cmpFileTab(p, el) {
+  if (!cmp.file) return setHTML(el, `<p>${cmpSpin()}</p>`);
+  if (cmp.file.error) return setHTML(el, `<p class="warn">${cmpNoFile(cmp.file.error)}</p>`);
+  if (cmp.draft == null) cmp.draft = cmp.file.text;
+  el.innerHTML = `<div id="cmp-conflict"></div><div class="cmp-file"><div class="outline" id="cmp-outline"></div>
+    <div class="cmp-edcol"><div class="edhead">${svgOf("logs")}<span class="path" title="${esc(cmp.file.path)}">${esc(cmp.file.path)}</span><span class="state" id="cmp-edstate"></span></div>
+      <div class="ed"><div class="gut" id="cmp-gut"></div><div class="body"><pre id="cmp-pre"></pre><textarea id="cmp-ta" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="${tr("Compose file")}"${cmpByName() ? " readonly" : ""}></textarea></div></div></div>
+    <div class="plan" id="cmp-plan"></div></div>`;
+  const ta = $("cmp-ta");
+  ta.value = cmp.draft;
+  ta.addEventListener("input", () => { cmp.draft = ta.value; cmpDraw(); cmpPlanSoon(); });
+  ta.addEventListener("scroll", cmpScroll);
+  ta.addEventListener("keydown", (e) => { if (e.key === "Tab" && !ta.readOnly) { e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); ta.dispatchEvent(new Event("input")); } });
+  cmpDraw();
+  if (!cmp.plan) cmpPlanSoon();
+  cmpJump();
+}
+function cmpScroll() {
+  const ta = $("cmp-ta"); if (!ta) return;
+  $("cmp-pre").scrollTop = ta.scrollTop; $("cmp-pre").scrollLeft = ta.scrollLeft; $("cmp-gut").scrollTop = ta.scrollTop;
+}
+function cmpDraw() {
+  const ta = $("cmp-ta"); if (!ta) return;
+  const d = cmpDirty(), un = cmpUnapplied(), pend = cmpPending(), bad = cmp.plan?.error?.line || 0;
+  $("cmp-pre").innerHTML = cmpHl(ta.value, cmp.file.text, bad) + "\n";
+  $("cmp-gut").innerHTML = ta.value.split("\n").map((_, i) => `<div${bad === i + 1 ? ' class="bad"' : ""}>${i + 1}</div>`).join("");
+  cmpScroll();
+  const st = $("cmp-edstate"), broken = !d && cmp.plan?.error, off = d || un || broken || (pend && !cmpFresh());
+  st.className = `state${off ? " dirty" : ""}`;
+  // Broken as saved: never "matches what runs".
+  st.textContent = cmpByName() ? tr("(read-only)") : d ? tr("Edited, not applied") : broken ? (broken.line ? tr("Saved, but line {n} has an error", { n: broken.line }) : /^yamlInc?$/.test(broken.errkey) ? tr("Saved, but an included file has an error") : tr("Saved, but the file has an error")) : cmpFresh() ? tr("Saved, not started yet") : un && !(un.hash && cmp.file.hash && un.hash !== cmp.file.hash) ? tr("Saved, not applied: {error}", { error: un.error || "" }) : pend || un ? tr("Saved, not applied") : cmp.plan ? tr("Saved, matches what runs") : tr("Saved");
+  st.title = st.textContent;
+  const cf = $("cmp-conflict");
+  if (cf) cf.innerHTML = cmp.gone ? `<div class="cmp-conflict" role="alert"><b>${tr("The compose file is gone from its folder.")}</b> ${tr("Your edits stay here. Apply waits until the file is back.")}</div>`
+    : cmp.conflict ? `<div class="cmp-conflict" role="alert"><b>${cmp.conflict.back ? tr("The compose file is back, and differs from your edits.") : tr("The file changed outside Kiri.")}</b><span class="spacer"></span>${btn(tr("Reload (lose your edits)"), "data-cmpreload")}${btn(tr("Keep editing"), "data-cmpkeep")}${cmp.conflict.hash ? btn(tr("Overwrite their changes"), "data-cmpoverwrite", "danger") : ""}</div>` : "";
+  // The outline: each service, marked new, changed or broken; a click goes to its line.
+  const lines = cmpLines(ta.value), acts = new Map(); ((d || cmpFresh() || un || pend) && cmp.plan?.steps || []).forEach((s) => acts.set(s.n, s.act));
+  const badSvc = bad ? [...lines].filter(([, l]) => l <= bad).pop()?.[0] : null;
+  const tech = (n) => cmpProject(cmp.open)?.services.find((s) => s.name === n);
+  $("cmp-outline").innerHTML = `<div class="oh">${trn(lines.size, "{n} service", "{n} services")}</div>` + [...lines].map(([n, l]) => `<button data-cmpgo="${l}" title="${tr("Starts on line {n} · click to jump there", { n: l })}"><i class="${n === badSvc ? "bad" : acts.get(n) && acts.get(n) !== "same" ? acts.get(n) : ""}"></i>${cmpTile(tech(n)?.tech, tech(n), "xs")}<span class="on" title="${esc(n)}">${esc(n)}</span><span class="ln">${tr("line {n}", { n: l })}</span></button>`).join("");
+  cmpPlanDraw();
+  const tabs = $("cmp-tabs"); if (tabs) { $("cmp-acts").innerHTML = cmpActs(); const ft = tabs.querySelector('[data-cmptab="file"]'); ft.querySelector(".edot")?.remove(); if (d) ft.insertAdjacentHTML("beforeend", `<span class="edot" title="${tr("Not applied")}"></span>`); }
+  // A note above it (the file gone, changed outside) moves it down: it still ends at the window's bottom.
+  cmpFileSize();
+}
+let cmpPlanTimer = 0;
+function cmpPlanSoon() {
+  clearTimeout(cmpPlanTimer);
+  if (!cmp.file || cmp.file.error || cmpByName()) return;
+  cmpPlanTimer = setTimeout(() => {
+    send("composeplan", { name: cmp.open, value: { text: cmp.draft, seq: ++cmp.seq } });
+    // Still working it out after a while: the plan box says so, with the spinner.
+    const seq = cmp.seq; clearTimeout(cmp.planWaitT);
+    cmp.planWaitT = setTimeout(() => { if (cmp.seq === seq && cmp.plan?.seq !== seq) { cmp.planWait = seq; cmpPlanDraw(); } }, 600);
+  }, 350);
+}
+// Where Apply is with a service, from Compose's progress.
+const cmpStep = (st) => ({ pulling: tr("Pulling"), pulled: tr("Pulled"), building: tr("Building"), built: tr("Building"), recreating: tr("Recreating…"), creating: tr("Creating…"), created: tr("Starting…"), starting: tr("Starting…"), started: tr("Started"), removing: tr("Removing…"), removed: tr("Done") })[st] || st;
+const cmpWhat = (w) => ({ image: tr("image"), ports: tr("ports"), environment: tr("environment"), volumes: tr("volumes"), depends_on: tr("depends on"), build: tr("build"), settings: tr("settings"), outside: tr("the file changed outside Kiri"), vars: tr("a variable it uses changed"), pulled: tr("a newer image") })[w] || w;
+function cmpPlanDraw() {
+  const el = $("cmp-plan"); if (!el) return;
+  // Managed by name: no plan, only why, where the plan would be.
+  if (cmpByName()) return setHTML(el, `<div class="err warn">${esc(CMP_ERR.byName())}</div>`);
+  const d = cmpDirty() || cmpFresh() || cmpPending() || !!cmpUnapplied() || !!cmp.plan?.error, pl = d ? cmp.plan : null, run = cmp.applying?.name === cmp.open ? cmp.applying : null;
+  const steps = pl?.steps || [], n = (a) => steps.filter((s) => s.act === a).length;
+  const sum = [n("add") && `<span class="chipsum a-add">${tr("{n} new", { n: n("add") })}</span>`, n("chg") && `<span class="chipsum a-chg">${tr("{n} recreated", { n: n("chg") })}</span>`, n("rm") && `<span class="chipsum a-rm">${tr("{n} removed", { n: n("rm") })}</span>`, `<span class="muted">${tr("{n} unchanged", { n: n("same") })}</span>`].filter(Boolean).join(" ");
+  const label = { add: tr("Create"), chg: tr("Recreate"), start: tr("Start"), rm: tr("Remove"), same: tr("Unchanged") }, mark = { add: "+", chg: "↻", start: "▸", rm: "−", same: "✓" };
+  const why = (s) => s.hidden ? tr("Kiri can't show this service's details with its secrets hidden") : s.act === "add" ? (s.to ? tr("New service from {image}.", { image: `<span class="mono">${esc(s.to)}</span>` }) : tr("New service, built from its folder."))
+    : s.act === "rm" ? tr("Not in the file any more: stopped and removed. Its volumes stay.")
+    : s.act === "chg" ? s.what.map((w) => w === "image" ? `${tr("image")} <del class="mono">${esc(s.from)}</del> → <ins class="mono">${esc(s.to)}</ins>` : cmpWhat(w)).join(" · ") : "";
+  const same = steps.filter((s) => s.act === "same"), shown = same.length > 3 ? [...steps.filter((s) => s.act !== "same"), { n: tr("{n} more", { n: same.length }), act: "same", what: [], more: same.map((s) => s.n).join(", ") }] : steps;
+  // With a secret hidden Kiri has no plan to show: it says so, not "0 unchanged".
+  const blind = pl?.warn?.errkey === "hiddenCheck" && !steps.length ? tr("Kiri can't show the plan with {name} hidden. {apply} will run docker compose up.", { name: pl.warn.errargs?.name || "", apply: tr("Apply") })
+ : "";
+  const wait = cmp.planWait === cmp.seq && cmp.plan?.seq !== cmp.seq ? cmpSpin() : "";
+  el.innerHTML = `<h4>${tr("What Apply does")}</h4>${wait ? `<p class="lede">${wait}</p>` : ""}<p class="lede">${!d ? tr("Nothing yet: the file matches what's running. Change it and this lists what happens to each service.") : pl?.error ? tr("Fix the file first.") : blind ? esc(blind) : pl ? sum : tr("Loading…")}</p>
+    ${d && pl?.warn && !pl.error ? `<div class="err warn">${esc(cmpErr({ ...pl.warn, error: pl.warn.text }))}</div>` : ""}
+    ${d && pl?.namewarn && !pl.error ? `<div class="err warn">${esc(cmpErr({ ...pl.namewarn, error: pl.namewarn.text }))}</div>` : !d && cmpNameWarn(cmpProject(cmp.open) || {}) ? `<div class="err warn">${esc(cmpNameWarn(cmpProject(cmp.open)))}</div>` : ""}
+    ${d && pl?.error ? `<div class="err">${pl.error.line ? `<b>${tr("Line {n}.", { n: pl.error.line })}</b> ` : ""}${esc(pl.error.text)}</div>` : ""}
+    <ul>${d && !pl?.error ? shown.map((s) => `<li class="a-${s.act}"${s.more ? "" : ` data-cmpgoto="${esc(s.n)}"`}><span class="ic">${mark[s.act]}</span><span class="what" title="${esc(s.n)}">${esc(s.n)}</span>${run?.svc[s.n] ? `<span class="act live">${cmpStep(run.svc[s.n])}</span>` : `<span class="act">${label[s.act]}</span>`}${s.more ? `<span class="why">${esc(s.more)}</span>` : why(s) ? `<span class="why">${why(s)}</span>` : ""}</li>`).join("") : ""}</ul>
+    ${run?.lines.length ? `<pre class="cmp-run">${esc(run.lines.slice(-8).join("\n"))}</pre>` : ""}
+    ${cmpFailedBox()}
+    <div class="foot"><span class="note">${tr("Saves the file, then runs {cmd}. Unchanged services keep running.", { cmd: '<span class="mono">docker compose up -d</span>' })}</span></div>`;
+}
+// After Apply: the services it made or started that stopped right after, each with a link to its logs.
+function cmpFailedBox() {
+  const f = cmp.failed?.name === cmp.open ? cmp.failed.list : null;
+  if (!f?.length) return "";
+  return `<div class="cmp-failed" role="alert">${f.map((x) => `<div><b>${tr("{svc} stopped after Apply", { svc: esc(x.svc) })}</b> <span class="muted">${esc(x.status)}</span><button class="linkish" data-cmplogof="${esc(x.id)}">${tr("See its logs")}</button></div>`).join("")}</div>`;
+}
+function cmpGoto(line) {
+  const ta = $("cmp-ta"); if (!ta) return;
+  const lines = ta.value.split("\n"); let off = 0; for (let i = 0; i < line - 1; i++) off += lines[i].length + 1;
+  ta.focus(); ta.setSelectionRange(off, off + (lines[line - 1] || "").length);
+  ta.scrollTop = Math.max(0, (line - 4) * (parseFloat(getComputedStyle(ta).lineHeight) || 18)); cmpScroll();
+}
+function cmpApply() {
+  if (!cmpCanApply() || cmp.applying) return;
+  cmp.failed = null;
+  cmp.applying = { name: cmp.open, text: cmp.draft, lines: [], svc: Object.create(null) };
+  // What the draft was made from: the engine refuses if the file changed since.
+  send("composeapply", { name: cmp.open, value: { text: cmp.draft, base: cmp.file.hash, mtime: cmp.file.mtime } });
+  cmpDraw(); render();
+}
+// Kiri's own errors come with a key and its values (errkey, errargs): said in the window's language.
+// Compose's and Docker's own words come as they are.
+const CMP_ERR = {
+  noProject: (a) => tr("There's no Compose project {name} on Kiri", a),
+  notCompose: () => tr("Pick a .yaml or .yml compose file"),
+  notComposeFile: () => tr("This file isn't a compose file: it has no services"),
+  nameClash: (a) => tr("A project named {name} already runs from {dir}. Open that one, or give this file its own name: line.", a),
+  changedSinceApply: () => tr("The file changed outside Kiri since Apply saved it"),
+  nothingToRestore: () => tr("Kiri has nothing to put back"),
+  changed: () => tr("The file changed outside Kiri"),
+  cancelled: () => tr("Apply cancelled"),
+  busy: (a) => tr("{name} is already being applied. Wait for it to finish, or cancel it.", a),
+  readOnly: () => tr("The compose file is read-only, so Kiri can't save it. Make it writable, then Apply again."),
+  cantRun: (a) => tr("Couldn't run docker compose: {error}", a),
+  slow: (a) => tr("docker compose took longer than {secs} seconds", a),
+  cantSave: (a) => tr("Couldn't save the compose file: {error}", a),
+  badEnv: (a) => tr("Couldn't read env file {file}: it isn't a local regular file", a),
+  upFailed: () => tr("docker compose up failed"),
+  upStopped: () => tr("docker compose up stopped"),
+  noState: () => tr("Kiri has no state folder"),
+  noCli: () => tr("Kiri can't find the docker CLI. Restart Kiri to set it up again."),
+  noAction: () => tr("Kiri doesn't know that action"),
+  noFile: () => tr("Kiri can't find this project's compose file."),
+  badImage: (a) => tr("The image name from {name} isn't valid", a),
+  byName: () => tr("Kiri can't check this file's variables, so it manages this project by name. Apply changes from a terminal."),
+  namesShown: () => tr("Names Docker shows may contain secret values."),
+  reqUnset: (a) => tr("Compose rejects this file. A required variable may not be set: {name}.", a),
+  rejectReal: () => tr("Compose rejects this file with its real values. Kiri can't show why with secrets hidden."),
+  yamlLine: (a) => tr("Compose rejects this file: YAML error on line {n}", a),
+  yamlInc: (a) => tr("Compose rejects this file: YAML error in an included file, line {n}", a),
+  yamlIn: (a) => tr("Compose rejects this file: YAML error in {file}, line {n}", a),
+  nameFolder: (a) => tr("This file's name uses {vars}. Kiri uses the folder's name, {name}, so it never puts a secret in a name.", a),
+  hiddenCheck: (a) => tr("Kiri can't check this file with {name} hidden. Compose accepts it, so Apply still works.", a),
+  nameSecret: (a) => { const ns = Array.isArray(a.names) && a.names.length ? a.names : [a.name || ""]; return trn(ns.length, "{name} is used in a name or folder path. Docker shows those in plain text.", "{name} are used in a name or folder path. Docker shows those in plain text.", { name: cmpList(ns) }); },
+};
+// "A, B and C" in the window's language.
+const cmpList = (xs) => { try { return new Intl.ListFormat(document.documentElement.lang || "en", { type: "conjunction" }).format(xs); } catch { return xs.join(", "); } };
+const cmpErr = (e) => (e?.errkey && Object.hasOwn(CMP_ERR, e.errkey)) ? CMP_ERR[e.errkey](e.errargs || {}) : (e?.error || "");
+function cmpEvent(e) {
+  // Said once, as the event comes in; "can't find this project's file" keeps its own words (cmpNoFile).
+  if (e.errkey && e.error !== CMP_NO_FILE) e.error = cmpErr(e);
+  for (const p of e.type === "composeprojects" ? e.projects || [] : []) if (p.errkey && p.error !== CMP_NO_FILE) p.error = cmpErr(p);
+  if (e.type === "composeplan" && e.error?.text === CMP_NO_FILE) e.error.errkey = "noFile";
+  if (e.type === "composeplan" && e.error?.errkey) e.error.text = cmpErr({ ...e.error, error: e.error.text });
+  // The same list again (each refresh sends it): nothing to draw.
+  let same = false;
+  if (e.type === "composeprojects") {
+    const sig = JSON.stringify([e.projects, e.logos, e.error]);
+    same = sig === cmp.listSig && !!cmp.list && !cmp.opening; cmp.listSig = sig;
+    cmpHWait(false); cmpLogos(e.logos); cmp.list = e; $("n-compose").textContent = cmpCount() || ""; navTags();
+    // Asked for by name (a stale link, a file just opened) and not in the new list: it's gone.
+    if (cmp.opening && !cmpProject(cmp.opening) && e.ask >= cmp.openFrom) { cmp.opening = null; toast("error", tr("That project is gone")); }
+    // An open project notices outside changes: its file again, and (unedited) the plan again
+    // when what runs changed.
+    const p = cmp.open && cmpProject(cmp.open);
+    if (p && cmp.file && !cmp.applying) {
+      send("composefile", { name: cmp.open });
+      const sig = JSON.stringify(p.containers.map((c) => [c.id, c.state]));
+      if (sig !== cmp.sig) { const was = cmp.sig; cmp.sig = sig; if (was) cmpPlanSoon(); }
+    }
+  }
+  else if (e.type === "composeopened") { if (e.error) toast("error", tr("Couldn't open the compose file: {error}", { error: e.error })); else { cmpAwait(e.name); if (ui.view !== "compose") show("compose"); } }
+  else if (e.type === "composefile" && e.name === cmp.open) {
+    if (cmp.applying?.name === e.name) return;
+    // Put back by hand as what runs (the engine says so): nothing is unapplied.
+    if (!e.error && e.back && cmp.unapplied?.name === e.name) cmp.unapplied = null;
+    const was = cmp.file;
+    // Gone while being edited: the draft stays, with a note; nothing can be applied until the file is back.
+    if (e.error && was && !was.error && cmpDirty()) { cmp.gone = true; if (cmp.tab === "file") return cmpDraw(); return; }
+    // Back: the same as the draft, or Reload against keep the draft.
+    // Back as it was before it went: the edits are on it still, so Apply goes on as before.
+    if (cmp.gone && !e.error) { cmp.gone = false; if (e.text === cmp.draft || e.hash === was?.hash) { cmp.file = e; cmp.conflict = null; cmpPlanSoon(); } else cmp.conflict = { ...e, back: true }; if (cmp.tab === "file") return cmpDraw(); return; }
+    // The first read: the plan too, on whichever tab is open, so Apply is the same on every tab.
+    if (!was || was.error || e.error) { cmp.file = e; cmp.draft = (!e.error && cmp.mine?.name === e.name && cmp.mine.text) || (e.text ?? null); cmp.mine = null; cmp.key = ""; cmp.plan = null; cmpPlanSoon(); }
+    else if (e.hash === was.hash || (was.hash == null && e.text === was.text)) { cmp.file = e; if (cmp.conflict?.hash === e.hash) cmp.conflict = null; if (cmp.tab === "file") return cmpDraw(); return; }
+    // Edited here too: say so, unless it's the outside version the person chose to keep editing over.
+    else if (cmpDirty()) { if (e.hash !== cmp.kept) cmp.conflict = e; if (cmp.tab === "file") return cmpDraw(); return; }
+    else { cmp.file = e; cmp.draft = e.text; cmp.conflict = null; cmp.key = ""; cmp.plan = null; cmpPlanSoon(); }
+  }
+  if (e.type === "composeaction" && ui.gacting.has(e.name)) { groupActed(e.name); render(); }
+  if (e.type === "composeaction" && e.error) toast("error", tr("Couldn't change {name}: {error}", { name: e.name, error: e.error }));
+  else if (e.type === "composeaction" && e.removed) toast("ok", tr("Removed {name}", { name: e.name }));
+  else if (e.type === "composerestored" && e.name === cmp.open) { if (e.error) toast("error", e.error === CMP_NO_FILE ? CMP_ERR.noFile() : e.error); else { cmp.unapplied = null; cmp.file = null; cmp.key = ""; cmp.plan = null; } }
+  else if (e.type === "composeplan" && e.name === cmp.open && e.seq === cmp.seq) {
+    // The saved file runs as it says (put right by hand): no failed Apply is left to tell.
+    if (e.runs && cmp.unapplied?.name === e.name) { cmp.unapplied = null; if (cmp.file) cmp.file.restore = false; }
+    cmp.plan = e; cmp.planWait = 0; clearTimeout(cmp.planWaitT); if (cmp.tab === "file") return cmpDraw();
+  }
+  else if (e.type === "composelogs" && e.name === cmp.open) cmp.logs = e;
+  else if (e.type === "composeapply" && cmp.applying?.name === e.name) {
+    // Already being applied (the window reloaded while it ran): show that Apply, with Cancel, till it ends.
+    // The person's own edit (Apply pressed on it) stays theirs once that Apply ends.
+    if (e.done && e.busy) { const t = cmp.applying.text; cmp.applying = { name: e.name, text: null, lines: [], svc: Object.create(null), adopted: true, mine: t != null && t !== cmp.file?.text ? t : null }; toast("ok", e.error || ""); if (cmp.tab === "file") cmpDraw(); return render(); }
+    if (!e.done) { if (e.state) for (const n of e.svc || []) cmp.applying.svc[n] = e.state; else if (!cmp.applying.lines.includes(e.line)) cmp.applying.lines.push(e.line); return cmpPlanDraw(); }
+    const { text, adopted, mine } = cmp.applying; cmp.applying = null;
+    // Saved (whatever up did next): the file is the draft now; its new hash comes with the next read.
+    // Another window's Apply: what it saved is read afresh, under the person's own edit if they have one.
+    if (adopted && cmp.open === e.name) { cmp.file = null; cmp.draft = null; cmp.plan = null; cmp.mine = mine && { name: e.name, text: mine }; send("composefile", { name: e.name }); }
+    if (adopted && mine) { toast("ok", tr("The other Apply of {name} finished. Your edit isn't applied yet.", { name: e.name })); cmp.asked = 0; cmpAsk(); return render(); }
+    else if ((e.ok || e.saved) && cmp.file && cmp.open === e.name) { cmp.file = { ...cmp.file, text, hash: e.hash || null }; cmp.plan = null; send("composefile", { name: e.name }); }
+    cmp.unapplied = !e.ok && e.saved ? { name: e.name, error: e.cancelled ? tr("Apply cancelled") : e.error || "", hash: e.hash || null } : null;
+    if (e.ok && e.failed?.length) {
+      // Up -d finished, but what it made or started didn't stay up: not a plain success.
+      cmp.failed = { name: e.name, list: e.failed };
+      const svcs = e.failed.map((f) => f.svc), list = svcs.length > 1 ? `${svcs.slice(0, -1).join(", ")}${tr(" and ")}${svcs[svcs.length - 1]}` : svcs[0];
+      toast("error", trn(svcs.length, "Applied {name}, but {svc} stopped", "Applied {name}, but {svcs} stopped", { name: e.name, svc: svcs[0], svcs: list }));
+    } else if (e.ok) toast("ok", tr("Applied {name}", { name: e.name }));
+    // Changed outside Kiri (Keep editing doesn't change that): the banner again, nothing written.
+    else if (e.conflict) { cmp.kept = null; cmp.conflict = { pending: true, hash: e.hash }; send("composefile", { name: e.name }); }
+    else if (e.cancelled) toast("ok", e.changed?.length ? trn(e.changed.length, "Apply cancelled. {svc} had already changed; the rest were not changed.", "Apply cancelled. {n} services had already changed; the rest were not changed.", { svc: e.changed[0] }) : tr("Apply cancelled. No service was changed."));
+    else if (e.saved) toast("error", tr("Saved {name}, not applied: {error}", { name: e.name, error: e.error || "" }));
+    else toast("error", tr("Couldn't apply {name}: {error}", { name: e.name, error: e.error || "" }));
+    if (cmp.open === e.name && cmp.file) cmpPlanSoon();
+    cmp.asked = 0; cmpAsk();
+    if (cmp.tab === "file" && cmp.file) cmpDraw();
+  }
+  if (ui.view === "compose" && !same) render();
+}
+// The page's clicks in Compose; true when one was Compose's.
+function composeClick(t) {
+  let el;
+  if (t("[data-cmpopenfile]")) send("composeopen");
+  else if ((el = t("[data-gopen]"))) cmpOpen(el.dataset.gopen);
+  else if ((el = t("[data-mfile]"))) cmpShowInFile(el.dataset.mfile, el.dataset.svc, +el.dataset.line || 0, el.dataset.vars);
+  else if ((el = t("[data-cmpforget]"))) { send("composeforget", { name: el.dataset.cmpforget }); if (cmp.open === el.dataset.cmpforget) { cmp.open = null; render(); } }
+  else if ((el = t("[data-cmpsf]"))) { cmp.sfilter = el.dataset.cmpsf; render(); }
+  // A service with no container: its project's Services tab (its buttons and Share's cell are their own).
+  else if ((el = t("tr[data-cmpsvc]")) && !t(".acts-row, .col-share")) { cmpOpen(el.dataset.cmpsvc); cmp.tab = "services"; render(); }
+  else if ((el = t("[data-cmptab]"))) { cmp.tab = el.dataset.cmptab; if (cmp.tab === "logs") cmp.logs = null; render(); }
+  else if ((el = t("[data-cmpcard]"))) { const n = el.dataset.cmpcard; cmp.map.focus = cmp.map.focus === n ? null : n; render(); }
+  else if (t("[data-cmpclear]")) { cmp.map.focus = null; render(); }
+  else if ((el = t("[data-cmpjump]"))) { const n = el.dataset.cmpjump; cmp.tab = "file"; render(); const l = cmpLines(cmp.draft ?? cmp.file?.text ?? "").get(n); if (l) setTimeout(() => cmpGoto(l), 0); }
+  else if ((el = t("[data-cmpz]"))) {
+    const m = $("content").querySelector(".map"), vp = $("cmp-vp"), k = el.dataset.cmpz;
+    const fit = Math.max(CMP_FIT_MIN, Math.min(1, (vp.clientWidth - 8) / +m.dataset.w, (vp.clientHeight - 8) / +m.dataset.h)), cur = cmp.map.z ?? fit;
+    cmp.map.z = k === "fit" ? null : k === "1" ? 1 : Math.max(0.3, Math.min(1.6, cur * (k === "+" ? 1.2 : 1 / 1.2)));
+    render();
+  }
+  else if ((el = t("[data-cmpgo]"))) cmpGoto(+el.dataset.cmpgo);
+  else if ((el = t("[data-cmpgoto]"))) { const l = cmpLines($("cmp-ta")?.value || "").get(el.dataset.cmpgoto); if (l) cmpGoto(l); }
+  else if (t("[data-cmpapply]")) cmpApply();
+  else if (t("[data-cmpdiscard]")) {
+    cmp.draft = cmp.file?.text ?? null; cmp.plan = null; cmp.conflict = null; cmp.kept = null; cmp.key = "";
+    // The file gone: nothing left to keep; the tab says so until it's back, then reads it afresh.
+    if (cmp.gone) { cmp.gone = false; cmp.file = null; cmp.draft = null; send("composefile", { name: cmp.open }); }
+    render();
+  }
+  else if (t("[data-cmprestore]")) send("composerestore", { name: cmp.open });
+  else if (t("[data-cmpcancel]")) send("composecancel", { name: cmp.open });
+  // The file changed outside Kiri: take it (losing the edits), or keep the edits over it.
+  // Reload: the outside version. Clicked before it has come (Apply's answer says only that it changed): ask for it, and show it once it's here.
+  else if (t("[data-cmpreload]")) {
+    if (typeof cmp.conflict?.text === "string") { cmp.file = cmp.conflict; cmp.draft = cmp.conflict.text; }
+    else if (cmp.conflict) { cmp.file = null; cmp.draft = null; send("composefile", { name: cmp.open }); }
+    cmp.conflict = null; cmp.gone = false; cmp.kept = null; cmp.plan = null; cmp.key = ""; render();
+  }
+  // Keep editing: the draft stays based on the file it was made from, so Apply still refuses.
+  else if (t("[data-cmpkeep]")) { cmp.kept = cmp.conflict?.hash || null; cmp.conflict = null; cmpDraw(); }
+  // Only this (or Reload) writes over an outside edit; Apply still checks it's that one.
+  else if (t("[data-cmpoverwrite]")) {
+    const theirs = cmp.conflict?.hash; if (!theirs) return true;
+    confirmRemove(tr("Overwrite their changes?"), tr("The file changed outside Kiri. Apply writes your edits over it, and those changes are lost."), tr("Overwrite"), () => {
+      cmp.file = { ...cmp.file, hash: theirs }; cmp.conflict = null; cmp.kept = null; cmpApply();
+    });
+  }
+  else if (t("[data-cmplogs]")) { cmp.logs = null; render(); }
+  else if ((el = t("[data-cmplogsvc]"))) { cmp.logSvc = el.dataset.cmplogsvc; render(); }
+  else if ((el = t("[data-cmplogof]"))) openDetailLogs(el.dataset.cmplogof);
+  else return false;
+  return true;
+}
+// Find a service: lights the hits without drawing the map again. Drag the empty map to pan.
+$("content").addEventListener("input", (ev) => { if (ev.target.id === "cmp-find") { cmp.map.q = ev.target.value; cmp.map.focus = null; cmp.map.on = null; $("cmp-focus").textContent = ""; cmpFit(); } });
+{
+  let drag = null;
+  $("content").addEventListener("mousedown", (ev) => { const vp = ev.target.closest("#cmp-vp"); if (!vp || ev.target.closest(".card")) return; drag = { vp, x: ev.clientX, y: ev.clientY, l: vp.scrollLeft, t: vp.scrollTop }; vp.classList.add("grab"); });
+  window.addEventListener("mousemove", (ev) => { if (drag) { drag.vp.scrollLeft = drag.l - (ev.clientX - drag.x); drag.vp.scrollTop = drag.t - (ev.clientY - drag.y); } });
+  window.addEventListener("mouseup", () => { if (drag) drag.vp.classList.remove("grab"); drag = null; });
+}
+/* i18n */ void [tr("Database"), tr("Cache"), tr("Queue"), tr("Proxy"), tr("Search"), tr("Storage"), tr("Metrics"), tr("Service"), tr("Web"), tr("Worker"), tr("Scheduler")];
+
+/* Opening or closing a group keeps its header row where it was, under the
+   pointer. Closing one near the end of the list leaves less to scroll, so the
+   browser would pull the list down and the header away from the pointer;
+   instead a gap holds the bottom, gone once the list is scrolled back up past it. */
+function toggleGroup(el) {
+  const g = el.dataset.group, c = $("content"), before = el.getBoundingClientRect().top;
+  ui.collapsed.has(g) ? ui.collapsed.delete(g) : ui.collapsed.add(g);
+  render();
+  const now = c.querySelector(`tr.group[data-group="${CSS.escape(g)}"]`);
+  if (!now) return;
+  const shift = now.getBoundingClientRect().top - before;
+  if (Math.abs(shift) < 1) return;
+  const want = c.scrollTop + shift;
+  // Twice: a list shorter than the window measures as the window, so the first gap can fall short.
+  for (let i = 0; i < 2; i++) {
+    const room = c.scrollHeight - c.clientHeight;
+    if (want <= room) break;
+    c.style.setProperty("--hold", `${(parseFloat(c.style.getPropertyValue("--hold")) || 0) + want - room}px`);
+    c.dataset.hold = ui.view;
+  }
+  c.scrollTop = Math.max(0, want);
+}
+$("content").addEventListener("scroll", () => {
+  const c = $("content"), hold = parseFloat(c.style.getPropertyValue("--hold")) || 0;
+  if (!hold) return;
+  const need = Math.max(0, c.scrollTop + c.clientHeight - Math.max(c.scrollHeight - hold, c.clientHeight));
+  if (!need) dropHold(); // once, when scrolled clear of it: resizing it on every scroll would lay the list out each frame
+});
+/* The gap belongs to the list it was made for: gone on any other page. */
+function dropHold() { const c = $("content"); c.style.removeProperty("--hold"); delete c.dataset.hold; }
+// A project's name that opens its page is a link to the keys too: Enter opens it.
+$("content").addEventListener("keydown", (ev) => { const g = ev.key === "Enter" && ev.target.closest?.("[data-gopen]"); if (g) { ev.preventDefault(); ev.stopPropagation(); cmpOpen(g.dataset.gopen); } });
+
+// The project's page, on its Compose file tab, at the service's line (or a notice's) once the file is there.
+function cmpShowInFile(project, svc, line = 0, vars = "") {
+  cmpOpen(project); cmp.tab = "file"; cmp.jump = { svc, line, vars: (vars || "").split(" ").filter(Boolean) }; render(); cmpJump();
+}
+// The first line that uses one of `vars`, as $NAME or ${NAME…}.
+const cmpVarLine = (text, vars) => { const i = vars?.length ? text.split("\n").findIndex((l) => vars.some((v) => new RegExp(`\\$\\{?${v}(?!\\w)`).test(l))) : -1; return i + 1; };
+function cmpJump() {
+  const j = cmp.jump, ta = $("cmp-ta");
+  if (!j || !ta) return;
+  cmp.jump = null;
+  const l = j.line || (j.svc && cmpLines(ta.value).get(j.svc)) || cmpVarLine(ta.value, j.vars);
+  if (l) setTimeout(() => cmpGoto(l), 0);
+}
+
 function show(view) {
   closeDetail();
   // Coming back to Images, every Run button is play again.
@@ -7013,6 +8416,7 @@ function show(view) {
   if (view === "builds") send("builds");
   if (view === "share") { send("shares"); send("shareusage"); shPoll(); }
   if (view === "notes") { ui.notes.confirmDel = false; send("notes"); }
+  if (view === "compose") { cmp.open = null; cmp.asked = 0; cmpAsk(); }
   if (view === "images") send("imgnotes");
   if (view === "settings") { if (!fontLists.families.length) send("fonts"); send("about"); send("logins"); send("resources"); send("proxy"); send("daemon"); if (!ui.imp.sources) send("importsources"); if (prefs.tab === "diagnostics") diagOpen(); }
   render();
@@ -7041,7 +8445,25 @@ function renderEmpty(view) {
 
 /* A column given a sort key ([label, class, key]) sorts on click, and again
    the other way; `view` names whose sort it is. */
-function table(head, rows, view, last) {
+// A column given a sort key ([label, class, key]) sorts on click, and again
+// the other way; `view` names whose sort it is. A project's Services table, in its own box, takes
+// just the headings (heads) and fits them after.
+function heads(head, view) {
+  const sort = ui.sort[view];
+  // A column can say how it sizes ({ fixed: ch } for one whose longest value is known, { share } for
+  // its part of the rest). A column that isn't fixed has a resize edge when one after it isn't either:
+  // it moves the line to that column.
+  const flex = (i) => !head[i]?.[3]?.fixed;
+  const grip = (i) => (flex(i) && head.some((_, k) => k > i && flex(k)) ? `<span class="col-resize" data-col="${i}" title="${tr("Drag to resize, double-click to reset")}"></span>` : "");
+  const size = (o) => (o?.fixed ? ` data-fixed="${esc(o.fixed)}" data-extra="${o.extra || 0}"` : o?.share ? ` data-share="${o.share}"` : "");
+  const th = ([h, c, key, o], i) => {
+    if (!key) return `<th class="${c || ""}"${size(o)}>${h}${grip(i)}</th>`;
+    const on = sort?.key === key;
+    return `<th class="sortable ${c || ""}" data-sort="${key}" data-sortview="${view}"${size(o)} aria-sort="${on ? (sort.desc ? "descending" : "ascending") : "none"}">${h}<span class="arrow">${on ? (sort.desc ? "↓" : "↑") : ""}</span>${grip(i)}</th>`;
+  };
+  return head.map(th).join("");
+}
+function table(head, rows, view, last, after = "") {
   last ??= `<th class="r actions">${tr("Actions")}</th>`;
   const sort = ui.sort[view];
   // A column can say how it sizes ({ fixed: ch } for one whose longest value is known, { share } for
@@ -7067,7 +8489,7 @@ function table(head, rows, view, last) {
   // A list whose rows can be picked starts with their boxes' column, and takes
   // focus for its keys (⌘A, arrows, Space, Delete). .pin draws the full grid and
   // sticks checkbox/Name left + Actions right (Images first; every list view now).
-  morph($("content"), `<table class="pin" data-view="${view}"${LISTS[view]?.bulk ? ' tabindex="0"' : ""}><thead><tr>${LISTS[view]?.bulk ? pickHead(view) : ""}${head.map(th).join("")}${last}</tr></thead><tbody>${rows.join("")}</tbody></table>`);
+  morph($("content"), `<table class="pin" data-view="${view}"${LISTS[view]?.bulk ? ' tabindex="0"' : ""}><thead><tr>${LISTS[view]?.bulk ? pickHead(view) : ""}${head.map(th).join("")}${last}</tr></thead><tbody>${rows.join("")}</tbody></table>${after}`);
   spanRows();
   fitColumns();
 }
@@ -7266,7 +8688,7 @@ const CONTAINER_SORT = {
 };
 const listLayout = (v) => ((prefs.listLayout || {})[v] === "grid" ? "grid" : "list");
 function viewModeToggle(v) {
-  if (v !== "containers" && v !== "images") return "";
+  if (v !== "containers" && v !== "images" && v !== "compose") return "";
   const mode = listLayout(v);
   const btn = (id, icon, label) => `<button type="button" data-vmode="${id}" aria-pressed="${mode === id}" title="${tr(label)}" aria-label="${tr(label)}">${svgOf(icon)}</button>`;
   return `<div class="vmode" role="group" aria-label="${tr("Layout")}">${btn("list", "list", "List")}${btn("grid", "squares", "Grid")}</div>`;
@@ -7275,59 +8697,30 @@ function setListLayout(v, mode) {
   if (listLayout(v) === mode) return;
   setPref("listLayout", { ...(prefs.listLayout || {}), [v]: mode });
 }
+const CTR_COLS = () => [[tr("Name"), "", "name", { share: 3 }], [tr("State"), "col-state", "state", { share: 1.2 }], [tr("Ports"), "", "ports", { share: 1.2 }],
+  ...(shareOn() ? [[tr("Share"), "col-share", undefined, { share: 1 }]] : []), [tr("Size"), "r", "size", { share: 1 }], [tr("Created"), "col-created", "created", { share: 1 }]];
 function renderContainers() {
-  // Sorting orders the containers first; a Compose group then sits where its first member lands.
-  const items = sortBy(listed("containers"), "containers", CONTAINER_SORT);
+  // Compose projects live in the Compose section. List and grid both leave them out.
+  const items = sortBy(listed("containers").filter((c) => !c.Labels?.["com.docker.compose.project"]), "containers", CONTAINER_SORT);
+  const inCmp = kept("compose").length;
+  const link = (s) => s.replace("<a>", '<button type="button" class="lnk" data-ctrcompose>').replace("</a>", "</button>");
+  if (!kept("containers").length && inCmp) return setHTML($("content"), `<div class="empty ctr-allcmp"><div><svg class="i art" viewBox="0 0 256 256"><path d="${PH.cube}"/></svg>
+    <h3>${link(trn(inCmp, "Your only container is in a <a>Compose project</a>", "All {n} containers are in <a>Compose projects</a>"))}</h3></div></div>`);
   if (!kept("containers").length) return renderEmpty("containers");
   if (!items.length) return noMatch();
+  const more = inCmp ? `<p class="ctr-more">${link(trn(inCmp, "{n} more in a <a>Compose project</a>", "{n} more in <a>Compose projects</a>"))}</p>` : "";
   if (listLayout("containers") === "grid") {
-    morph($("content"), `<div class="ggrid-wrap" data-view="containers" tabindex="0">${gridSelectBar("containers")}<div class="ggrid">${items.map((c) => containerCard(c)).join("")}</div></div>`);
+    morph($("content"), `<div class="ggrid-wrap" data-view="containers" tabindex="0">${gridSelectBar("containers")}<div class="ggrid">${items.map((c) => containerCard(c)).join("")}</div></div>${more}`);
     return;
   }
-  // A Compose project shows where its newest container would, as one group.
-  const rows = [], seen = new Set();
-  for (const c of items) {
-    const project = c.Labels?.["com.docker.compose.project"];
-    if (!project) { rows.push(containerRow(c)); continue; }
-    if (seen.has(project)) continue;
-    seen.add(project);
-    const members = items.filter((x) => x.Labels?.["com.docker.compose.project"] === project);
-    rows.push(groupRow(project, members));
-    if (!ui.collapsed.has(project)) rows.push(...members.map((m, i) => containerRow(m, i === members.length - 1 ? "last" : true)));
-  }
-  const share = shareOn() ? [["Share", "col-share"]] : [];
-  // As in Images: every column takes a share of the width and drags to resize; Name (with its image under it) starts widest.
-  if (share.length) share[0].push(undefined, { share: 1 });
-  table([["Name", "", "name", { share: 3 }], ["State", "col-state", "state", { share: 1.2 }], ["Ports", "", "ports", { share: 1.2 }], ...share, ["Size", "r", "size", { share: 1 }], ["Created", "col-created", "created", { share: 1 }]], rows, "containers");
+  table(CTR_COLS(), items.map((c) => containerRow(c)), "containers", undefined, more);
 }
 
-function groupRow(project, members) {
-  const running = members.filter((m) => m.State === "running").length;
-  const open = !ui.collapsed.has(project);
-  const p = esc(project);
-  return `<tr class="row group" data-group="${p}" aria-expanded="${open}">${groupPick(members)}
-    <td colspan="${shareOn() ? 7 : 6}" data-fill><div class="name"><span class="chev" aria-hidden="true">${open ? "▾" : "▸"}</span><div class="tile"><svg viewBox="0 0 256 256"><path d="${PH.stack}"/></svg></div>
-      <div><b>${p}</b><div class="sub-name">${tr("Compose · {n} of {total} running", { n: running, total: members.length })}</div></div></div></td>
-    <td class="actions"><div class="acts-row">
-      ${running < members.length ? ibtn("play", "Start all", `data-g="start" data-project="${p}"`, "go") : ""}
-      ${running ? ibtn("stop", "Stop all", `data-g="stop" data-project="${p}"`, "halt") : ""}
-      ${btn("⋯", `data-gmore="${p}" aria-label="${tr("More actions for {name}", { name: p })}" aria-haspopup="menu"`, "more")}
-    </div></td></tr>`;
-}
-
-/* The project's box picks every container in it: ticked when all are, a dash when some are. */
 function groupPick(members) {
   const L = LISTS.containers, can = members.filter((m) => !L.can || L.can(m));
   if (!L.bulk || !can.length) return CK0;
   const n = can.filter((m) => picks("containers").has(L.key(m))).length, st = !n ? "" : n === can.length ? "all" : "some";
   return `<td class="ck"><span class="ckbox" data-gpick="${esc(can.map((m) => L.key(m)).join(" "))}" role="checkbox" tabindex="0" aria-checked="${st === "all" ? "true" : st ? "mixed" : "false"}" aria-label="${tr("Select the project's containers")}" title="${tr("Select all in this project")}"><span class="cb ${st}" aria-hidden="true">${st === "all" ? CHECK : ""}</span></span></td>`;
-}
-
-function projectAction(project, action) {
-  const members = ui.containers.filter((c) => c.Labels?.["com.docker.compose.project"] === project);
-  const pick = action === "start" ? members.filter((c) => c.State !== "running" && c.State !== "paused")
-    : action === "stop" || action === "restart" ? members.filter((c) => c.State === "running" || c.State === "paused") : members;
-  for (const c of pick) send("container", { action, id: c.Id });
 }
 
 /* Trash: Docker won't remove a running container, nor an image a container
@@ -7343,13 +8736,13 @@ function imgRemoveBtn(name, img) {
   }
   return ibtn("trash", "Remove", `data-rmi="${esc(name)}"`, "danger");
 }
-function containerActs(c, name, up, starting, enter) {
+function containerActs(c, name, up, starting, enter, more = "") {
   const primary = `${up ? ibtn("restart", "Restart", `data-c="restart" data-id="${c.Id}"`, enter)
     : ibtn("restart", "Start it to restart it", "disabled", "ghost")}
   ${up ? ibtn("stop", "Stop", `data-c="stop" data-id="${c.Id}"`, `halt ${enter}`)
     : ibtn("play", starting ? "Starting…" : "Start", `data-c="start" data-id="${c.Id}"`, starting ? "go rolling" : "go")}`;
   const danger = `${ctrRemoveBtn(c)}
-  ${btn("⋯", `data-more="${c.Id}" aria-label="More actions for ${esc(name)}" aria-haspopup="menu"`, "more")}`;
+  ${btn("⋯", `data-more="${c.Id}"${more} aria-label="More actions for ${esc(name)}" aria-haspopup="menu"`, "more")}`;
   return { primary, danger, all: primary + danger };
 }
 function containerCard(c) {
@@ -7382,21 +8775,28 @@ function containerCard(c) {
     <div class="gacts"><span class="gacts-l">${acts.primary}</span><span class="spacer"></span>${acts.danger}</div>
   </div>`;
 }
-function containerRow(c, member = false) {
+function containerRow(c, member = false, o = {}) {
+    const v = o.view || "containers";
     const name = c.Names[0].replace(/^\//, "");
     const project = c.Labels?.["com.docker.compose.project"];
     const up = c.State === "running" || c.State === "paused";
     const domain = c.State === "running" ? localUrl(c, name) : "", reach = domain && c.Ports?.length;
     // Pressed Start: rolls until it's up, then its buttons ease in once.
     const starting = !up && ui.starting.has(c.Id), enter = up && ui.starting.delete(c.Id) ? "enter" : "";
-    return `<tr class="row${member ? " member" : ""}${chosen("containers", c)}" data-rowopen="detail" data-key="${c.Id}"${pickAt("containers", c)}>
-      ${pickCell("containers", c)}<td><div class="name" data-detail="${c.Id}">${member ? `<span class="tree${member === "last" ? " last" : ""}" aria-hidden="true"></span>` : ""}<div class="tile-wrap">${tile(c.icon, "cube")}${reach ? `<span class="kbadge" title="Reachable at ${esc(domain)}">${KDOT}</span>` : ""}</div><div title="${esc(name)}"><span class="link">${esc(name)}</span>${isKiriK8s(c) ? `<span class="k8s-mark" title="Kiri's Kubernetes cluster" aria-label="Kubernetes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${K8S_LOGO}"/></svg></span>` : ""}${reach ? `<div class="sub-name"><button class="sub-addr" data-open="${esc(domain)}" title="Open ${esc(domain)}">${esc(domain.replace(/^https?:\/\//, ""))}</button></div>` : `<div class="sub-name"${project && !member ? "" : ` title="${esc(c.Image)}"`}>${esc(project && !member ? project : refLabel(c.Image))}</div>`}</div></div></td>
+    const more = `${o.remove === false ? " data-noremove" : ""}${o.file ? ` data-mfile="${esc(project || "")}" data-svc="${esc(c.Labels?.["com.docker.compose.service"] || "")}"` : ""}`;
+    const acts = containerActs(c, name, up, starting, enter, more);
+    const buttons = o.remove === false
+      ? `${acts.primary}${btn("⋯", `data-more="${c.Id}"${more} aria-label="${tr("More actions for {name}", { name: esc(name) })}" aria-haspopup="menu"`, "more")}`
+      : acts.all;
+    const pick = LISTS[v]?.bulk ? pickCell(v, c) : "";
+    return `<tr class="row${member ? " member" : ""}${chosen(v, c)}" data-rowopen="detail" data-key="${c.Id}"${LISTS[v]?.bulk ? pickAt(v, c) : ""}>
+      ${pick}<td><div class="name" data-detail="${c.Id}">${member ? `<span class="tree${member === "last" ? " last" : ""}" aria-hidden="true"></span>` : ""}<div class="tile-wrap">${tile(c.icon, "cube")}${reach ? `<span class="kbadge" title="Reachable at ${esc(domain)}">${KDOT}</span>` : ""}</div><div title="${esc(name)}"><span class="link">${esc(name)}</span>${isKiriK8s(c) ? `<span class="k8s-mark" title="Kiri's Kubernetes cluster" aria-label="Kubernetes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${K8S_LOGO}"/></svg></span>` : ""}${reach ? `<div class="sub-name"><button class="sub-addr" data-open="${esc(domain)}" title="Open ${esc(domain)}">${esc(domain.replace(/^https?:\/\//, ""))}</button></div>` : `<div class="sub-name"${project && !member ? "" : ` title="${esc(c.Image)}"`}>${esc(project && !member ? project : refLabel(c.Image))}</div>`}</div></div></td>
       <td class="clip col-state">${statusPill(c)}</td>
       <td class="num nowrap">${ports(c, 1) || '<span class="muted">—</span>'}</td>
       ${shareOn() ? `<td class="col-share">${shareCell(c, name)}</td>` : ""}
       <td class="r num">${imageSize(c)}</td>
       <td class="muted col-created">${ago(c.Created)}</td>
-      <td class="actions"><div class="acts-row">${containerActs(c, name, up, starting, enter).all}</div></td></tr>`;
+      <td class="actions"><div class="acts-row">${buttons}</div></td></tr>`;
 }
 
 /* The ⋯ menu: the actions that don't need a button of their own. */
@@ -7435,9 +8835,9 @@ function openMenu(button, id, project) {
   closeMenu();
   const c = ui.containers.find((x) => x.Id === id);
   if (!c && !project) return;
-  const items = project
-    ? [["Restart all", `data-g="restart" data-project="${esc(project)}"`], ["Remove project", `data-g="remove" data-project="${esc(project)}"`, "danger"]]
-    : [["Ports…", `data-ports="${id}"`]];
+  if (project && ui.view === "compose" && !button.dataset.gview) return showMenu(button, [["Stop all", `data-g="stop" data-project="${esc(project)}"`]]);
+  const own = [["Restart all", `data-g="restart" data-project="${esc(project)}"`], ["Remove project", `data-g="remove" data-project="${esc(project)}"`, "danger"]];
+  const items = project ? (LISTS[button.dataset.gview]?.groupMenu?.(project, own) || own) : [["Ports…", `data-ports="${id}"`]];
   if (project) return showMenu(button, items);
   // Open lives here now that the row's first button is Restart.
   const domain = c.State === "running" && c.Ports?.length ? localUrl(c, cname(c)) : "";
@@ -7445,7 +8845,8 @@ function openMenu(button, id, project) {
   if (c.State === "running") items.push(["Pause", `data-c="pause" data-id="${id}"`]);
   if (c.State === "paused") items.push(["Resume", `data-c="unpause" data-id="${id}"`]);
   // Running/paused can't be removed (docker rm); kiri-k8s goes in Settings.
-  if (!isKiriK8s(c) && !upC(c)) items.push(["Remove", `data-c="remove" data-id="${id}"`, "danger"]);
+  if (button.dataset.mfile != null) items.push(["Show in compose file", `data-mfile="${esc(button.dataset.mfile)}" data-svc="${esc(button.dataset.svc || "")}"`]);
+  if (!isKiriK8s(c) && !upC(c) && button.dataset.noremove == null) items.push(["Remove", `data-c="remove" data-id="${id}"`, "danger"]);
   showMenu(button, items);
 }
 function showMenu(button, items) {
@@ -7472,10 +8873,10 @@ document.addEventListener("click", (ev) => {
     else if (item.dataset.ports) openPorts(item.dataset.ports);
     else if (item.dataset.c) containerAction(item.dataset.c, item.dataset.id);
     else if (item.dataset.g) projectAsk(item.dataset.project, item.dataset.g);
+    else composeClick((q) => item.closest(q));
     return closeMenu();
   }
-  // The ⋯ button, Share chooser and language picker open their own menu.
-  if (!ev.target.closest("[data-more], [data-ksh], #pref-lang")) closeMenu();
+  if (!ev.target.closest("[data-more], [data-gmore], [data-smore], [data-ksh], #pref-lang")) closeMenu();
 });
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { closeMenu(); document.querySelector(".scrim")?.remove(); } });
 $("content").addEventListener("scroll", closeMenu);
@@ -8657,7 +10058,9 @@ send("usage");
    (every 2 s) and the window's usage (every 5 s) mostly come back the same,
    and rewriting the same markup still lays out and repaints it. */
 function setHTML(el, html) {
-  if (el && el._html !== html) { el.innerHTML = html; el._html = html; }
+  if (!el) return;
+  const still = el._html === html && (el._first ? el.contains(el._first) : !el.firstChild);
+  if (!still) { el.innerHTML = html; el._html = html; el._first = el.firstChild; }
 }
 const setText = (el, text) => { if (el && el.textContent !== text) el.textContent = text; };
 
@@ -8884,15 +10287,25 @@ document.addEventListener("pointercancel", pressDone, true);
 window.addEventListener("blur", pressDone);
 const held = (fn) => (press.down ? (press.later.add(fn), true) : false);
 
+function navTags() {
+  for (const b of document.querySelectorAll("nav button > .beta")) {
+    const l = b.parentElement.querySelector(".lbl");
+    b.classList.remove("gone");
+    if (l && l.scrollWidth > l.clientWidth) b.classList.add("gone");
+  }
+}
+addEventListener("resize", navTags);
 function render() {
   if (held(render)) return;
+  if (ui.view !== "compose") cmpHWait(false);
+  if ($("content").dataset.hold && ($("content").dataset.hold !== ui.view || ui.detail)) dropHold();
   themeBtn();
   renderStatus();
   renderImportStrip();
   navNote();
   const v = ui.view;
   document.querySelectorAll("nav button").forEach((b) => (b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current")));
-  $("title").textContent = tr(VIEW_LABEL[v] || v);
+  setHTML($("title"), esc(tr(VIEW_LABEL[v] || v)));
   const running = ui.containers.filter((c) => c.State === "running").length;
   const total = kept("images").reduce((a, i) => a + (i.Size || 0), 0);
   // A list's counts are its tabs; beside them, what they don't say (the images' size).
@@ -8903,6 +10316,8 @@ function render() {
   batchTick();
   renderHead();
   $("n-containers").textContent = kept("containers").length;
+  const nCompose = $("n-compose"); if (nCompose) nCompose.textContent = cmpCount() || "";
+  navTags();
   $("n-images").textContent = kept("images").length;
   $("n-volumes").textContent = kept("volumes").length;
   $("n-networks").textContent = kept("networks").length;
@@ -8916,7 +10331,7 @@ function render() {
   if (v === "share") return renderShare();
   if (v === "notes") return renderNotes();
   if (ui.vm === "stopped") return renderEmpty("stopped");
-  if (v === "containers" && ui.detail) {
+  if ((v === "containers" || v === "compose") && ui.detail) {
     // The list refreshes while you edit the environment: keep your place.
     const f = document.activeElement, at = f?.closest?.("[data-envi]");
     const keep = at && [at.dataset.envi, f.classList.contains("k") ? "k" : "v", f.selectionStart, f.selectionEnd];
@@ -8926,6 +10341,7 @@ function render() {
   }
   if (v === "images" && ui.imgd) return renderImageDetail();
   if (K8S_VIEWS.has(v)) return renderK8s();
+  if (v === "compose") return renderCompose();
   ({ containers: renderContainers, images: renderImages, volumes: renderVolumes, networks: renderNetworks, builds: renderBuilds })[v]();
 }
 
@@ -9956,7 +11372,8 @@ function fixWatch() {
 /* A container's own page, from anywhere: at once if the list has it, else
    when the next list does (a container just started may not be in it yet). */
 function viewContainer(id, tab = "", focus = false) {
-  if (ui.view !== "containers") show("containers");
+  const home = ctrHome(ui.containers.find((x) => x.Id === id));
+  if (ui.view !== home) show(home);
   ui.openTab = { tab, focus };
   if (ui.containers.some((c) => c.Id === id)) { openDetail(id); openedTab(); return; }
   ui.openAfter = id;
@@ -10389,12 +11806,15 @@ window.kiri = {
         ui.containers = (e.containers || []).filter((c) => !c.Labels?.["io.kiri.probe"] && !isBuildWorker(c)); oomCheck(); starCheck(); ui.builderImage = (e.images || []).find(isBuilderImage) || null; ui.builderVolume = (e.volumes || []).find(isBuilderVolume) || null;
         ui.images = (e.images || []).filter((i) => !isBuilderImage(i)); ui.volumes = (e.volumes || []).filter((v) => !isBuilderVolume(v)); ui.networks = e.networks || [];
         shPublished();
+        groupActed();
         fixWatch();
+        if (ui.view === "compose") cmpAsk();
         render();
         paintEngine();
         if (ui.openAfter && ui.containers.some((c) => c.Id === ui.openAfter)) { openDetail(ui.openAfter); ui.openAfter = null; openedTab(); }
         break;
       case "pull": pullEvent(e); break;
+      case "composeprojects": case "composefile": case "composeplan": case "composeapply": case "composelogs": case "composeforget": case "composecancel": case "composerestore": case "composeaction": case "composeopened": case "composerestored": cmpEvent(e); break;
       case "buildpruned": ui.bwPruning = false; toast(e.error ? "error" : "ok", e.error ? tr("Couldn't clear the build cache: {error}", { error: trErr(e.error) }) : (e.freed ? tr("Build cache cleared: freed {size}", { size: size(e.freed) }) : tr("Build cache cleared"))); if (ui.view === "settings") render(); break;
       case "hub":
         (e.kind === "search" ? pp.search : pp.tags).set(e.key, e.error ? { error: e.error } : { items: e.items || [] });
@@ -10677,8 +12097,12 @@ $("content").addEventListener("click", (ev) => {
   }
   else if ((el = t("[data-more]"))) openMenu(el, el.dataset.more);
   else if ((el = t("[data-gmore]"))) openMenu(el, null, el.dataset.gmore);
+  else if ((el = t("[data-smore]"))) showMenu(el, [["Open project", `data-gopen="${esc(el.dataset.smore)}"`], ["Show in compose file", `data-mfile="${esc(el.dataset.smore)}" data-svc="${esc(el.dataset.svc)}"`]]);
   else if ((el = t("[data-g]"))) projectAsk(el.dataset.project, el.dataset.g);
-  else if ((el = t("[data-group]"))) { const g = el.dataset.group; ui.collapsed.has(g) ? ui.collapsed.delete(g) : ui.collapsed.add(g); render(); }
+  else if ((el = t("[data-gopen]"))) cmpOpen(el.dataset.gopen);
+  else if (t("[data-ctrcompose]")) show("compose");
+  else if (composeClick(t)) {}
+  else if ((el = t("[data-group]"))) toggleGroup(el);
   else if ((el = t("[data-stab]"))) { prefs.tab = el.dataset.stab; if (prefs.tab === "about") send("about"); if (prefs.tab === "builds") send("buildwith"); if (prefs.tab === "registries") send("logins"); if (prefs.tab === "diagnostics") diagOpen(); render(); }
   else if (diagClick(t)) {}
   else if ((el = t("[data-scale]"))) setPref("scale", +el.dataset.scale);
@@ -10811,6 +12235,8 @@ $("updcard").addEventListener("click", (ev) => {
   else if (c) crashCardAction(c.dataset.crashcard, c);
 });
 $("title").addEventListener("click", (ev) => { if (ev.target.closest("[data-back]")) { closeDetail(); render(); } });
+$("title").addEventListener("click", (ev) => { if (ev.target.closest("[data-cmpback]")) { closeDetail(); cmp.open = null; cmp.key = ""; render(); } });
+$("title").addEventListener("click", (ev) => { const el = ev.target.closest("[data-cdproj]"); if (el) { closeDetail(); cmpOpen(el.dataset.cdproj); } });
 /* The strip's search: it narrows the list on screen as you type (the page
    has no Filter box of its own). Esc clears it; ⌘K / Ctrl+K and ⌘F / Ctrl+F
    go to it. */
@@ -11826,7 +13252,7 @@ function shCapToast() {
   });
   closable(el, () => el.remove());
   $("toasts").append(el);
-  if (ui.view === "containers" || K8S_VIEWS.has(ui.view)) render();
+  if (ui.view === "containers" || ui.view === "compose" || K8S_VIEWS.has(ui.view)) render();
 }
 /* Closes a tunnel the window didn't open; one on another computer asks first. */
 /* Disconnect says so at once and its buttons go quiet until the link has
@@ -11837,7 +13263,7 @@ function shStop(id) {
   if (it && it.state !== "ended") it.state = "stopping";
   send("unshare", { id: String(id) });
   shNav(); renderStatus();
-  if (ui.view === "share") renderShare(); else if (ui.view === "containers" || K8S_VIEWS.has(ui.view)) render();
+  if (ui.view === "share") renderShare(); else if (ui.view === "containers" || ui.view === "compose" || K8S_VIEWS.has(ui.view)) render();
 }
 function shKill(name) {
   sh.stopping.add(name);
@@ -11949,7 +13375,7 @@ function shEvent(e) {
   }
   shNav();
   if (ui.view === "share") renderShare();
-  else if ((remote || (e.type === "share" && !e.request)) && (ui.view === "containers" || K8S_VIEWS.has(ui.view))) render();
+  else if ((remote || (e.type === "share" && !e.request)) && (ui.view === "containers" || ui.view === "compose" || K8S_VIEWS.has(ui.view))) render();
   // The open dialog: a request moves along its picture; anything else redraws it.
   const card = $("sh-modal")?.dataset.view;
   if (e.type === "share" && card) e.request ? shHit(e.id) : shCard(card);
@@ -12136,6 +13562,11 @@ function renderShare() {
    show (a share, a container, an image), so one coming, going or moving
    leaves the rest as they are. */
 function morph(el, html) {
+  // setHTML remembers the markup it last wrote; morph reuses the same first
+  // child node in place, so that cache would wrongly skip the next setHTML
+  // (Images grid → Compose empty kept showing the grid).
+  delete el._html;
+  delete el._first;
   const t = document.createElement(el.tagName);
   t.innerHTML = html;
   morphKids(el, t);
@@ -13199,7 +14630,7 @@ const BUILTIN_NETS = new Set(["bridge", "host", "none"]);
    is a remove, with Undo). */
 const LISTS = {
   containers: {
-    all: () => ui.containers, key: (c) => c.Id, name: cname, hit: (c) => match(c.Names[0], c.Image), noun: "containers",
+    all: () => ui.containers.filter((c) => !c.Labels?.["com.docker.compose.project"]), key: (c) => c.Id, name: cname, hit: (c) => match(c.Names[0], c.Image), noun: "containers",
     state: ctrState,
     tabs: [["running", "Running", "moss"], ["stopped", "Stopped", ""], ["failed", "Failed", "red", true]],
     // A folded Compose project's containers aren't on screen, so Select all leaves them.
@@ -13250,6 +14681,13 @@ const LISTS = {
     remove: (p) => send("k8s", { action: "delete", value: { ns: p.ns, pod: p.name } }), bulk: [["Delete", "trash", "danger", () => true]],
   },
   services: { all: () => k8s.services, key: (s) => `${s.ns}/${s.name}`, name: (s) => s.name, hit: (s) => match(s.name, s.ns, s.type), noun: "services" },
+  compose: {
+    all: () => ui.containers.filter(cmpOf), key: (c) => c.Id, name: cname, hit: (c) => match(c.Names[0], c.Image, cmpOf(c)), noun: "containers",
+    state: ctrState, tabs: [["running", "Running", "moss"], ["stopped", "Stopped", ""], ["failed", "Failed", "red", true]],
+    shown: (c) => !ui.collapsed.has(cmpOf(c)),
+    groupMenu: (project, own) => [[tr("Open project"), `data-gopen="${esc(project)}"`], ...(cmpProject(project)?.fresh && !ui.containers.some((c) => cmpOf(c) === project) ? [[tr("Remove from the list"), `data-cmpforget="${esc(project)}"`]] : own)],
+    primary: cmpOpenBtn,
+  },
 };
 Object.assign(ui, { tab: {}, pick: { view: "", keys: new Set(), last: "", cur: "" }, batches: [], pulls: new Map(), logins: null, signin: new Map(), reg: { open: false, server: "" } });
 const tabOf = (v) => ui.tab[v] || "all";
@@ -13267,6 +14705,7 @@ function listPage(v = ui.view) {
   if (!LISTS[v] || ui.vm === "stopped") return false;
   if (v === "containers") return !ui.detail;
   if (v === "images") return !ui.imgd;
+  if (v === "compose") return !cmp.open && !ui.detail;
   if (K8S_VIEWS.has(v)) return k8s.state === "running" && k8s.ready && !(v === "pods" ? k8s.detail : k8s.svc);
   return v !== "builds" || ui.bl.items !== null;
 }
@@ -13359,6 +14798,7 @@ $("hright").addEventListener("click", (ev) => {
   let el;
   if ((el = t("[data-vmode]"))) setListLayout(v, el.dataset.vmode);
   else if (t("[data-ppopen]")) pp.open ? closePull() : openPull();
+  else if (t("[data-cmpopenfile]")) send("composeopen");
   else if (t("[data-unpick]")) unpick();
   else if (t("[data-pickall]")) { for (const x of pickables(v)) ui.pick.keys.add(L.key(x)); render(); }
   else if (t("[data-junk]")) {

@@ -3363,8 +3363,23 @@ fn project_row(cli: Cli, store: Store, p: Project, containers: &Value, image_ids
     let text = p.files.first().and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
     let (read, own_name) = match checked(p.clone(), store) {
         Ok(c) => {
-            let r = saved_reading(cli, &c, &[], true);
-            (r.read, r.name.unwrap_or_default())
+            // As plan and Apply: keep profiles of services that already run
+            // (`up --profile mysql`), so Structure lists them with the rest.
+            let plain = saved_reading(cli, &c, &[], true);
+            let read = match plain.read.as_ref() {
+                Ok(m) => {
+                    let now = running(&p, containers);
+                    let profs = profiles(cli, &c, &text, m, &now);
+                    if profs.is_empty() {
+                        plain.read
+                    } else {
+                        let with = saved_reading(cli, &c, &profs, true);
+                        if with.read.is_ok() { with.read } else { plain.read }
+                    }
+                }
+                Err(_) => plain.read,
+            };
+            (read, plain.name.unwrap_or_default())
         }
         Err(e) => (Err(CfgErr::own(e)), name_text_vars(&text)),
     };
@@ -3385,8 +3400,18 @@ fn project_row(cli: Cli, store: Store, p: Project, containers: &Value, image_ids
         hider.show_json(m);
     }
     let networks = project_networks(&p.name, model.as_ref().ok(), containers);
+    // The file's start order, then any running service the reading still
+    // left out (an orphan, or a profile Compose couldn't resolve).
     let names: Vec<String> = match &model {
-        Ok(m) => start_order(m),
+        Ok(m) => {
+            let mut n = start_order(m);
+            for m in &p.members {
+                if !n.iter().any(|s| s == &m.service) {
+                    n.push(m.service.clone());
+                }
+            }
+            n
+        }
         Err(_) => {
             let mut n: Vec<String> = p.members.iter().map(|m| m.service.clone()).collect();
             n.dedup();

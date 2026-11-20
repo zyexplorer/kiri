@@ -293,4 +293,17 @@ t("a project whose file is gone says so plainly, and its logs still load", () =>
   sent.length = 0; click(document.querySelector('[data-cmptab="logs"]'));
   eq(sent.some((m) => m.type === "composelogs" && m.name === "shop"), true, "asks for its logs");
 });
+t("Logs shows one service at a time; switching pills filters the lines", () => {
+  click(document.querySelector('[data-cmptab="logs"]'));
+  kiri.on({ type: "composelogs", name: "shop", lines: [
+    { svc: "db", t: "2026-11-16T13:02:01.5Z", text: "db-line" },
+    { svc: "web", t: "2026-11-16T13:02:02.5Z", text: "web-line" },
+  ] });
+  const pills = [...document.querySelectorAll("[data-cmplogsvc]")].map((b) => b.dataset.cmplogsvc);
+  eq(pills, ["db", "web"], "a pill per service");
+  eq(cmp.logSvc, "db", "defaults to the first service");
+  eq([document.querySelector(".cmp-logs").textContent.includes("db-line"), document.querySelector(".cmp-logs").textContent.includes("web-line")], [true, false], "only db's lines");
+  click(document.querySelector('[data-cmplogsvc="web"]'));
+  eq([cmp.logSvc, document.querySelector(".cmp-logs").textContent.includes("web-line"), document.querySelector(".cmp-logs").textContent.includes("db-line")], ["web", true, false], "web only after switch");
+});
 report(R);
