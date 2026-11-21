@@ -31,8 +31,9 @@ use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_D
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW};
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Shell::{
-    FileOpenDialog, IFileOpenDialog, ShellExecuteW, Shell_NotifyIconW, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, NIF_GUID,
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4, SIGDN_FILESYSPATH,
+    FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, ShellExecuteW, Shell_NotifyIconW, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST,
+    FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, NIF_GUID, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4, SIGDN_FILESYSPATH,
 };
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -202,11 +203,44 @@ pub fn pick_file(title: &str, filters: &[(String, String)], done: impl FnOnce(Op
     // inside with_ui (the window's state borrowed), or every job posted
     // meanwhile finds the window busy and posts itself again, round and
     // round. Like tray_menu, it needs only the window's handle.
-    BARE.lock().unwrap_or_else(PoisonError::into_inner).push(Box::new(move |hwnd| {
+    bare_job(move |hwnd| {
         // SAFETY: on the window's thread, where COM is initialised (run).
         let path = unsafe { open_dialog(hwnd, &title, &filters) }.ok().flatten();
         std::thread::spawn(move || done(path));
-    }));
+    });
+}
+
+/// Pick an existing folder (Projects: link / upload folder).
+pub fn pick_folder(title: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = HSTRING::from(title);
+    bare_job(move |hwnd| {
+        let path = unsafe { folder_dialog(hwnd, &title) }.ok().flatten();
+        std::thread::spawn(move || done(path));
+    });
+}
+
+/// Multi-select existing files (Projects: upload materials).
+pub fn pick_files(title: &str, done: impl FnOnce(Vec<std::path::PathBuf>) + Send + 'static) {
+    let title = HSTRING::from(title);
+    bare_job(move |hwnd| {
+        let paths = unsafe { open_dialog_multi(hwnd, &title) }.unwrap_or_default();
+        std::thread::spawn(move || done(paths));
+    });
+}
+
+/// Save-as for `.kirikit` export.
+pub fn pick_save(title: &str, suggested: &str, filters: &[(String, String)], done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = HSTRING::from(title);
+    let suggested = HSTRING::from(suggested);
+    let filters: Vec<(HSTRING, HSTRING)> = filters.iter().map(|(n, p)| (HSTRING::from(n.as_str()), HSTRING::from(p.as_str()))).collect();
+    bare_job(move |hwnd| {
+        let path = unsafe { save_dialog(hwnd, &title, &suggested, &filters) }.ok().flatten();
+        std::thread::spawn(move || done(path));
+    });
+}
+
+fn bare_job(job: impl FnOnce(HWND) + Send + 'static) {
+    BARE.lock().unwrap_or_else(PoisonError::into_inner).push(Box::new(job));
     let hwnd = WINDOW.load(Ordering::SeqCst);
     if hwnd != 0 {
         // SAFETY: posting to our own window; a closed one just drops it.
@@ -223,7 +257,6 @@ static BARE: Mutex<Vec<BareJob>> = Mutex::new(Vec::new());
 unsafe fn open_dialog(owner: HWND, title: &HSTRING, filters: &[(HSTRING, HSTRING)]) -> windows::core::Result<Option<std::path::PathBuf>> {
     use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
     use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
-    use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, SIGDN_FILESYSPATH};
     // SAFETY: COM calls on this thread's apartment; the filter strings outlive the dialog.
     unsafe {
         let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
@@ -232,6 +265,68 @@ unsafe fn open_dialog(owner: HWND, title: &HSTRING, filters: &[(HSTRING, HSTRING
         d.SetTitle(title)?;
         d.SetOptions(d.GetOptions()? | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM)?;
         // Cancel comes back as an error.
+        if d.Show(Some(owner)).is_err() {
+            return Ok(None);
+        }
+        let name = d.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let path = name.to_string().ok();
+        CoTaskMemFree(Some(name.0 as *const _));
+        Ok(path.map(std::path::PathBuf::from))
+    }
+}
+
+unsafe fn folder_dialog(owner: HWND, title: &HSTRING) -> windows::core::Result<Option<std::path::PathBuf>> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    unsafe {
+        let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+        d.SetTitle(title)?;
+        d.SetOptions(d.GetOptions()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)?;
+        if d.Show(Some(owner)).is_err() {
+            return Ok(None);
+        }
+        let name = d.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let path = name.to_string().ok();
+        CoTaskMemFree(Some(name.0 as *const _));
+        Ok(path.map(std::path::PathBuf::from))
+    }
+}
+
+unsafe fn open_dialog_multi(owner: HWND, title: &HSTRING) -> windows::core::Result<Vec<std::path::PathBuf>> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    unsafe {
+        let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+        d.SetTitle(title)?;
+        d.SetOptions(d.GetOptions()? | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM | FOS_ALLOWMULTISELECT)?;
+        if d.Show(Some(owner)).is_err() {
+            return Ok(Vec::new());
+        }
+        let results = d.GetResults()?;
+        let n = results.GetCount()?;
+        let mut out = Vec::with_capacity(n as usize);
+        for i in 0..n {
+            let item = results.GetItemAt(i)?;
+            let name = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+            if let Ok(s) = name.to_string() {
+                out.push(std::path::PathBuf::from(s));
+            }
+            CoTaskMemFree(Some(name.0 as *const _));
+        }
+        Ok(out)
+    }
+}
+
+unsafe fn save_dialog(owner: HWND, title: &HSTRING, suggested: &HSTRING, filters: &[(HSTRING, HSTRING)]) -> windows::core::Result<Option<std::path::PathBuf>> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    unsafe {
+        let d: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER)?;
+        let specs: Vec<COMDLG_FILTERSPEC> = filters.iter().map(|(n, p)| COMDLG_FILTERSPEC { pszName: PCWSTR(n.as_ptr()), pszSpec: PCWSTR(p.as_ptr()) }).collect();
+        if !specs.is_empty() {
+            d.SetFileTypes(&specs)?;
+        }
+        d.SetTitle(title)?;
+        d.SetFileName(suggested)?;
+        d.SetOptions(d.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)?;
         if d.Show(Some(owner)).is_err() {
             return Ok(None);
         }

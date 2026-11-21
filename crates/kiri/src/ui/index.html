@@ -151,6 +151,7 @@ nav svg.i { width: 17px; height: 17px; color: var(--nav-ico); }
 /* A colour per view so the rail isn't a grey column of the same stroke. */
 nav button[data-view="containers"] { --nav-ico: #5B9CF5; }
 nav button[data-view="compose"] { --nav-ico: #38BDF8; }
+nav button[data-view="projects"] { --nav-ico: #84CC16; }
 nav button[data-view="images"] { --nav-ico: #2DD4BF; }
 nav button[data-view="volumes"] { --nav-ico: #E8A317; }
 nav button[data-view="networks"] { --nav-ico: #A78BFA; }
@@ -164,6 +165,7 @@ nav button[data-view="settings"] { --nav-ico: #818CF8; }
 @media (prefers-color-scheme: light) {
   nav button[data-view="containers"] { --nav-ico: #2563EB; }
   nav button[data-view="compose"] { --nav-ico: #0369A1; }
+  nav button[data-view="projects"] { --nav-ico: #4D7C0F; }
   nav button[data-view="images"] { --nav-ico: #0F766E; }
   nav button[data-view="volumes"] { --nav-ico: #B45309; }
   nav button[data-view="networks"] { --nav-ico: #7C3AED; }
@@ -178,6 +180,419 @@ nav button > .beta, nav .count { flex: none; }
 nav button > .beta.gone { display: none; }
 .beta { display: inline-block; margin-left: 6px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: var(--fs-small); font-weight: 600; line-height: 1.5; vertical-align: 2px; letter-spacing: .02em; }
 h2 .beta { vertical-align: 3px; }
+
+
+/* Projects: square cards, 10px gutters. auto-fill so a normal window gets ~4
+   cards that stretch to the full row; wider windows add columns instead of
+   ballooning four giant tiles. */
+.proj-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px;
+  padding: 8px 0 28px; align-items: start;
+}
+.proj-card {
+  --proj-c: #84CC16;
+  position: relative; overflow: hidden; width: 100%; min-width: 0; min-height: 0;
+  border: 1px solid var(--line); border-radius: 14px;
+  background:
+    radial-gradient(120% 80% at 10% 0%, color-mix(in srgb, var(--proj-c) 16%, transparent), transparent 58%),
+    var(--panel);
+  padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 10px;
+  aspect-ratio: 1 / 1; height: auto; cursor: pointer;
+  transition: border-color .14s ease, background .14s ease, box-shadow .14s ease;
+}
+/* Same selected wash as Containers / Images grid cards — fill, not lift. */
+.proj-card:hover {
+  background: color-mix(in srgb, var(--blue) 18%, var(--panel));
+  border-color: color-mix(in srgb, var(--blue) 50%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 22%, transparent);
+}
+.proj-card.add {
+  border-style: dashed; place-items: center; justify-content: center; color: var(--muted); text-align: center;
+  background: color-mix(in srgb, var(--raised) 55%, transparent); gap: 0;
+}
+.proj-card.add:hover {
+  color: var(--blue); border-color: color-mix(in srgb, var(--blue) 50%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 22%, transparent);
+  background: color-mix(in srgb, var(--blue) 18%, var(--panel));
+}
+.proj-card.add .plus {
+  width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
+  font-size: 28px; line-height: 1; font-weight: 300;
+  background: color-mix(in srgb, var(--blue) 12%, var(--panel)); color: var(--blue);
+}
+.proj-card.add .hint { font-size: var(--fs-small); margin-top: 8px; }
+.proj-card-ico {
+  width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; flex: none;
+  background: color-mix(in srgb, var(--proj-c, #84CC16) 22%, var(--panel));
+  /* Mix toward --text so light theme darkens pale accents; dark theme stays bright. */
+  color: color-mix(in srgb, var(--proj-c, #84CC16) 62%, var(--text));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--proj-c, #84CC16) 38%, var(--line));
+}
+.proj-card-ico svg { width: 20px; height: 20px; fill: currentColor; }
+@media (prefers-color-scheme: light) {
+  .proj-card-ico {
+    background: color-mix(in srgb, var(--proj-c, #84CC16) 18%, var(--raised));
+    color: color-mix(in srgb, var(--proj-c, #84CC16) 55%, #0F1419);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--proj-c, #84CC16) 45%, var(--line));
+  }
+}
+.proj-modal { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: color-mix(in srgb, #000 45%, transparent); }
+.proj-modal .sheet { width: min(460px, calc(100vw - 32px)); max-height: min(640px, calc(100vh - 48px)); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; display: grid; gap: 12px; box-shadow: 0 16px 48px color-mix(in srgb, #000 35%, transparent); position: relative; }
+.proj-modal .head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.proj-modal .head h3 { margin: 0; flex: 1; min-width: 0; font-size: var(--fs-title); }
+.proj-modal .xclose { width: 30px; height: 30px; flex: none; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; padding: 0; }
+.proj-modal .xclose:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.proj-modal .xclose svg { width: 14px; height: 14px; fill: currentColor; }
+.proj-modal label { display: grid; gap: 6px; font-size: var(--fs-small); color: var(--muted); }
+.proj-modal input[type=text], .proj-modal textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--text); padding: 8px 10px; font: inherit; }
+.proj-modal input[type=text].bad { border-color: var(--red, #ef4444); }
+.proj-modal .ferr { color: var(--red, #ef4444); font-size: var(--fs-small); min-height: 1.15em; }
+.proj-modal textarea { min-height: 56px; max-height: 120px; resize: vertical; }
+.proj-modal .modes { display: grid; gap: 8px; }
+.proj-modal .mode { display: flex; gap: 8px; align-items: flex-start; padding: 10px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.proj-modal .mode.on { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 8%, var(--panel)); }
+.proj-modal .mode b { display: block; color: var(--text); }
+.proj-modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.proj-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; position: relative; }
+.proj-pick .field { display: grid; gap: 6px; font-size: var(--fs-small); color: var(--muted); min-width: 0; }
+.proj-pick .ico-trig { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--text); cursor: pointer; font: inherit; text-align: left; }
+.proj-pick .ico-trig:hover { border-color: color-mix(in srgb, var(--text) 28%, var(--line)); }
+.proj-pick .ico-trig .preview { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; flex: none; color: var(--proj-c, var(--blue)); background: color-mix(in srgb, var(--proj-c, var(--blue)) 16%, var(--panel)); }
+.proj-pick .ico-trig .preview svg { width: 16px; height: 16px; fill: currentColor; }
+.proj-pick .ico-trig .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.proj-pick .ico-trig .caret { width: 12px; height: 12px; flex: none; color: var(--muted); fill: currentColor; opacity: .7; transform: rotate(90deg); }
+.proj-pick .ico-pop { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 2; max-height: min(220px, 40vh); overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 12px 32px color-mix(in srgb, #000 35%, transparent); display: none; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
+.proj-pick .ico-pop.open { display: grid; }
+.proj-pick .ico { width: 100%; aspect-ratio: 1; border-radius: 8px; border: 1px solid transparent; background: var(--raised); color: var(--muted); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.proj-pick .ico svg { width: 18px; height: 18px; fill: currentColor; }
+.proj-pick .ico:hover { color: var(--text); border-color: var(--line); }
+.proj-pick .ico.on { border-color: var(--proj-c, var(--blue)); color: var(--proj-c, var(--blue)); background: color-mix(in srgb, var(--proj-c, var(--blue)) 16%, var(--panel)); }
+.proj-pick .color-trig { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); cursor: pointer; position: relative; overflow: hidden; }
+.proj-pick .color-trig:hover { border-color: color-mix(in srgb, var(--text) 28%, var(--line)); }
+.proj-pick .color-trig input[type=color] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: 0; padding: 0; }
+.proj-pick .color-trig .swatch { width: 28px; height: 28px; border-radius: 7px; flex: none; background: var(--c); box-shadow: inset 0 0 0 1px color-mix(in srgb, #000 18%, transparent); }
+.proj-pick .color-trig .hex { font-variant-numeric: tabular-nums; color: var(--text); letter-spacing: .02em; }
+.proj-tree-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; align-items: center; justify-content: flex-end; }
+.proj-tree-tools .btn.ic {
+  width: 30px; height: 30px; padding: 0; display: grid; place-items: center; position: relative;
+  border-radius: 8px; border: 1px solid transparent;
+}
+.proj-tree-tools .btn.ic svg { width: 14px; height: 14px; fill: currentColor; }
+/* Upload = blue; create = green — readable chips, not washed-out grey. */
+.proj-tree-tools .btn.ic.act-up {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 18%, var(--panel));
+  border-color: color-mix(in srgb, var(--blue) 34%, var(--line));
+}
+.proj-tree-tools .btn.ic.act-up:hover:not(:disabled) {
+  color: var(--blue-hover, var(--blue));
+  background: color-mix(in srgb, var(--blue) 28%, var(--panel));
+  border-color: color-mix(in srgb, var(--blue) 48%, var(--line));
+}
+.proj-tree-tools .btn.ic.act-new {
+  color: color-mix(in srgb, var(--moss) 78%, var(--text));
+  background: color-mix(in srgb, var(--moss) 18%, var(--panel));
+  border-color: color-mix(in srgb, var(--moss) 34%, var(--line));
+}
+.proj-tree-tools .btn.ic.act-new:hover:not(:disabled) {
+  color: color-mix(in srgb, var(--moss) 55%, black);
+  background: color-mix(in srgb, var(--moss) 28%, var(--panel));
+  border-color: color-mix(in srgb, var(--moss) 48%, var(--line));
+}
+@media (prefers-color-scheme: light) {
+  .proj-tree-tools .btn.ic.act-new:hover:not(:disabled) { color: #1A7A4A; }
+}
+.proj-tree-tools .btn.ic.with-plus::after,
+.proj-tree-tools .btn.ic.with-up::after {
+  position: absolute; right: 1px; bottom: 0;
+  font-size: 11px; font-weight: 700; line-height: 1; color: currentColor; pointer-events: none;
+}
+.proj-tree-tools .btn.ic.with-plus::after { content: "+"; }
+.proj-tree-tools .btn.ic.with-up::after { content: "↑"; font-size: 10px; }
+.proj-tree-tools .btn.ic:disabled,
+.proj-tree-tools.locked .btn.ic {
+  opacity: .4; cursor: not-allowed; color: var(--faint) !important;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--text) 5%, var(--raised)) !important;
+  border-color: var(--line) !important;
+}
+.proj-tree-tools .btn.ic.with-plus:disabled::after,
+.proj-tree-tools .btn.ic.with-up:disabled::after,
+.proj-tree-tools.locked .btn.ic.with-plus::after,
+.proj-tree-tools.locked .btn.ic.with-up::after { color: var(--faint); }
+.dialog .ask-field { width: 100%; margin: 0; }
+.proj-tree { flex: 1; min-height: 0; overflow: hidden; font-size: var(--fs-small); display: flex; flex-direction: column; gap: 2px; }
+.proj-tree-root { flex: none; }
+.proj-tree-body { flex: 1; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 1px; }
+.proj-tree > ul { list-style: none; margin: 0; padding: 0; }
+.proj-tree ul { list-style: none; margin: 0; padding: 0; }
+.proj-trow { display: flex; align-items: center; gap: 2px; width: 100%; min-width: 0; min-height: 28px; padding: 0 4px 0 0; border-radius: 7px; box-sizing: border-box; cursor: pointer; color: var(--text); }
+.proj-trow:hover { background: var(--row-hover); }
+.proj-trow.chosen { background: color-mix(in srgb, var(--blue) 14%, transparent); }
+.proj-trow.root { font-weight: 650; padding-right: 2px; }
+.proj-trow .twist { width: 20px; height: 24px; display: grid; place-items: center; flex: none; border: 0; background: transparent; color: var(--faint); border-radius: 6px; cursor: pointer; padding: 0; }
+.proj-trow .twist:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.proj-trow .twist svg { width: 11px; height: 11px; fill: currentColor; transition: transform .15s ease; }
+.proj-trow .twist[aria-expanded=true] svg { transform: rotate(90deg); }
+.proj-trow .twist.leaf { visibility: hidden; pointer-events: none; }
+.proj-trow .ic { width: 15px; height: 15px; flex: none; opacity: 1; }
+/* File-type tints (soft, scannable — folders blue, scripts green, config amber…). */
+.proj-trow .ic.ik-dir { fill: #6BA3E8; }
+.proj-trow .ic.ik-md { fill: #7C9CE0; }
+.proj-trow .ic.ik-yaml { fill: #C9A227; }
+.proj-trow .ic.ik-shell { fill: #3FA66B; }
+.proj-trow .ic.ik-bat { fill: #5B8DEF; }
+.proj-trow .ic.ik-ps { fill: #3B8ED0; }
+.proj-trow .ic.ik-env { fill: #9B8AD8; }
+.proj-trow .ic.ik-docker { fill: #4A9BD9; }
+.proj-trow .ic.ik-json { fill: #D19A66; }
+.proj-trow .ic.ik-toml { fill: #9B8AD8; }
+.proj-trow .ic.ik-file { fill: var(--muted); }
+@media (prefers-color-scheme: light) {
+  .proj-trow .ic.ik-dir { fill: #3B82C4; }
+  .proj-trow .ic.ik-md { fill: #4C6FB8; }
+  .proj-trow .ic.ik-yaml { fill: #9A7B12; }
+  .proj-trow .ic.ik-shell { fill: #1F7A4D; }
+  .proj-trow .ic.ik-bat { fill: #3568C4; }
+  .proj-trow .ic.ik-ps { fill: #2A6FA8; }
+  .proj-trow .ic.ik-env { fill: #6F5BB0; }
+  .proj-trow .ic.ik-docker { fill: #2F7EB8; }
+  .proj-trow .ic.ik-json { fill: #A86B2D; }
+  .proj-trow .ic.ik-toml { fill: #6F5BB0; }
+}
+.proj-trow.chosen .ic { filter: brightness(1.08); }
+.proj-trow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; font-weight: 550; }
+.proj-trow.root .nm { font-weight: 650; }
+.proj-trow .root-fold {
+  width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; padding: 0;
+}
+.proj-trow .root-fold:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.proj-trow .root-fold:disabled { opacity: .35; cursor: default; background: transparent; }
+.proj-trow .root-fold svg { width: 14px; height: 14px; fill: currentColor; }
+.proj-trow .acts { display: none; align-items: center; gap: 1px; flex: none; }
+.proj-trow:hover .acts, .proj-trow.chosen .acts { display: inline-flex; }
+.proj-trow .acts .btn.ic { width: 22px; height: 22px; padding: 0; border-radius: 6px; display: grid; place-items: center; }
+.proj-trow .acts .btn.ic svg { width: 12px; height: 12px; fill: currentColor; }
+.proj-tree .muted { padding: 10px 8px; }
+.proj-card.missing { opacity: .78; border-color: color-mix(in srgb, var(--red, #ef4444) 45%, var(--line)); }
+.proj-card .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.proj-card .meta { flex: 1; min-width: 0; display: grid; gap: 4px; align-content: start; }
+.proj-card .meta b {
+  font-size: 15px; letter-spacing: -.015em; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.proj-card .meta .sub {
+  color: var(--muted); font-size: var(--fs-small); line-height: 1.4;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  word-break: break-word;
+}
+.proj-card .meta .warn { color: var(--red, #ef4444); font-size: var(--fs-small); }
+.proj-card .badge {
+  flex: none; font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line);
+  color: var(--muted); background: color-mix(in srgb, var(--raised) 70%, transparent);
+}
+.proj-card .badge.kit { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); background: color-mix(in srgb, var(--blue) 10%, transparent); }
+.proj-card .card-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex: none; }
+.proj-card .card-acts {
+  display: inline-flex; gap: 2px; padding: 2px;
+  border-radius: 9px; background: color-mix(in srgb, var(--raised) 80%, transparent);
+  border: 1px solid transparent;
+  opacity: 0; transform: translateY(-2px); transition: opacity .14s ease, transform .14s ease, border-color .14s ease;
+}
+.proj-card:hover .card-acts, .proj-card:focus-within .card-acts {
+  opacity: 1; transform: translateY(0);
+  border-color: var(--line);
+}
+.proj-card .card-acts .btn.ic { width: 26px; height: 26px; padding: 0; border-radius: 7px; display: grid; place-items: center; color: var(--muted); }
+.proj-card .card-acts .btn.ic:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.proj-card .card-acts .btn.ic svg { width: 13px; height: 13px; fill: currentColor; }
+.proj-card .card-acts .btn.ic.danger:hover { color: var(--red, #ef4444); background: color-mix(in srgb, var(--red, #ef4444) 12%, transparent); }
+.proj-card .foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto;
+  padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  color: var(--faint); font-size: var(--fs-small);
+}
+.proj-card .foot .go { color: var(--muted); font-weight: 550; }
+.proj-card:hover .foot .go { color: var(--blue); }
+.proj-card .pins { display: flex; flex-wrap: wrap; gap: 6px; }
+.proj-card .pins .btn { font-size: var(--fs-small); }
+/* Fill the content pane; only the tree / editor / term scroll inside. */
+#content:has(> .proj-ide) { overflow: hidden; display: flex; flex-direction: column; padding-bottom: 12px; }
+.proj-ide { display: grid; grid-template-columns: minmax(200px, 260px) 1fr; gap: 12px; flex: 1; min-height: 0; }
+.proj-ide-side { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 10px; }
+.proj-ide-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.proj-ide-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.proj-ide-bar .grow { flex: 1; min-width: 8px; }
+.proj-ide-acts { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.proj-pane-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.proj-pane-toggle button { border: 0; background: transparent; color: var(--muted); padding: 5px 12px; font: inherit; cursor: pointer; }
+.proj-pane-toggle button.on { background: color-mix(in srgb, var(--blue) 16%, var(--panel)); color: var(--text); }
+/* Tab strip: always reserve a thin scrollbar lane (macOS overlay bars are ~11px) so labels
+   stay clear and the strip doesn't jump when the bar appears. */
+.proj-tabs { display: flex; align-items: flex-end; gap: 0; padding: 0 6px 10px; border-bottom: 1px solid var(--line); overflow-x: auto; overflow-y: hidden; flex: none; background: color-mix(in srgb, var(--text) 4%, var(--raised)); min-height: 44px; box-sizing: border-box; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text) 28%, transparent) color-mix(in srgb, var(--text) 6%, transparent); }
+.proj-tabs::-webkit-scrollbar { height: 4px; }
+.proj-tabs::-webkit-scrollbar-track { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 99px; margin: 0 4px; }
+.proj-tabs::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 28%, transparent); border-radius: 99px; }
+.proj-tabs::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text) 40%, transparent); }
+.proj-tab { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-small); font-weight: 500; cursor: pointer; white-space: nowrap; margin-bottom: -1px; opacity: .72; flex: none; height: 34px; box-sizing: border-box; }
+.proj-tab:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); opacity: 1; }
+.proj-tab.on { color: var(--text); font-weight: 650; background: var(--panel); border-bottom-color: var(--blue); box-shadow: inset 0 -2px 0 var(--blue); opacity: 1; }
+.proj-tab .x { width: 16px; height: 16px; display: grid; place-items: center; border-radius: 4px; opacity: .4; font-size: 14px; line-height: 1; }
+.proj-tab:hover .x, .proj-tab.on .x { opacity: .7; }
+.proj-tab .x:hover { opacity: 1; background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text); }
+.proj-tab-add { flex: none; width: 30px; height: 30px; margin: 3px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: 600 16px/1 var(--ui-font); cursor: pointer; display: grid; place-items: center; }
+.proj-tab-add:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.proj-editor-wrap, .proj-term-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.proj-editor { flex: 1; min-height: 0; width: 100%; border: 0; resize: none; padding: 12px 14px; background: var(--raised); color: var(--text); font-family: var(--mono-font, ui-monospace, Menlo, Consolas, monospace); font-size: 13px; line-height: 1.45; outline: none; overflow: auto; tab-size: 2; white-space: pre; overflow-wrap: normal; }
+.proj-editor-empty { flex: 1; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
+/* Editor find / replace (Ctrl/Cmd+F, Ctrl/Cmd+H). */
+.proj-find {
+  position: absolute; z-index: 30; top: 8px; right: 12px; display: flex; flex-direction: column; gap: 6px;
+  min-width: 320px; max-width: min(420px, calc(100% - 24px)); padding: 8px 10px; border-radius: 10px;
+  background: var(--raised); border: 1px solid var(--line); box-shadow: 0 10px 28px rgb(0 0 0 / .28);
+}
+.proj-find[hidden] { display: none; }
+.proj-find .pf-row { display: flex; align-items: center; gap: 6px; }
+.proj-find input {
+  flex: 1; min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); color: var(--text); font: var(--fs) var(--ui-font); outline: none;
+  -webkit-user-select: text; user-select: text;
+}
+.proj-find input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent); }
+.proj-find .pf-count { flex: none; min-width: 52px; text-align: right; color: var(--faint); font-size: var(--fs-small); }
+.proj-find .pf-btn {
+  flex: none; height: 28px; min-width: 28px; padding: 0 8px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--muted); font: 500 var(--fs-small) var(--ui-font); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+}
+.proj-find .pf-btn:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.proj-find .pf-btn.on { color: var(--blue); background: color-mix(in srgb, var(--blue) 14%, transparent); }
+.proj-find .pf-btn.act { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+.proj-find .pf-btn.act:hover { background: color-mix(in srgb, var(--text) 12%, transparent); }
+.proj-find .pf-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.proj-find .pf-repl { display: none; }
+.proj-find.replace .pf-repl { display: flex; }
+/* Syntax overlay: calm, readable colours (keys are soft blue — not error-red). */
+:root {
+  --tok-c: #8B949E; --tok-k: #B392F0; --tok-s: #7EE787; --tok-n: #F0B45A;
+  --tok-key: #79B8FF; --tok-v: #9DB4D0; --tok-f: #6CB6FF; --tok-b: #5CD0C5;
+  --tok-o: #D2A8FF; --tok-p: #8B949E; --tok-ph: #E3B341;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --tok-c: #6E7781; --tok-k: #8250DF; --tok-s: #1A7F37; --tok-n: #9A6700;
+    --tok-key: #0550AE; --tok-v: #6E7781; --tok-f: #0A66C2; --tok-b: #0550AE;
+    --tok-o: #8250DF; --tok-p: #656D76; --tok-ph: #9A6700;
+  }
+}
+.proj-code {
+  --proj-ed-pad: 12px 14px;
+  --proj-ed-font: 13px / 1.45 var(--mono-font, ui-monospace, Menlo, Consolas, monospace);
+  flex: 1; min-height: 0; min-width: 0; position: relative; overflow: hidden; background: var(--raised);
+}
+.proj-code-hl {
+  position: absolute; inset: 0; margin: 0; padding: var(--proj-ed-pad); border: 0;
+  overflow: hidden; pointer-events: none; white-space: pre; tab-size: 2; box-sizing: border-box;
+  font: var(--proj-ed-font); color: var(--text); background: transparent;
+}
+.proj-code > .proj-editor {
+  position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box;
+  padding: var(--proj-ed-pad); font: var(--proj-ed-font); background: transparent;
+  color: transparent; caret-color: var(--text); -webkit-text-fill-color: transparent;
+  z-index: 1; resize: none;
+}
+.proj-code > .proj-editor::selection { background: color-mix(in srgb, var(--blue) 35%, transparent); color: transparent; -webkit-text-fill-color: transparent; }
+.proj-code > .proj-editor::-moz-selection { background: color-mix(in srgb, var(--blue) 35%, transparent); color: transparent; }
+.tok-c { color: var(--tok-c); font-style: italic; }
+.tok-k { color: var(--tok-k); font-weight: 600; }
+.tok-s { color: var(--tok-s); }
+.tok-n { color: var(--tok-n); }
+.tok-key { color: var(--tok-key); font-weight: 550; }
+.tok-v { color: var(--tok-v); }
+.tok-f { color: var(--tok-f); }
+.tok-b { color: var(--tok-b); }
+.tok-o { color: var(--tok-o); }
+.tok-p { color: var(--tok-p); }
+/* $VAR / ${VAR:-default} placeholders — amber so they stand out from keys & strings. */
+.tok-ph { color: var(--tok-ph); font-weight: 600; }
+/* Markdown Edit / Preview — document-style preview closer to IDEA. */
+.proj-ide-bar .proj-md-mode { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--bg); }
+.proj-ide-bar .proj-md-mode button { height: 28px; padding: 0 12px; border: 0; background: transparent; color: var(--muted); font: 500 var(--fs) var(--ui-font); cursor: pointer; }
+.proj-ide-bar .proj-md-mode button[aria-pressed=true] { background: color-mix(in srgb, var(--blue) 16%, transparent); color: var(--text); }
+.proj-editor-wrap > .proj-md-preview { flex: 1; min-height: 0; overflow: auto; background: var(--panel); }
+.proj-md-preview { -webkit-user-select: text; user-select: text; cursor: text; }
+.proj-md-preview.md-doc { padding: 28px 20px 56px; line-height: 1.7; font-size: 13.5px; color: var(--text); }
+.proj-md-preview.md-doc .md-doc-inner { max-width: 780px; margin: 0 auto; }
+.proj-md-preview.md-doc :is(h1, h2, h3, h4, h5, h6) { margin: 1.35em 0 .55em; font-weight: 700; letter-spacing: -.02em; line-height: 1.3; color: var(--text); }
+.proj-md-preview.md-doc h1 { font-size: 2em; padding-bottom: .4em; border-bottom: 1px solid var(--line); }
+.proj-md-preview.md-doc h2 { font-size: 1.5em; padding-bottom: .35em; border-bottom: 1px solid color-mix(in srgb, var(--line) 85%, transparent); }
+.proj-md-preview.md-doc h3 { font-size: 1.25em; }
+.proj-md-preview.md-doc h4 { font-size: 1.1em; }
+.proj-md-preview.md-doc h5, .proj-md-preview.md-doc h6 { font-size: 1em; color: var(--muted); }
+.proj-md-preview.md-doc :is(h1, h2, h3, h4, h5, h6):first-child { margin-top: 0; }
+.proj-md-preview.md-doc p, .proj-md-preview.md-doc ul, .proj-md-preview.md-doc ol,
+.proj-md-preview.md-doc .md-code, .proj-md-preview.md-doc table, .proj-md-preview.md-doc blockquote { margin: 0 0 1em; }
+.proj-md-preview.md-doc ul, .proj-md-preview.md-doc ol { padding-left: 1.6em; }
+.proj-md-preview.md-doc li + li { margin-top: .28em; }
+.proj-md-preview.md-doc a { color: var(--blue); text-decoration: none; }
+.proj-md-preview.md-doc a:hover { text-decoration: underline; }
+.proj-md-preview.md-doc hr { border: 0; border-top: 1px solid var(--line); margin: 1.6em 0; }
+.proj-md-preview.md-doc code { font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: .9em; padding: .15em .4em; border-radius: 5px; background: color-mix(in srgb, var(--text) 7%, var(--raised)); }
+.proj-md-preview.md-doc .md-code { position: relative; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); overflow: hidden; }
+.proj-md-preview.md-doc .md-code .md-lang { display: block; padding: 6px 14px; font: 500 11px var(--ui-font); color: var(--muted); border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--text) 4%, var(--raised)); text-transform: lowercase; }
+.proj-md-preview.md-doc .md-code pre { margin: 0; padding: 14px 16px; padding-right: 68px; overflow: auto; }
+.proj-md-preview.md-doc .md-code code { padding: 0; background: none; white-space: pre; font-size: .9em; }
+.proj-md-preview.md-doc .md-copy { position: absolute; top: 8px; right: 8px; z-index: 1; height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); font: 500 var(--fs-small) var(--ui-font); cursor: pointer; }
+.proj-md-preview.md-doc .md-code:has(.md-lang) .md-copy { top: 36px; }
+.proj-md-preview.md-doc .md-copy:hover { color: var(--text); }
+.proj-md-preview.md-doc blockquote { margin: 0 0 1em; padding: 2px 0 2px 14px; border-left: 4px solid color-mix(in srgb, var(--blue) 45%, var(--line)); color: var(--muted); }
+.proj-md-preview.md-doc table { width: 100%; border-collapse: collapse; font-size: .95em; display: block; overflow-x: auto; }
+.proj-md-preview.md-doc th, .proj-md-preview.md-doc td { border: 1px solid var(--line); padding: 9px 13px; text-align: left; vertical-align: top; }
+.proj-md-preview.md-doc th { background: color-mix(in srgb, var(--text) 5%, var(--raised)); font-weight: 650; }
+.proj-md-preview.md-doc tr:nth-child(even) td { background: color-mix(in srgb, var(--text) 2.5%, transparent); }
+.proj-md-preview.md-doc .md-tasks { list-style: none; padding-left: .2em; }
+.proj-md-preview.md-doc .md-task { display: flex; align-items: flex-start; gap: 8px; }
+.proj-md-preview.md-doc .md-task input { margin-top: .4em; flex: none; accent-color: var(--blue); }
+.proj-md-preview.md-doc .md-img { max-width: 100%; border-radius: 8px; margin: .5em 0; display: block; border: 1px solid var(--line); }
+.proj-md-preview.md-doc del { color: var(--muted); }
+.proj-md-preview .notes-blank { min-height: 160px; }
+/* Same xterm stack as the bottom terminal; each tab keeps its host across re-renders. */
+.proj-term-wrap { background: var(--term-bg, #0B0F13); min-height: 0; position: relative; }
+/* Tab strip follows --term-fg/--term-bg so light theme stays readable (dark used to hard-code near-white). */
+.proj-term-wrap > .proj-tabs {
+  background: color-mix(in srgb, var(--term-fg) 6%, var(--term-bg, #0B0F13));
+  border-bottom-color: color-mix(in srgb, var(--term-fg) 14%, transparent);
+  scrollbar-color: color-mix(in srgb, var(--term-fg) 32%, transparent) color-mix(in srgb, var(--term-fg) 8%, transparent);
+}
+.proj-term-wrap > .proj-tabs::-webkit-scrollbar-track { background: color-mix(in srgb, var(--term-fg) 8%, transparent); }
+.proj-term-wrap > .proj-tabs::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--term-fg) 32%, transparent); }
+.proj-term-wrap > .proj-tabs::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--term-fg) 46%, transparent); }
+.proj-term-wrap > .proj-tabs .proj-tab { color: color-mix(in srgb, var(--term-fg) 78%, transparent); opacity: 1; }
+.proj-term-wrap > .proj-tabs .proj-tab:hover { color: var(--term-fg); background: color-mix(in srgb, var(--term-fg) 8%, transparent); }
+.proj-term-wrap > .proj-tabs .proj-tab.on {
+  color: var(--term-fg); font-weight: 650;
+  background: color-mix(in srgb, var(--term-fg) 8%, var(--term-bg, #0B0F13));
+  border-bottom-color: var(--blue); box-shadow: inset 0 -2px 0 var(--blue);
+}
+.proj-term-wrap > .proj-tabs .proj-tab .x { opacity: .55; }
+.proj-term-wrap > .proj-tabs .proj-tab:hover .x,
+.proj-term-wrap > .proj-tabs .proj-tab.on .x { opacity: .85; }
+.proj-term-wrap > .proj-tabs .proj-tab .x:hover { background: color-mix(in srgb, var(--term-fg) 12%, transparent); color: var(--term-fg); }
+.proj-term-wrap > .proj-tabs .proj-tab-add { color: color-mix(in srgb, var(--term-fg) 72%, transparent); }
+.proj-term-wrap > .proj-tabs .proj-tab-add:hover { color: var(--term-fg); background: color-mix(in srgb, var(--term-fg) 10%, transparent); }
+.proj-term-body { flex: 1; min-height: 0; position: relative; }
+.proj-htx { position: absolute; inset: 0; padding: 4px 0 0 8px; }
+.proj-htx[hidden] { display: none !important; }
+.proj-htx .xterm { height: 100%; }
+.proj-htx .xterm-viewport { scrollbar-width: thin; }
+@media (max-width: 900px) {
+  #content:has(> .proj-ide) { overflow: auto; }
+  .proj-ide { grid-template-columns: 1fr; flex: none; min-height: 520px; }
+  .proj-ide-side { max-height: 220px; }
+  .proj-ide-main { min-height: 320px; }
+}
 
 .vm { margin-top: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 10px; }
 .vm-head { display: flex; align-items: center; gap: 7px; font-weight: 600; }
@@ -938,7 +1353,23 @@ tr.warnrow .name > div:last-child { min-width: 0; } tr.warnrow :is(.wtitle, .sub
 /* Logs */
 .cmp-logs { font: var(--fs-small)/1.65 var(--mono-font); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; height: 440px; overflow: auto; direction: ltr; }
 .cmp-logs .t { color: var(--faint); margin-inline-end: 8px; }
-.logbar .cmp-logsvcs { flex-wrap: wrap; min-width: 0; --c0: #6EA8FE; --c1: #3FB68B; --c2: #A78BFA; --c3: #E0A060; --c4: #F87171; }
+/* Many compose services: one row, scroll sideways — don't wrap Refresh under the pills. */
+.logbar:has(.cmp-logsvcs) { flex-wrap: nowrap; min-width: 0; gap: 10px; }
+.logbar:has(.cmp-logsvcs) > .btn, .logbar:has(.cmp-logsvcs) > button { flex: none; }
+.logbar .cmp-logsvcs {
+  flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; align-items: center;
+  overflow-x: auto; overflow-y: hidden;
+  /* Always reserve the scrollbar lane so it never covers the pill bottoms. */
+  padding-bottom: 10px; box-sizing: content-box;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 28%, transparent) color-mix(in srgb, var(--text) 6%, transparent);
+  --c0: #6EA8FE; --c1: #3FB68B; --c2: #A78BFA; --c3: #E0A060; --c4: #F87171;
+}
+.logbar .cmp-logsvcs::-webkit-scrollbar { height: 4px; }
+.logbar .cmp-logsvcs::-webkit-scrollbar-track { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 99px; margin: 0 2px; }
+.logbar .cmp-logsvcs::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 28%, transparent); border-radius: 99px; }
+.logbar .cmp-logsvcs .ltab { flex: none; }
 .card.sel { cursor: pointer; -webkit-user-select: none; user-select: none; }
 #cmp-warn { color: var(--sun-text); }
 
@@ -1247,6 +1678,7 @@ td.actions .acts-row > * { flex: none; }
 @media (prefers-reduced-motion: reduce) { .btn.ic.rolling::after { animation-duration: 2s; } .acts-row .enter { animation: none; } }
 /* The buttons sit on a fade of the page colour, which shows as a darker band on a hovered row. */
 td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px; background: linear-gradient(90deg, transparent, var(--bg) 24px); }
+.menu .sep { height: 1px; margin: 4px 2px; background: var(--line); pointer-events: none; }
 .menu { position: fixed; z-index: 7; min-width: 150px; padding: 4px; display: grid; background: var(--panel);
         border: 1px solid var(--line); border-radius: 8px; }
 .menu button { height: 30px; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text);
@@ -2689,6 +3121,7 @@ main { position: relative; }
   <nav>
     <button data-view="containers"><svg class="i" viewBox="0 0 256 256" data-ph="cube"></svg><span class="lbl" data-i18n="Containers">Containers</span><span class="count" id="n-containers">0</span></button>
     <button data-view="compose"><svg class="i" viewBox="0 0 256 256" data-ph="stack"></svg><span class="lbl" data-i18n="Compose">Compose</span><span class="count" id="n-compose"></span></button>
+    <button data-view="projects"><svg class="i" viewBox="0 0 256 256" data-ph="briefcase"></svg><span class="lbl" data-i18n="Projects">Projects</span><span class="count" id="n-projects"></span></button>
     <button data-view="images"><svg class="i" viewBox="0 0 256 256" data-ph="stack"></svg><span class="lbl" data-i18n="Images">Images</span><span class="count" id="n-images">0</span></button>
     <button data-view="volumes"><svg class="i" viewBox="0 0 256 256" data-ph="database"></svg><span class="lbl" data-i18n="Volumes">Volumes</span><span class="count" id="n-volumes">0</span></button>
     <button data-view="networks"><svg class="i" viewBox="0 0 256 256" data-ph="network"></svg><span class="lbl" data-i18n="Networks">Networks</span><span class="count" id="n-networks">0</span></button>
@@ -2783,6 +3216,8 @@ const ZH = {
   "Search notes…": "搜索便笺…", "notes": "便笺", "Folder name": "文件夹名称",
   "Subfolder name": "子目录名称",
   "Open location": "打开位置",
+  "Copy Path": "复制路径",
+  "Copy Relative Path": "复制相对路径",
   "Unsaved changes": "有未保存的更改",
   "Could not find Kiri's data folder": "找不到 Kiri 的数据目录",
   "Could not create the notes folder": "无法创建便笺目录",
@@ -3844,6 +4279,13 @@ const ZH = {
   "Restore": "还原",
   "Hide ({key})": "隐藏（{key}）",
   "Find in the terminal": "在终端中查找",
+  "Find in editor": "在编辑器中查找",
+  "Replace": "替换",
+  "Replace all": "全部替换",
+  "Match case": "匹配大小写",
+  "Show replace": "显示替换",
+  "Hide replace": "隐藏替换",
+  "Replaced {n}": "已替换 {n} 处",
   "Previous match": "上一个匹配",
   "Next match": "下一个匹配",
   "Close find": "关闭查找",
@@ -4144,6 +4586,93 @@ const ZH = {
   "Applying…": "正在应用…",
   "Creating…": "正在创建…",
   "Open a compose file…": "打开 compose 文件…",
+  "Projects": "项目",
+  "New project": "新建项目",
+  "Edit project": "编辑项目",
+  "Name": "名称",
+  "Description": "说明",
+  "Blank workspace": "空白工作区",
+  "Upload Dockerfiles, compose files and scripts in the project page.": "在项目页上传 Dockerfile、compose 与脚本。",
+  "Link a local folder": "关联本机目录",
+  "Point at an existing folder like src/docker. Files stay where they are.": "指向已有目录（如 src/docker），文件仍留在原处。",
+  "Create": "创建",
+  "Workspace": "工作区",
+  "Linked": "本机",
+  "Empty workspace — upload materials": "空工作区 — 请上传物料",
+  "Open to upload materials": "打开后上传物料",
+  "Upload files…": "上传文件…",
+  "Upload folder…": "上传文件夹…",
+  "New folder": "新建文件夹",
+  "Folder name": "文件夹名称",
+  "No materials yet. Upload files or a folder.": "还没有物料。请上传文件或文件夹。",
+  "Upload materials to detect scripts, compose files and Dockerfiles.": "上传物料后，将识别脚本、compose 与 Dockerfile。",
+  "Name is required": "请填写名称",
+  "Delete {path}?": "删除 {path}？",
+  "This cannot be undone.": "此操作无法撤销。",
+  "Delete": "删除",
+  "Project files in Kiri are deleted. Linked folders on disk are left alone.": "会删除 Kiri 内的项目文件；本机关联目录不会动。",
+  "e.g. szda-web docker": "例如 szda-web docker",
+
+  "Import kit…": "导入物料包…",
+  "Add folder…": "添加本机目录…",
+  "Export kit…": "导出物料包…",
+  "Show in Finder": "在访达中显示",
+  "Show in file manager": "在文件管理器中显示",
+  "Remove": "移除",
+  "No projects yet": "还没有项目",
+  "Add a local folder with Dockerfiles, compose files and scripts, or import a .kirikit pack to share one-click actions.": "添加包含 Dockerfile、compose 与脚本的本地目录，或导入 .kirikit 物料包，把一键操作分享给别人。",
+  "Loading projects…": "正在加载项目…",
+  "Kit": "物料包",
+  "Local": "本机",
+  "Folder missing": "目录不存在",
+  "Short guide for others (shown on the card)": "给别人的简短说明（显示在卡片上）",
+  "Save": "保存",
+  "Cancel": "取消",
+  "Scripts": "脚本",
+  "Compose files": "Compose 文件",
+  "Dockerfiles": "Dockerfile",
+  "Output": "输出",
+  "Run a script or build to see logs here.": "运行脚本或构建后，日志显示在这里。",
+  "Pin": "钉选",
+  "Unpin": "取消钉选",
+  "Run {name}": "运行 {name}",
+  "Arguments (optional), e.g. --push": "参数（可选），例如 --push",
+  "Run": "运行",
+  "Open": "打开",
+  "Build": "构建",
+  "Loading…": "加载中…",
+  "Remove project {name}?": "移除项目 {name}？",
+  "The imported kit files are deleted. Linked folders on disk are left alone.": "会删除已导入的物料包文件；本机链接的目录不会动。",
+  "Only the bookmark is removed. Your folder on disk is left alone.": "只移除书签，磁盘上的目录不会动。",
+  "Editor": "编辑器",
+  "Terminal": "终端",
+  "New terminal": "新建终端",
+  "Terminal {n}": "终端 {n}",
+  "Close Others": "关闭其他",
+  "Close to the Left": "关闭左侧",
+  "Close to the Right": "关闭右侧",
+  "Close All": "全部关闭",
+  "Discard unsaved changes in {n} tabs?": "丢弃 {n} 个标签页中的未保存更改？",
+  "New file": "新建文件",
+  "File name": "文件名",
+  "Upload…": "上传…",
+  "Open a file from the tree, or create a new one.": "从左侧打开文件，或新建一个。",
+  "Type a command…": "输入命令…",
+  "Commands run in the project root. Docker talks to Kiri.": "命令在项目根目录执行；Docker 指向 Kiri。",
+  "Icon": "图标",
+  "Color": "颜色",
+  "Choose icon": "选择图标",
+  "Pick a color": "选择颜色",
+  "Project root": "项目根目录",
+  "Adding into project root": "新增到项目根目录",
+  "Adding into {path}": "新增到 {path}",
+  "Select a folder to add files": "请先选择文件夹再新增",
+  "Name cannot contain / or \\": "名称不能包含 / 或 \\",
+  "Collapse": "折叠",
+  "Expand": "展开",
+  "A project with that name already exists": "已有同名项目",
+  "Invalid project name": "项目名称无效",
+
   "Recreating…": "正在重新创建…",
   "Removing…": "正在移除…",
   "Starts on line {n} · click to jump there": "从第 {n} 行开始 · 点击跳转",
@@ -4198,6 +4727,8 @@ const ZH_TW = {
   "Folder name": "資料夾名稱",
   "Subfolder name": "子目錄名稱",
   "Open location": "打開位置",
+  "Copy Path": "複製路徑",
+  "Copy Relative Path": "複製相對路徑",
   "Unsaved changes": "有未保存的更改",
   "Could not find Kiri's data folder": "找不到 Kiri 的資料目錄",
   "Could not create the notes folder": "無法建立便箋目錄",
@@ -4680,6 +5211,7 @@ const ZH_TW = {
   "Modified": "修改時間",
   "Save to Downloads": "保存到下載",
   "Show in Finder": "在 Finder 中顯示",
+  "Show in file manager": "在檔案管理員中顯示",
   "This file is binary or larger than 256 KB. Use Save to Downloads to open it.": "此文件為二進制或大於 256 KB。請用「保存到下載」打開。",
   "This file is binary or larger than 256 KB. Use Show in Finder to open it.": "此文件為二進制或大於 256 KB。請用「在 Finder 中顯示」打開。",
   "Ports…": "端口…",
@@ -5347,6 +5879,13 @@ const ZH_TW = {
   "Restore": "還原",
   "Hide ({key})": "隱藏（{key}）",
   "Find in the terminal": "在終端中查找",
+  "Find in editor": "在編輯器中查找",
+  "Replace": "替換",
+  "Replace all": "全部替換",
+  "Match case": "區分大小寫",
+  "Show replace": "顯示替換",
+  "Hide replace": "隱藏替換",
+  "Replaced {n}": "已替換 {n} 處",
   "Previous match": "上一個匹配",
   "Next match": "下一個匹配",
   "Close find": "關閉查找",
@@ -5626,12 +6165,98 @@ const ZH_TW = {
   "Applying…": "正在套用…",
   "Creating…": "正在建立…",
   "Open a compose file…": "開啟 compose 檔案…",
+  "Projects": "專案",
+  "New project": "新建專案",
+  "Edit project": "編輯專案",
+  "Name": "名稱",
+  "Description": "說明",
+  "Blank workspace": "空白工作區",
+  "Upload Dockerfiles, compose files and scripts in the project page.": "在專案頁上傳 Dockerfile、compose 與腳本。",
+  "Link a local folder": "關聯本機目錄",
+  "Point at an existing folder like src/docker. Files stay where they are.": "指向既有目錄（如 src/docker），檔案仍留在原處。",
+  "Create": "建立",
+  "Workspace": "工作區",
+  "Linked": "本機",
+  "Empty workspace — upload materials": "空工作區 — 請上傳物料",
+  "Open to upload materials": "開啟後上傳物料",
+  "Upload files…": "上傳檔案…",
+  "Upload folder…": "上傳資料夾…",
+  "New folder": "新建資料夾",
+  "Folder name": "資料夾名稱",
+  "No materials yet. Upload files or a folder.": "還沒有物料。請上傳檔案或資料夾。",
+  "Upload materials to detect scripts, compose files and Dockerfiles.": "上傳物料後，將識別腳本、compose 與 Dockerfile。",
+  "Name is required": "請填寫名稱",
+  "Delete {path}?": "刪除 {path}？",
+  "This cannot be undone.": "此操作無法復原。",
+  "Delete": "刪除",
+  "Project files in Kiri are deleted. Linked folders on disk are left alone.": "會刪除 Kiri 內的專案檔案；本機關聯目錄不會動。",
+  "e.g. szda-web docker": "例如 szda-web docker",
+
+  "Import kit…": "匯入物料包…",
+  "Add folder…": "新增本機目錄…",
+  "Export kit…": "匯出物料包…",
+  "Show in Finder": "在 Finder 中顯示",
+  "Remove": "移除",
+  "No projects yet": "還沒有專案",
+  "Add a local folder with Dockerfiles, compose files and scripts, or import a .kirikit pack to share one-click actions.": "新增包含 Dockerfile、compose 與腳本的本機目錄，或匯入 .kirikit 物料包，把一鍵操作分享給別人。",
+  "Loading projects…": "正在載入專案…",
+  "Kit": "物料包",
+  "Local": "本機",
+  "Folder missing": "目錄不存在",
+  "Short guide for others (shown on the card)": "給別人的簡短說明（顯示在卡片上）",
+  "Save": "儲存",
+  "Cancel": "取消",
+  "Scripts": "腳本",
+  "Compose files": "Compose 檔案",
+  "Dockerfiles": "Dockerfile",
+  "Output": "輸出",
+  "Run a script or build to see logs here.": "執行腳本或建置後，日誌顯示在這裡。",
+  "Pin": "釘選",
+  "Unpin": "取消釘選",
+  "Run {name}": "執行 {name}",
+  "Arguments (optional), e.g. --push": "參數（可選），例如 --push",
+  "Run": "執行",
+  "Open": "開啟",
+  "Build": "建置",
+  "Loading…": "載入中…",
+  "Remove project {name}?": "移除專案 {name}？",
+  "The imported kit files are deleted. Linked folders on disk are left alone.": "會刪除已匯入的物料包檔案；本機連結的目錄不會動。",
+  "Only the bookmark is removed. Your folder on disk is left alone.": "只移除書籤，磁碟上的目錄不會動。",
+  "Editor": "編輯器",
+  "Terminal": "終端",
+  "New terminal": "新建終端",
+  "Terminal {n}": "終端 {n}",
+  "Close Others": "關閉其他",
+  "Close to the Left": "關閉左側",
+  "Close to the Right": "關閉右側",
+  "Close All": "全部關閉",
+  "Discard unsaved changes in {n} tabs?": "捨棄 {n} 個標籤頁中的未儲存變更？",
+  "New file": "新建檔案",
+  "File name": "檔名",
+  "Upload…": "上傳…",
+  "Open a file from the tree, or create a new one.": "從左側開啟檔案，或新建一個。",
+  "Type a command…": "輸入命令…",
+  "Commands run in the project root. Docker talks to Kiri.": "命令在專案根目錄執行；Docker 指向 Kiri。",
+  "Icon": "圖示",
+  "Color": "顏色",
+  "Choose icon": "選擇圖示",
+  "Pick a color": "選擇顏色",
+  "Project root": "專案根目錄",
+  "Adding into project root": "新增到專案根目錄",
+  "Adding into {path}": "新增到 {path}",
+  "Select a folder to add files": "請先選擇資料夾再新增",
+  "Name cannot contain / or \\": "名稱不能包含 / 或 \\",
+  "Collapse": "摺疊",
+  "Expand": "展開",
+  "A project with that name already exists": "已有同名專案",
+  "Invalid project name": "專案名稱無效",
+
   "Recreating…": "正在重新建立…",
   "Removing…": "正在移除…",
   "Starts on line {n} · click to jump there": "從第 {n} 行開始 · 點擊跳轉",
 
 };
-const VIEW_LABEL = { containers: "Containers", images: "Images", volumes: "Volumes", networks: "Networks", builds: "Builds", pods: "Pods", services: "Services", settings: "Settings", share: "Share", notes: "Notes", compose: "Compose" };
+const VIEW_LABEL = { containers: "Containers", images: "Images", volumes: "Volumes", networks: "Networks", builds: "Builds", pods: "Pods", services: "Services", settings: "Settings", share: "Share", notes: "Notes", compose: "Compose", projects: "Projects" };
 /* Codes offered in Settings → Appearance → Language → Custom. Add here to grow the menu. */
 /*I18N_NEWLANGS*/
 /* ja/ko/fr/de/es/pt/ru: gzip+base64, inflated once after load so NavigateToString
@@ -5972,7 +6597,9 @@ function applyPrefs() {
    not a web page. Text fields, the log console, and selected text keep theirs,
    for Copy and Paste. */
 document.addEventListener("contextmenu", (ev) => {
-  const editable = ev.target.closest?.("input, textarea, [contenteditable], .md-ed, .img-remark .notes-preview, .imgnote-dlg .notes-preview, .console");
+  if (projHandleTabContextMenu(ev)) return;
+  if (projHandleTreeContextMenu(ev)) return;
+  const editable = ev.target.closest?.("input, textarea, [contenteditable], .md-ed, .img-remark .notes-preview, .imgnote-dlg .notes-preview, .proj-md-preview, .console");
   if (!editable && !String(getSelection()).trim()) ev.preventDefault();
 });
 function setPref(name, value) {
@@ -7924,9 +8551,10 @@ function cmpTab(p) {
     if (svcs.length && (!cmp.logSvc || !svcs.includes(cmp.logSvc))) cmp.logSvc = svcs[0];
     const svc = cmp.logSvc, shown = svc ? lines.filter((l) => l.svc === svc) : lines;
     const pills = svcs.map((s, i) => `<button class="ltab" data-cmplogsvc="${esc(s)}" aria-pressed="${svc === s}"><i class="dot" style="background:var(--c${i % 5})"></i>${esc(s)}<span class="n">${lines.filter((l) => l.svc === s).length || ""}</span></button>`).join("");
-    morph(el, `<div class="logbar"><span class="ltabs cmp-logsvcs">${pills}</span><span class="spacer" style="flex:1"></span>${btn(tr("Refresh"), "data-cmplogs")}</div><div class="cmp-logs">${cmp.logs.loading ? `<p>${cmpSpin()}</p>` : cmp.logs.error ? `<p class="warn">${esc(cmp.logs.error)}</p>` : !svcs.length ? `<p class="muted">${tr("No logs yet.")}</p>` : !shown.length ? `<p class="muted">${tr("No logs yet.")}</p>`
+    morph(el, `<div class="logbar"><span class="ltabs cmp-logsvcs">${pills}</span>${btn(tr("Refresh"), "data-cmplogs")}</div><div class="cmp-logs">${cmp.logs.loading ? `<p>${cmpSpin()}</p>` : cmp.logs.error ? `<p class="warn">${esc(cmp.logs.error)}</p>` : !svcs.length ? `<p class="muted">${tr("No logs yet.")}</p>` : !shown.length ? `<p class="muted">${tr("No logs yet.")}</p>`
       : shown.map((l) => `<div><span class="t">${esc(l.t.slice(11, 19))}</span>${esc(l.text)}</div>`).join("")}</div>`);
     cmpFill(el.querySelector(".cmp-logs"));
+    el.querySelector(".cmp-logsvcs .ltab[aria-pressed=true]")?.scrollIntoView({ inline: "nearest", block: "nearest" });
   } else cmpFileTab(p, el);
 }
 
@@ -8407,6 +9035,2415 @@ function cmpJump() {
   if (l) setTimeout(() => cmpGoto(l), 0);
 }
 
+
+/* —— Projects: cards + create dialog + IDE detail —— */
+const proj = {
+  list: null, open: null, tree: null, asked: 0, creating: false,
+  draft: { name: "", summary: "", source: "workspace" },
+  sel: "", selDir: true, // "" + selDir = project root
+  openDirs: {}, // path -> true (collapsed when false/missing after first expand-all)
+  pane: "editor",
+  tabs: [], active: "", // {path, text, dirty}
+  // Tab strip: remember scroll; stop auto-chasing after the user scrolls the strip.
+  _edTabScroll: 0, _termTabScroll: 0, _edTabsFollow: true, _termTabsFollow: true, _revealEdTab: false, _revealTermTab: false,
+  _edBodyScroll: 0,
+  // Editor find/replace (Ctrl/Cmd+F / H): q, repl, case, open, replace, i, hits.
+  find: { open: false, replace: false, q: "", repl: "", case: false, i: 0, hits: [] },
+  // Real PTY terminals (same protocol as the bottom bar); multiple tabs per project.
+  pty: { n: 0, projectId: null, sessions: [], at: 0, pending: null, wantShells: false, _ro: null },
+};
+function projAsk() {
+  if (Date.now() - (proj.asked || 0) < 400) return;
+  proj.asked = Date.now();
+  send("projects");
+}
+function projOf(id) { return (proj.list || []).find((p) => p.id === id); }
+function projOpen(id) {
+  if (proj.pty.projectId && proj.pty.projectId !== id) projTermCloseAll();
+  proj.open = id; proj.tree = null;
+  proj.sel = ""; proj.selDir = true; proj.openDirs = { "": true };
+  proj.tabs = []; proj.active = ""; proj.pane = "editor";
+  proj.scriptArgs = {};
+  proj._edTabScroll = 0; proj._termTabScroll = 0; proj._edBodyScroll = 0;
+  proj._edTabsFollow = true; proj._termTabsFollow = true;
+  proj._revealEdTab = false; proj._revealTermTab = false;
+  send("projectscan", { name: id });
+  send("projecttree", { name: id });
+  render();
+}
+function projBack() {
+  projOpenFlush();
+  projTermCloseAll();
+  proj.open = null; proj.tree = null; proj.sel = ""; proj.selDir = true;
+  proj.tabs = []; proj.active = "";
+  proj.scriptArgs = {};
+  render();
+}
+/** Target directory for create/upload, or null when a file (not a folder) is selected. */
+function projCreateInto() {
+  return proj.selDir ? (proj.sel || "") : null;
+}
+function projIntoDir() {
+  const into = projCreateInto();
+  return into == null ? "" : into;
+}
+function projCanCreate() { return proj.selDir === true; }
+/** Enabled state for the tree toolbar (folder selected → create; file → locked). */
+function projCreateToolsState() {
+  return { can: projCanCreate() };
+}
+function projPaintCreateTools() {
+  const bar = document.querySelector(".proj-tree-tools");
+  if (!bar) return;
+  const { can } = projCreateToolsState();
+  bar.classList.toggle("locked", !can);
+  const lockTip = tr("Select a folder to add files");
+  bar.querySelectorAll("[data-projupfiles], [data-projupdir], [data-projnewfile], [data-projmkdir]").forEach((b) => {
+    b.disabled = !can;
+    const base = b.dataset.tiptitle || b.title || "";
+    if (!b.dataset.tiptitle && base) b.dataset.tiptitle = base;
+    b.title = can ? (b.dataset.tiptitle || base) : lockTip;
+  });
+}
+/** Root defaults open (always show 1st-level entries); nested folders stay collapsed until opened. */
+function projDirOpen(path) {
+  if (path === "") return proj.openDirs[""] !== false;
+  return proj.openDirs[path] === true;
+}
+function projToggleDir(path) {
+  proj.openDirs[path] = !projDirOpen(path);
+  if (ui.view === "projects") render();
+}
+function projSeedOpenDirs() {
+  // Nested dirs stay closed by default; only root ("") is opened in projOpen.
+}
+/** Directories immediately under the project root. */
+function projRootLevelDirs() {
+  return (proj.tree || []).filter((e) => e.dir).map((e) => e.name);
+}
+/** True when every 1st-level folder under root is expanded. */
+function projRootKidsExpanded() {
+  const dirs = projRootLevelDirs();
+  return dirs.length > 0 && dirs.every((p) => projDirOpen(p));
+}
+/** Expand / collapse all 1st-level folders under root (root itself stays open). */
+function projToggleRootKids() {
+  const dirs = projRootLevelDirs();
+  if (!dirs.length) return;
+  const open = !projRootKidsExpanded();
+  dirs.forEach((d) => { proj.openDirs[d] = open; });
+  if (!open) {
+    // Also collapse anything nested under those 1st-level folders.
+    Object.keys(proj.openDirs).forEach((k) => {
+      if (dirs.some((d) => k === d || k.startsWith(d + "/"))) proj.openDirs[k] = false;
+    });
+  }
+  proj.openDirs[""] = true;
+  if (ui.view === "projects") render();
+}
+function projTab(path) { return (proj.tabs || []).find((t) => t.path === path); }
+function projTabStrip(kind) {
+  return document.querySelector(kind === "term" ? ".proj-term-wrap > .proj-tabs" : ".proj-editor-wrap > .proj-tabs");
+}
+function projCaptureTabScroll() {
+  const ed = projTabStrip("editor"), tm = projTabStrip("term");
+  if (ed) proj._edTabScroll = ed.scrollLeft;
+  if (tm) proj._termTabScroll = tm.scrollLeft;
+  const ta = $("proj-editor");
+  if (ta) proj._edBodyScroll = ta.scrollTop;
+}
+function projSetTabScrollLeft(strip, left) {
+  if (!strip) return;
+  proj._tabScrollQuiet = true;
+  strip.scrollLeft = left;
+  // WebKit may fire scroll asynchronously — keep quiet through the next frame.
+  clearTimeout(proj._tabScrollQuietTimer);
+  proj._tabScrollQuietTimer = setTimeout(() => { proj._tabScrollQuiet = false; }, 50);
+}
+function projRestoreTabScroll(opts) {
+  const ed = projTabStrip("editor"), tm = projTabStrip("term");
+  // When we are about to reveal the active editor tab, skip restoring the old
+  // strip offset (restore + reveal = a visible double jump).
+  if (ed && !opts?.skipEd) projSetTabScrollLeft(ed, proj._edTabScroll || 0);
+  if (tm && !opts?.skipTerm) projSetTabScrollLeft(tm, proj._termTabScroll || 0);
+}
+/* Minimal scroll so the tab is inside the strip; no centering (avoids jump).
+   Use getBoundingClientRect — offsetLeft is wrong when the strip isn't the offsetParent. */
+function projEnsureTabElVisible(strip, el) {
+  if (!strip || !el) return;
+  const margin = 12;
+  const sr = strip.getBoundingClientRect();
+  const er = el.getBoundingClientRect();
+  if (!sr.width || !er.width) return;
+  const viewL = strip.scrollLeft;
+  const max = Math.max(0, strip.scrollWidth - strip.clientWidth);
+  let next = viewL;
+  if (er.left < sr.left + margin) next = viewL - (sr.left + margin - er.left);
+  else if (er.right > sr.right - margin) next = viewL + (er.right - (sr.right - margin));
+  next = Math.max(0, Math.min(max, next));
+  if (Math.abs(next - viewL) > 1) projSetTabScrollLeft(strip, next);
+  if (strip.closest(".proj-term-wrap")) proj._termTabScroll = strip.scrollLeft;
+  else proj._edTabScroll = strip.scrollLeft;
+}
+/* After layout settles, bring a tab into view.
+   force=true: always (explicit open from the tree).
+   force=false: skip if the user has manually scrolled the strip. */
+function projRevealTabEl(strip, el, force) {
+  if (!strip || !el) return;
+  const term = !!strip.closest(".proj-term-wrap");
+  const follow = term ? proj._termTabsFollow !== false : proj._edTabsFollow !== false;
+  const go = () => {
+    if (!force && !follow) return;
+    // Re-check follow at run time for non-forced reveals (user may have scrolled).
+    if (!force && (term ? proj._termTabsFollow === false : proj._edTabsFollow === false)) return;
+    projEnsureTabElVisible(strip, el);
+  };
+  // Double rAF: appended tabs often have width 0 on the first frame.
+  requestAnimationFrame(() => requestAnimationFrame(go));
+}
+/* Used after a full remount when _revealEdTab was set — respects manual scroll. */
+function projScrollActiveTab() {
+  let el = null, strip = null;
+  if (proj.pane === "editor" && proj.active) {
+    el = document.querySelector(`.proj-editor-wrap [data-projtab="${CSS.escape(proj.active)}"]`);
+    strip = el?.closest(".proj-tabs");
+  } else if (proj.pane === "term") {
+    const s = projTermActive();
+    if (s?.id) {
+      el = document.querySelector(`.proj-term-wrap [data-projtermtab="${CSS.escape(s.id)}"]`);
+      strip = el?.closest(".proj-tabs");
+    }
+  }
+  if (!el || !strip) return;
+  projRevealTabEl(strip, el, false);
+}
+function projBindTabStrip(strip, kind) {
+  if (!strip) return;
+  strip.addEventListener("contextmenu", (ev) => { projHandleTabContextMenu(ev); });
+  // Remember position on any scroll (incl. programmatic); do NOT treat it as user intent.
+  strip.addEventListener("scroll", () => {
+    if (kind === "term") proj._termTabScroll = strip.scrollLeft;
+    else proj._edTabScroll = strip.scrollLeft;
+  }, { passive: true });
+  // Only real user gestures disable auto-follow (programmatic scroll used to kill it).
+  strip.addEventListener("wheel", () => {
+    if (kind === "term") proj._termTabsFollow = false;
+    else proj._edTabsFollow = false;
+  }, { passive: true });
+  strip.addEventListener("pointerdown", (ev) => {
+    // Scrollbar / empty strip — not a tab click.
+    if (ev.target.closest(".proj-tab, .proj-tab-add")) return;
+    if (kind === "term") proj._termTabsFollow = false;
+    else proj._edTabsFollow = false;
+  });
+}
+function projPaintTreeSelection() {
+  document.querySelectorAll(".proj-trow.chosen").forEach((el) => el.classList.remove("chosen"));
+  const sel = proj.sel ?? "";
+  document.querySelectorAll(`.proj-trow[data-projsel="${CSS.escape(sel)}"]`).forEach((el) => {
+    if ((el.dataset.dir === "1") === !!proj.selDir) el.classList.add("chosen");
+  });
+  // In-place editor swaps skip full render — keep create buttons in sync with selDir.
+  projPaintCreateTools();
+}
+function projLangOf(path) {
+  const base = (path || "").split("/").pop() || "";
+  const lower = base.toLowerCase();
+  if (lower === "dockerfile" || lower.startsWith("dockerfile.")) return "dockerfile";
+  if (/\.(ya?ml)$/.test(lower)) return "yaml";
+  if (/\.(sh|bash|zsh|fish)$/.test(lower)) return "shell";
+  if (/\.(cmd|bat)$/.test(lower)) return "bat";
+  if (/\.ps1$/.test(lower)) return "ps1";
+  if (lower === ".env" || lower.startsWith(".env.") || /\.(env|properties|ini|conf|cfg)$/.test(lower)) return "env";
+  if (/\.jsonc?$/.test(lower)) return "json";
+  if (/\.toml$/.test(lower)) return "toml";
+  if (/\.(md|markdown|mdown|mkd)$/.test(lower)) return "md";
+  return "text";
+}
+const PROJ_HL = {
+  shellKw: /^(if|then|else|elif|fi|for|while|until|do|done|case|esac|function|return|exit|export|local|readonly|declare|typeset|select|time|coproc|in|source|shift|break|continue|trap|wait|eval|exec|unset|set|true|false)$/,
+  shellBi: /^(echo|printf|cd|pwd|ls|mkdir|rm|cp|mv|cat|grep|sed|awk|curl|wget|docker|compose|sudo|chmod|chown|test|read|printf|basename|dirname|head|tail|sort|uniq|find|xargs|env|which|command|type|alias|unalias|jobs|fg|bg|kill|sleep|date|tee|tr|cut|wc|diff|patch|tar|gzip|unzip|ssh|scp|rsync|npm|yarn|pnpm|pip|python|node|java|mvn|gradle|make|cmake|git)$/,
+  batKw: /^(if|else|elseif|endif|for|in|do|call|goto|exit|set|setlocal|endlocal|echo|rem|pause|shift|start|pushd|popd|cd|dir|copy|move|del|rd|md|type|cls|title|color|choice|exist|defined|equ|neq|lss|leq|gtr|geq|not|errorlevel)$/i,
+  psKw: /^(if|else|elseif|foreach|for|while|do|until|switch|function|filter|param|begin|process|end|return|break|continue|trap|throw|try|catch|finally|class|enum|using|as|and|or|not|xor|band|bor|bxor|bnot)$/i,
+  yamlKw: /^(true|false|null|yes|no|on|off)$/i,
+  dfKw: /^(FROM|AS|RUN|CMD|LABEL|MAINTAINER|EXPOSE|ENV|ADD|COPY|ENTRYPOINT|VOLUME|USER|WORKDIR|ARG|ONBUILD|STOPSIGNAL|HEALTHCHECK|SHELL|FROM)$/i,
+  tok(cls, s) { return `<span class="tok-${cls}">${esc(s)}</span>`; },
+};
+function projHlShell(src, bat) {
+  const kw = bat ? PROJ_HL.batKw : PROJ_HL.shellKw;
+  const bi = bat ? null : PROJ_HL.shellBi;
+  const rem = bat ? /^(?:rem\b|::)/i : /^#/;
+  let out = "", i = 0, lineStart = true, cmdPos = true;
+  const push = (cls, s) => { out += cls ? PROJ_HL.tok(cls, s) : esc(s); };
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "\n") { out += "\n"; i += 1; lineStart = true; cmdPos = true; continue; }
+    if (lineStart && /\s/.test(ch)) { out += ch; i += 1; continue; }
+    if (lineStart && rem.test(src.slice(i))) {
+      const end = src.indexOf("\n", i);
+      push("c", src.slice(i, end < 0 ? src.length : end));
+      i = end < 0 ? src.length : end;
+      continue;
+    }
+    lineStart = false;
+    if (ch === "'" || ch === '"') {
+      let j = i + 1;
+      while (j < src.length && src[j] !== ch && src[j] !== "\n") {
+        if (!bat && ch === '"' && src[j] === "\\" && j + 1 < src.length) j += 2;
+        else j += 1;
+      }
+      if (j < src.length && src[j] === ch) j += 1;
+      const raw = src.slice(i, j);
+      // Double-quoted shell strings interpolate $VAR — colour placeholders inside.
+      if (!bat && ch === '"' && raw.length >= 2 && raw.endsWith('"')) {
+        out += PROJ_HL.tok("s", '"') + projHlWithPh(raw.slice(1, -1), "s") + PROJ_HL.tok("s", '"');
+      } else {
+        push("s", raw);
+      }
+      i = j; cmdPos = false;
+      continue;
+    }
+    if (!bat && ch === "$") {
+      let j = i + 1;
+      if (src[j] === "{") {
+        j += 1;
+        while (j < src.length && src[j] !== "}" && src[j] !== "\n") j += 1;
+        if (src[j] === "}") j += 1;
+      } else if (src[j] === "(") {
+        j += 1;
+        while (j < src.length && src[j] !== ")" && src[j] !== "\n") j += 1;
+        if (src[j] === ")") j += 1;
+      } else {
+        while (j < src.length && /[A-Za-z0-9_]/.test(src[j])) j += 1;
+      }
+      push("ph", src.slice(i, j));
+      i = j; cmdPos = false;
+      continue;
+    }
+    if (bat && ch === "%") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== "%" && src[j] !== "\n" && !/\s/.test(src[j])) j += 1;
+      if (src[j] === "%") j += 1;
+      push("ph", src.slice(i, j));
+      i = j; cmdPos = false;
+      continue;
+    }
+    if (/[0-9]/.test(ch) && (i === 0 || /[\s=<>!|&;()[\]{},]/.test(src[i - 1] || " "))) {
+      let j = i;
+      while (j < src.length && /[0-9.]/.test(src[j])) j += 1;
+      push("n", src.slice(i, j));
+      i = j; cmdPos = false;
+      continue;
+    }
+    if (/[A-Za-z_@]/.test(ch)) {
+      let j = i;
+      while (j < src.length && /[A-Za-z0-9_@.-]/.test(src[j])) j += 1;
+      const w = src.slice(i, j);
+      if (kw.test(w)) push("k", w);
+      else if (cmdPos && bi && bi.test(w)) push("f", w);
+      else if (!bat && src[j] === "=") push("v", w);
+      else push("", w);
+      i = j; cmdPos = false;
+      continue;
+    }
+    if (/[|&;<>()[\]{}=!]/.test(ch)) {
+      let j = i + 1;
+      if ((ch === "&" || ch === "|" || ch === ">" || ch === "<" || ch === "=" || ch === "!") && src[j] === ch) j += 1;
+      push("o", src.slice(i, j));
+      i = j;
+      cmdPos = ch === ";" || ch === "|" || ch === "&" || ch === "(" || (ch === "&" && src[i - 1] === "&");
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      out += ch; i += 1;
+      if (ch === " " || ch === "\t") { /* keep cmdPos if still leading? already past */ }
+      continue;
+    }
+    out += esc(ch); i += 1; cmdPos = false;
+  }
+  return out;
+}
+function projHlYaml(src) {
+  return src.split(/(\n)/).map((line) => {
+    if (line === "\n") return "\n";
+    const cm = line.match(/^(\s*)(#.*)$/);
+    if (cm) return esc(cm[1]) + PROJ_HL.tok("c", cm[2]);
+    let m = line.match(/^(\s*)(- )(\s*)(.*)$/);
+    let lead = "", mark = "", rest = line;
+    if (m) { lead = esc(m[1]) + PROJ_HL.tok("o", m[2]) + esc(m[3]); rest = m[4]; }
+    else {
+      m = line.match(/^(\s*)(.*)$/);
+      lead = esc(m[1]); rest = m[2];
+    }
+    if (!rest) return lead;
+    // Real YAML keys: no `$`, `/`, or spaces — otherwise volume mounts like
+    // `${DATA_ROOT}/a:/b:ro` were misread as key:value and placeholders stayed plain.
+    const km = rest.match(/^([A-Za-z_][\w.-]*)(\s*)(:)(\s*)(.*)$/);
+    if (km) {
+      const key = km[1], sp1 = km[2], colon = km[3], sp2 = km[4], val = km[5];
+      return lead + PROJ_HL.tok("key", key) + esc(sp1) + PROJ_HL.tok("p", colon) + esc(sp2) + projHlYamlVal(val);
+    }
+    return lead + projHlYamlVal(rest);
+  }).join("");
+}
+/** Highlight $VAR / ${VAR} / ${VAR:-default} (and %VAR% for bat) inside plain or string text. */
+function projHlWithPh(text, baseCls = "") {
+  const src = String(text ?? "");
+  if (!src) return "";
+  if (!/[\%$]/.test(src)) return baseCls ? PROJ_HL.tok(baseCls, src) : esc(src);
+  let out = "", i = 0;
+  const plain = (s) => (s ? (baseCls ? PROJ_HL.tok(baseCls, s) : esc(s)) : "");
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === "$") {
+      let j = i + 1;
+      if (src[j] === "{") {
+        j += 1;
+        while (j < src.length && src[j] !== "}" && src[j] !== "\n") j += 1;
+        if (src[j] === "}") j += 1;
+        out += PROJ_HL.tok("ph", src.slice(i, j));
+        i = j;
+        continue;
+      }
+      if (/[A-Za-z_]/.test(src[j] || "")) {
+        while (j < src.length && /[A-Za-z0-9_]/.test(src[j])) j += 1;
+        out += PROJ_HL.tok("ph", src.slice(i, j));
+        i = j;
+        continue;
+      }
+      out += plain(ch);
+      i += 1;
+      continue;
+    }
+    if (ch === "%" && /[A-Za-z_]/.test(src[i + 1] || "")) {
+      let j = i + 1;
+      while (j < src.length && src[j] !== "%" && src[j] !== "\n" && !/\s/.test(src[j])) j += 1;
+      if (src[j] === "%") {
+        j += 1;
+        out += PROJ_HL.tok("ph", src.slice(i, j));
+        i = j;
+        continue;
+      }
+    }
+    let j = i + 1;
+    while (j < src.length && src[j] !== "$" && src[j] !== "%") j += 1;
+    out += plain(src.slice(i, j));
+    i = j;
+  }
+  return out;
+}
+function projHlYamlVal(val) {
+  if (!val) return "";
+  if (/^#/.test(val)) return PROJ_HL.tok("c", val);
+  // Don't treat `${…}` as YAML flow `{`; only bare `{` / `[` / anchors.
+  if (/^(&|\*{1,2}|<<|\[|\{|\||\>)/.test(val) && !/^\$\{/.test(val)) {
+    const m = val.match(/^(&\S+|\*{1,2}\S*|<<\S*|[\[\]{}|,>-]+)(\s*)(.*)$/);
+    if (m) return PROJ_HL.tok("o", m[1]) + esc(m[2]) + projHlYamlVal(m[3]);
+  }
+  if (/^(true|false|null|yes|no|on|off)\s*(#.*)?$/i.test(val)) {
+    const m = val.match(/^(true|false|null|yes|no|on|off)(\s*)(#.*)?$/i);
+    return PROJ_HL.tok("b", m[1]) + esc(m[2] || "") + (m[3] ? PROJ_HL.tok("c", m[3]) : "");
+  }
+  if (/^[-+]?(?:\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*(#.*)?$/.test(val)) {
+    const m = val.match(/^([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)(\s*)(#.*)?$/);
+    return PROJ_HL.tok("n", m[1]) + esc(m[2] || "") + (m[3] ? PROJ_HL.tok("c", m[3]) : "");
+  }
+  if (/^["']/.test(val)) {
+    const q = val[0];
+    let j = 1;
+    while (j < val.length && val[j] !== q) {
+      if (val[j] === "\\" && j + 1 < val.length) j += 2;
+      else j += 1;
+    }
+    if (val[j] === q) j += 1;
+    const str = val.slice(0, j), tail = val.slice(j);
+    const cm = tail.match(/^(\s*)(#.*)?$/);
+    const body = str.length >= 2 && str[str.length - 1] === q
+      ? PROJ_HL.tok("s", q) + projHlWithPh(str.slice(1, -1), "s") + PROJ_HL.tok("s", q)
+      : projHlWithPh(str, "s");
+    return body + (cm ? esc(cm[1] || "") + (cm[2] ? PROJ_HL.tok("c", cm[2]) : "") : projHlWithPh(tail));
+  }
+  const cm = val.match(/^(.*?)(\s+)(#.*)$/);
+  if (cm) return projHlWithPh(cm[1]) + esc(cm[2]) + PROJ_HL.tok("c", cm[3]);
+  return projHlWithPh(val);
+}
+function projHlEnv(src) {
+  return src.split(/(\n)/).map((line) => {
+    if (line === "\n") return "\n";
+    if (/^\s*[#!]/.test(line)) return PROJ_HL.tok("c", line);
+    const m = line.match(/^(\s*)(export\s+|set\s+)?([A-Za-z_][A-Za-z0-9_.-]*)(\s*)([:=])(\s*)(.*)$/);
+    if (!m) return projHlWithPh(line);
+    const [, sp, exp, key, sp2, eq, sp3, val] = m;
+    let valHtml;
+    if (/^#/.test(val)) valHtml = PROJ_HL.tok("c", val);
+    else if (/^["']/.test(val)) {
+      const q = val[0];
+      const end = val.lastIndexOf(q);
+      if (end > 0) valHtml = PROJ_HL.tok("s", q) + projHlWithPh(val.slice(1, end), "s") + PROJ_HL.tok("s", q) + projHlWithPh(val.slice(end + 1));
+      else valHtml = projHlWithPh(val, "s");
+    } else valHtml = projHlWithPh(val, "s");
+    return esc(sp) + (exp ? PROJ_HL.tok("k", exp) : "") + PROJ_HL.tok("key", key) + esc(sp2)
+      + PROJ_HL.tok("o", eq) + esc(sp3) + valHtml;
+  }).join("");
+}
+function projHlJson(src) {
+  let out = "", i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '"' ) {
+      let j = i + 1;
+      while (j < src.length && src[j] !== '"') {
+        if (src[j] === "\\" && j + 1 < src.length) j += 2;
+        else j += 1;
+      }
+      if (src[j] === '"') j += 1;
+      let k = j;
+      while (k < src.length && /\s/.test(src[k])) k += 1;
+      out += PROJ_HL.tok(src[k] === ":" ? "key" : "s", src.slice(i, j));
+      i = j;
+      continue;
+    }
+    if (/[0-9-]/.test(ch)) {
+      let j = i;
+      if (src[j] === "-") j += 1;
+      while (j < src.length && /[0-9.eE+-]/.test(src[j])) j += 1;
+      out += PROJ_HL.tok("n", src.slice(i, j));
+      i = j;
+      continue;
+    }
+    if (/[a-z]/.test(ch)) {
+      let j = i;
+      while (j < src.length && /[a-z]/.test(src[j])) j += 1;
+      const w = src.slice(i, j);
+      out += /^(true|false|null)$/.test(w) ? PROJ_HL.tok("b", w) : esc(w);
+      i = j;
+      continue;
+    }
+    if (/[{}[\],:]/.test(ch)) { out += PROJ_HL.tok("p", ch); i += 1; continue; }
+    if (ch === "/" && src[i + 1] === "/") {
+      const end = src.indexOf("\n", i);
+      out += PROJ_HL.tok("c", src.slice(i, end < 0 ? src.length : end));
+      i = end < 0 ? src.length : end;
+      continue;
+    }
+    out += esc(ch); i += 1;
+  }
+  return out;
+}
+function projHlDockerfile(src) {
+  return src.split(/(\n)/).map((line) => {
+    if (line === "\n") return "\n";
+    if (/^\s*#/.test(line)) return PROJ_HL.tok("c", line);
+    const m = line.match(/^(\s*)([A-Za-z]+)\b(.*)$/);
+    if (m && PROJ_HL.dfKw.test(m[2])) {
+      return esc(m[1]) + PROJ_HL.tok("k", m[2]) + projHlShell(m[3], false);
+    }
+    return projHlShell(line, false);
+  }).join("");
+}
+function projHlToml(src) {
+  return src.split(/(\n)/).map((line) => {
+    if (line === "\n") return "\n";
+    if (/^\s*#/.test(line)) return PROJ_HL.tok("c", line);
+    if (/^\s*\[/.test(line)) return PROJ_HL.tok("k", line);
+    const m = line.match(/^(\s*)([A-Za-z0-9_.-]+)(\s*)(=)(\s*)(.*)$/);
+    if (!m) return esc(line);
+    return esc(m[1]) + PROJ_HL.tok("key", m[2]) + esc(m[3]) + PROJ_HL.tok("o", m[4]) + esc(m[5]) + projHlYamlVal(m[6]);
+  }).join("");
+}
+function projHlMd(src) {
+  return src.split(/(\n)/).map((line) => {
+    if (line === "\n") return "\n";
+    if (/^\s*#/.test(line)) {
+      const m = line.match(/^(\s*)(#{1,6})(\s*)(.*)$/);
+      if (m) return esc(m[1]) + PROJ_HL.tok("k", m[2]) + esc(m[3]) + PROJ_HL.tok("key", m[4]);
+    }
+    if (/^\s*```/.test(line)) return PROJ_HL.tok("f", line);
+    if (/^\s*>/.test(line)) return PROJ_HL.tok("c", line);
+    if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
+      return line.replace(/^(\s*)([-*+]|\d+\.)(\s+)/, (_, a, b, c) => esc(a) + PROJ_HL.tok("o", b) + esc(c))
+        .replace(/`([^`]+)`/g, (_, s) => PROJ_HL.tok("s", "`" + s + "`"))
+        .replace(/\*\*([^*]+)\*\*/g, (_, s) => PROJ_HL.tok("k", "**" + s + "**"));
+    }
+    return esc(line)
+      .replace(/`([^`]+)`/g, '<span class="tok-s">`$1`</span>')
+      .replace(/\*\*([^*]+)\*\*/g, '<span class="tok-k">**$1**</span>');
+  }).join("");
+}
+function projHl(text, lang) {
+  const src = String(text ?? "");
+  switch (lang) {
+    case "shell": case "ps1": return projHlShell(src, false);
+    case "bat": return projHlShell(src, true);
+    case "yaml": return projHlYaml(src);
+    case "env": return projHlEnv(src);
+    case "json": return projHlJson(src);
+    case "dockerfile": return projHlDockerfile(src);
+    case "toml": return projHlToml(src);
+    case "md": return projHlMd(src);
+    default: return esc(src);
+  }
+}
+let projHlT = 0;
+function projHlPaint(ta) {
+  const box = ta?.closest?.(".proj-code");
+  const hl = box?.querySelector(".proj-code-hl");
+  if (!hl) return;
+  const lang = box.dataset.lang || projLangOf(proj.active);
+  // Trailing newline keeps the last empty line height aligned with the textarea.
+  hl.innerHTML = projHl(ta.value, lang) + "\n";
+  hl.scrollTop = ta.scrollTop;
+  hl.scrollLeft = ta.scrollLeft;
+}
+function projHlPaintSoon(ta) {
+  if ((ta.value || "").length > 60000) {
+    clearTimeout(projHlT);
+    projHlT = setTimeout(() => projHlPaint(ta), 60);
+  } else {
+    projHlPaint(ta);
+  }
+}
+function projBindEditor(ta) {
+  if (!ta || ta.dataset.projBound) return;
+  ta.dataset.projBound = "1";
+  projHlPaint(ta);
+  ta.addEventListener("input", () => {
+    const t = projTab(proj.active);
+    if (!t || t.loading) return;
+    t.text = ta.value;
+    t.dirty = projTabDirty(t);
+    const btn = document.querySelector(`.proj-editor-wrap [data-projtab="${CSS.escape(t.path)}"]`);
+    const span = btn?.querySelector(":scope > span:not(.x)");
+    if (span) {
+      const label = t.path.split("/").pop() || t.path;
+      span.textContent = (t.dirty ? "• " : "") + label;
+    }
+    projHlPaintSoon(ta);
+    if (proj.find?.open) projFindRefresh({ keepIndex: true });
+  });
+  ta.addEventListener("scroll", () => {
+    const hl = ta.closest(".proj-code")?.querySelector(".proj-code-hl");
+    if (hl) { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; }
+  });
+  ta.addEventListener("keydown", (ev) => {
+    if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && ev.key.toLowerCase() === "s") {
+      ev.preventDefault();
+      projSaveActive();
+      return;
+    }
+    if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && ev.key.toLowerCase() === "f") {
+      ev.preventDefault();
+      projFindOpen(!!proj.find?.replace);
+      return;
+    }
+    if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && ev.key.toLowerCase() === "h") {
+      ev.preventDefault();
+      projFindOpen(true);
+      return;
+    }
+    if (ev.key === "Escape" && proj.find?.open) {
+      ev.preventDefault();
+      projFindClose();
+    }
+  });
+}
+const PF_ICO = {
+  up: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg>',
+  down: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>',
+  x: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4L4 12"/></svg>',
+  case: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 12.5L5.5 4h1l3 8.5M3.6 9.5h4.3M10 12.5L12 6h.8l2 6.5M10.7 10.2h3.4"/></svg>',
+  repl: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 5h7.5M8.5 2.5L11.5 5 8.5 7.5M13 11H5.5M7.5 8.5L4.5 11l3 2.5"/></svg>',
+};
+function projFindHits(text, q, matchCase) {
+  if (!q) return [];
+  const hits = [];
+  const src = matchCase ? text : text.toLowerCase();
+  const needle = matchCase ? q : q.toLowerCase();
+  const step = Math.max(1, needle.length);
+  let from = 0;
+  while (from <= src.length - needle.length) {
+    const i = src.indexOf(needle, from);
+    if (i < 0) break;
+    hits.push(i);
+    from = i + step;
+  }
+  return hits;
+}
+function projFindMount() {
+  const wrap = document.querySelector(".proj-editor-wrap");
+  if (!wrap) return null;
+  let bar = $("proj-find");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "proj-find";
+    bar.className = "proj-find";
+    bar.hidden = true;
+    bar.setAttribute("role", "search");
+    bar.innerHTML = `<div class="pf-row">
+        <input id="proj-find-q" type="text" spellcheck="false" autocomplete="off" placeholder="${esc(tr("Find"))}" aria-label="${esc(tr("Find in editor"))}" />
+        <span class="pf-count" id="proj-find-count"></span>
+        <button type="button" class="pf-btn" data-pfind="case" title="${esc(tr("Match case"))}" aria-label="${esc(tr("Match case"))}" aria-pressed="false">${PF_ICO.case}</button>
+        <button type="button" class="pf-btn" data-pfind="prev" title="${esc(tr("Previous match"))}" aria-label="${esc(tr("Previous match"))}">${PF_ICO.up}</button>
+        <button type="button" class="pf-btn" data-pfind="next" title="${esc(tr("Next match"))}" aria-label="${esc(tr("Next match"))}">${PF_ICO.down}</button>
+        <button type="button" class="pf-btn" data-pfind="toggle" title="${esc(tr("Show replace"))}" aria-label="${esc(tr("Show replace"))}">${PF_ICO.repl}</button>
+        <button type="button" class="pf-btn" data-pfind="close" title="${esc(tr("Close find"))}" aria-label="${esc(tr("Close find"))}">${PF_ICO.x}</button>
+      </div>
+      <div class="pf-row pf-repl">
+        <input id="proj-find-repl" type="text" spellcheck="false" autocomplete="off" placeholder="${esc(tr("Replace"))}" aria-label="${esc(tr("Replace"))}" />
+        <button type="button" class="pf-btn act" data-pfind="one">${esc(tr("Replace"))}</button>
+        <button type="button" class="pf-btn act" data-pfind="all">${esc(tr("Replace all"))}</button>
+      </div>`;
+    wrap.append(bar);
+    bar.addEventListener("mousedown", (ev) => ev.stopPropagation());
+    bar.addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-pfind]");
+      if (!b) return;
+      const a = b.dataset.pfind;
+      if (a === "close") projFindClose();
+      else if (a === "prev") projFindGo(true);
+      else if (a === "next") projFindGo(false);
+      else if (a === "case") {
+        proj.find.case = !proj.find.case;
+        projFindPaintChrome();
+        projFindRefresh();
+      } else if (a === "toggle") {
+        proj.find.replace = !proj.find.replace;
+        projFindPaintChrome();
+        if (proj.find.replace) $("proj-find-repl")?.focus();
+      } else if (a === "one") projFindReplaceOne();
+      else if (a === "all") projFindReplaceAll();
+    });
+    const onQ = () => {
+      proj.find.q = $("proj-find-q")?.value || "";
+      projFindRefresh();
+    };
+    $("proj-find-q")?.addEventListener("input", onQ);
+    $("proj-find-repl")?.addEventListener("input", () => { proj.find.repl = $("proj-find-repl")?.value || ""; });
+    const onKey = (ev) => {
+      if (ev.key === "Escape") { ev.preventDefault(); projFindClose(); return; }
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        if (ev.target.id === "proj-find-repl") {
+          if (ev.metaKey || ev.ctrlKey) projFindReplaceAll();
+          else projFindReplaceOne();
+        } else {
+          projFindGo(ev.shiftKey);
+        }
+      }
+      if ((ev.metaKey || ev.ctrlKey) && !ev.altKey && ev.key.toLowerCase() === "h") {
+        ev.preventDefault();
+        proj.find.replace = true;
+        projFindPaintChrome();
+        $("proj-find-repl")?.focus();
+      }
+    };
+    $("proj-find-q")?.addEventListener("keydown", onKey);
+    $("proj-find-repl")?.addEventListener("keydown", onKey);
+  } else if (bar.parentElement !== wrap) {
+    wrap.append(bar);
+  }
+  return bar;
+}
+function projFindPaintChrome() {
+  const bar = projFindMount();
+  if (!bar) return;
+  bar.hidden = !proj.find.open;
+  bar.classList.toggle("replace", !!proj.find.replace);
+  const q = $("proj-find-q"), r = $("proj-find-repl");
+  if (q && q.value !== (proj.find.q || "")) q.value = proj.find.q || "";
+  if (r && r.value !== (proj.find.repl || "")) r.value = proj.find.repl || "";
+  const caseBtn = bar.querySelector('[data-pfind="case"]');
+  if (caseBtn) {
+    caseBtn.classList.toggle("on", !!proj.find.case);
+    caseBtn.setAttribute("aria-pressed", proj.find.case ? "true" : "false");
+  }
+  const tog = bar.querySelector('[data-pfind="toggle"]');
+  if (tog) {
+    tog.classList.toggle("on", !!proj.find.replace);
+    tog.title = tr(proj.find.replace ? "Hide replace" : "Show replace");
+    tog.setAttribute("aria-label", tog.title);
+  }
+}
+function projFindSelect(i) {
+  const ta = $("proj-editor");
+  const hits = proj.find.hits || [];
+  const q = proj.find.q || "";
+  if (!ta || !q || !hits.length) return;
+  const at = hits[((i % hits.length) + hits.length) % hits.length];
+  proj.find.i = ((i % hits.length) + hits.length) % hits.length;
+  const end = at + q.length;
+  ta.focus();
+  ta.setSelectionRange(at, end);
+  // Scroll the match into view approximately (textarea has no scrollIntoView for ranges).
+  try {
+    const style = getComputedStyle(ta);
+    const lineH = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) * 1.45) || 18;
+    const before = ta.value.slice(0, at);
+    const line = before.split("\n").length - 1;
+    const pad = parseFloat(style.paddingTop) || 0;
+    const want = line * lineH - ta.clientHeight / 3 + pad;
+    ta.scrollTop = Math.max(0, want);
+    const hl = ta.closest(".proj-code")?.querySelector(".proj-code-hl");
+    if (hl) { hl.scrollTop = ta.scrollTop; hl.scrollLeft = ta.scrollLeft; }
+  } catch { /* */ }
+  const count = $("proj-find-count");
+  if (count) count.textContent = tr("{n} of {m}", { n: proj.find.i + 1, m: hits.length });
+}
+function projFindRefresh(opts = {}) {
+  const ta = $("proj-editor");
+  const count = $("proj-find-count");
+  const q = proj.find.q || "";
+  const hits = ta && q ? projFindHits(ta.value, q, !!proj.find.case) : [];
+  const prev = proj.find.hits?.[proj.find.i];
+  proj.find.hits = hits;
+  if (!hits.length) {
+    proj.find.i = 0;
+    if (count) count.textContent = q ? tr("No matches") : "";
+    return;
+  }
+  let i = 0;
+  if (opts.keepIndex && prev != null) {
+    const exact = hits.indexOf(prev);
+    if (exact >= 0) i = exact;
+    else {
+      i = hits.findIndex((h) => h >= prev);
+      if (i < 0) i = hits.length - 1;
+    }
+  } else if (ta) {
+    const caret = ta.selectionStart || 0;
+    i = hits.findIndex((h) => h >= caret);
+    if (i < 0) i = 0;
+  }
+  projFindSelect(i);
+}
+function projFindGo(back) {
+  const hits = proj.find.hits || [];
+  if (!hits.length) { projFindRefresh(); return; }
+  projFindSelect(proj.find.i + (back ? -1 : 1));
+}
+function projFindMarkDirty(ta) {
+  const t = projTab(proj.active);
+  if (!t || t.loading) return;
+  t.text = ta.value;
+  t.dirty = projTabDirty(t);
+  const btn = document.querySelector(`.proj-editor-wrap [data-projtab="${CSS.escape(t.path)}"]`);
+  const span = btn?.querySelector(":scope > span:not(.x)");
+  if (span) {
+    const label = t.path.split("/").pop() || t.path;
+    span.textContent = (t.dirty ? "• " : "") + label;
+  }
+  projHlPaintSoon(ta);
+}
+function projFindReplaceOne() {
+  const ta = $("proj-editor");
+  const q = proj.find.q || "";
+  if (!ta || !q || ta.disabled) return;
+  const repl = proj.find.repl ?? "";
+  const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+  const match = proj.find.case ? sel === q : sel.toLowerCase() === q.toLowerCase();
+  if (!match) {
+    projFindGo(false);
+    return;
+  }
+  const start = ta.selectionStart;
+  ta.setRangeText(repl, start, ta.selectionEnd, "end");
+  projFindMarkDirty(ta);
+  projFindRefresh();
+  // After replace, advance to the next hit at/after the caret.
+  const hits = proj.find.hits || [];
+  if (hits.length) {
+    const i = hits.findIndex((h) => h >= ta.selectionStart);
+    projFindSelect(i < 0 ? 0 : i);
+  }
+}
+function projFindReplaceAll() {
+  const ta = $("proj-editor");
+  const q = proj.find.q || "";
+  if (!ta || !q || ta.disabled) return;
+  const hits = projFindHits(ta.value, q, !!proj.find.case);
+  if (!hits.length) { projFindRefresh(); return; }
+  const repl = proj.find.repl ?? "";
+  let out = ta.value;
+  for (let i = hits.length - 1; i >= 0; i--) {
+    const at = hits[i];
+    out = out.slice(0, at) + repl + out.slice(at + q.length);
+  }
+  ta.value = out;
+  projFindMarkDirty(ta);
+  toast("ok", tr("Replaced {n}", { n: hits.length }));
+  projFindRefresh();
+}
+function projFindOpen(withReplace) {
+  if (ui.view !== "projects" || !proj.open || proj.pane !== "editor") return;
+  const tab = projTab(proj.active);
+  if (!tab || tab.loading) return;
+  if (projIsMd(tab.path) && projMdModeOf(tab) === "preview") {
+    tab.mdMode = "edit";
+    if (!projRemountEditorBody(tab.path, { scrollTop: 0 })) render();
+    else projPaintEditorChrome();
+  }
+  const ta = $("proj-editor");
+  if (!ta || ta.disabled) return;
+  proj.find.open = true;
+  if (withReplace) proj.find.replace = true;
+  if (ta.selectionStart !== ta.selectionEnd) {
+    const sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+    if (sel && !/\r|\n/.test(sel) && sel.length < 200) proj.find.q = sel;
+  }
+  projFindPaintChrome();
+  projFindRefresh();
+  if (withReplace) {
+    const r = $("proj-find-repl");
+    r?.focus();
+    r?.select();
+  } else {
+    const inp = $("proj-find-q");
+    inp?.focus();
+    inp?.select();
+  }
+}
+function projFindClose() {
+  proj.find.open = false;
+  const bar = $("proj-find");
+  if (bar) bar.hidden = true;
+  $("proj-editor")?.focus();
+}
+function projFindCanUse() {
+  return ui.view === "projects" && !!proj.open && proj.pane === "editor" && !!projTab(proj.active) && !projTab(proj.active).loading;
+}
+function projMdPreviewHtml(text) {
+  const body = String(text || "");
+  if (!body.trim()) {
+    return `<div class="notes-blank"><p>${tr("No content")}</p><button class="btn" data-projmdmode="edit">${tr("Edit")}</button></div>`;
+  }
+  return `<div class="md-doc-inner">${mdToHtml(body)}</div>`;
+}
+function projClearEditorBody(wrap) {
+  wrap.querySelector(".proj-editor-empty")?.remove();
+  wrap.querySelector("#proj-code")?.remove();
+  wrap.querySelector("#proj-editor")?.remove();
+  wrap.querySelector("#proj-md-preview")?.remove();
+  // Keep #proj-find — it remounts onto the wrap after body swaps.
+}
+function projMakeCodeEditor(t) {
+  const lang = projLangOf(t.path);
+  const box = document.createElement("div");
+  box.id = "proj-code";
+  box.className = "proj-code";
+  box.dataset.lang = lang;
+  const hl = document.createElement("pre");
+  hl.className = "proj-code-hl";
+  hl.setAttribute("aria-hidden", "true");
+  const ta = document.createElement("textarea");
+  ta.className = "proj-editor";
+  ta.id = "proj-editor";
+  ta.spellcheck = false;
+  if (t.loading) { ta.disabled = true; ta.value = ""; }
+  else {
+    ta.disabled = false;
+    ta.value = t.text || "";
+    if (!projTabDirty(t)) { t.text = ta.value; t.saved = ta.value; t.dirty = false; }
+  }
+  box.append(hl, ta);
+  return { box, ta };
+}
+/** Mount edit or document-style Markdown preview into the editor wrap. */
+function projRemountEditorBody(path, { scrollTop } = {}) {
+  const t = projTab(path);
+  const wrap = document.querySelector(".proj-editor-wrap");
+  if (!t || !wrap) return false;
+  projClearEditorBody(wrap);
+  const mode = projMdModeOf(t);
+  if (!t.loading && mode === "preview") {
+    const div = document.createElement("div");
+    div.id = "proj-md-preview";
+    div.className = "notes-preview proj-md-preview md-doc";
+    div.innerHTML = projMdPreviewHtml(t.text);
+    wrap.append(div);
+    if (scrollTop != null) div.scrollTop = scrollTop;
+    return true;
+  }
+  const { box, ta } = projMakeCodeEditor(t);
+  wrap.append(box);
+  projBindEditor(ta);
+  if (scrollTop != null && !t.loading) {
+    ta.scrollTop = scrollTop;
+    projHlPaint(ta);
+  }
+  return true;
+}
+function projEnsureEditorTextarea() {
+  const wrap = document.querySelector(".proj-editor-wrap");
+  if (!wrap) return null;
+  let ta = $("proj-editor");
+  if (ta) return ta;
+  projClearEditorBody(wrap);
+  const { box, ta: next } = projMakeCodeEditor(projTab(proj.active) || { path: "", text: "", loading: true });
+  wrap.append(box);
+  projBindEditor(next);
+  return next;
+}
+/* Refresh tab labels / save+action chrome without remounting the whole IDE. */
+function projPaintEditorChrome() {
+  if (ui.view !== "projects" || !proj.open) return;
+  const p = projOf(proj.open);
+  const tab = projTab(proj.active);
+  document.querySelectorAll(".proj-editor-wrap [data-projtab]").forEach((btn) => {
+    const path = btn.dataset.projtab;
+    const t = projTab(path);
+    if (!t) return;
+    btn.classList.toggle("on", path === proj.active);
+    const label = t.path.split("/").pop() || t.path;
+    const mark = t.dirty || t.loading ? "• " : "";
+    const span = btn.querySelector(":scope > span:not(.x)");
+    if (span) span.textContent = mark + label;
+  });
+  const bar = document.querySelector(".proj-ide-bar");
+  if (!bar || !p) return;
+  const mdHtml = proj.pane === "editor" ? projMdModeSegHtml(proj.active) : "";
+  let md = bar.querySelector(".proj-md-mode");
+  if (mdHtml) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = mdHtml;
+    const next = tmp.firstElementChild;
+    if (md) md.replaceWith(next);
+    else bar.querySelector(".proj-pane-toggle")?.after(next);
+  } else {
+    md?.remove();
+  }
+  const kind = projFileKind(proj.active);
+  const actBtn = kind === "compose"
+    ? `<button class="btn" data-projact="compose" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Open")}</button>`
+    : kind === "dockerfile"
+      ? `<button class="btn" data-projact="build" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Build")}</button>`
+      : kind === "script"
+        ? `<button class="btn" data-projact="run" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Run")}</button>`
+        : "";
+  const save = proj.pane === "editor" && tab && !tab.loading
+    ? `<button class="btn primary" data-projsavefile>${tr("Save")}</button>` : "";
+  const acts = proj.pane === "editor" ? `${save}${actBtn}` : "";
+  let slot = bar.querySelector(".proj-ide-acts");
+  if (!slot) {
+    slot = document.createElement("span");
+    slot.className = "proj-ide-acts";
+    bar.append(slot);
+  }
+  slot.innerHTML = acts;
+}
+/* Swap editor body to an already-open tab without remounting the IDE shell. */
+function projSwapEditorTo(path, wantReveal) {
+  const t = projTab(path);
+  const wrap = document.querySelector(".proj-editor-wrap");
+  if (!t || !wrap || ui.view !== "projects") return false;
+  if (!projRemountEditorBody(path, { scrollTop: 0 })) return false;
+  projPaintEditorChrome();
+  projPaintTreeSelection();
+  if (wantReveal) {
+    const strip = projTabStrip("editor");
+    const el = strip?.querySelector(`[data-projtab="${CSS.escape(path)}"]`);
+    projRevealTabEl(strip, el, true);
+  }
+  if (proj.find?.open) {
+    projFindPaintChrome();
+    projFindRefresh();
+  }
+  return true;
+}
+/* Append a loading tab + empty editor in place (avoids full-page remount jump). */
+function projPatchOpenNewTab(path, wantReveal) {
+  const wrap = document.querySelector(".proj-editor-wrap");
+  if (!wrap || ui.view !== "projects" || proj.pane !== "editor") return false;
+  let strip = wrap.querySelector(":scope > .proj-tabs");
+  if (!strip) {
+    strip = document.createElement("div");
+    strip.className = "proj-tabs";
+    wrap.prepend(strip);
+    projBindTabStrip(strip, "editor");
+  }
+  const label = path.split("/").pop() || path;
+  const btn = document.createElement("button");
+  btn.className = "proj-tab on";
+  btn.dataset.projtab = path;
+  btn.title = path;
+  btn.innerHTML = `<span>• ${esc(label)}</span><span class="x" data-projtabclose="${esc(path)}" title="${tr("Close")}">×</span>`;
+  strip.append(btn);
+  const ta = projEnsureEditorTextarea();
+  if (!ta) return false;
+  ta.disabled = true;
+  ta.value = "";
+  projPaintEditorChrome();
+  projPaintTreeSelection();
+  if (wantReveal) projRevealTabEl(strip, btn, true);
+  return true;
+}
+/** Returns true when the event was a project editor/terminal tab right-click. */
+function projHandleTabContextMenu(ev) {
+  const etab = ev.target.closest?.("[data-projtab]");
+  const ttab = ev.target.closest?.("[data-projtermtab]");
+  const editor = etab && (etab.closest(".proj-editor-wrap") || etab.closest(".proj-tabs"));
+  const term = ttab && (ttab.closest(".proj-term-wrap") || ttab.closest(".proj-tabs"));
+  if (!editor && !term) return false;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const kind = editor ? "editor" : "term";
+  const id = kind === "editor" ? etab.dataset.projtab : ttab.dataset.projtermtab;
+  projShowTabMenu(ev.clientX, ev.clientY, kind, id);
+  return true;
+}
+/** Returns true when the event was a project file-tree row right-click. */
+function projHandleTreeContextMenu(ev) {
+  if (ui.view !== "projects" || !proj.open) return false;
+  if (ev.target.closest?.("input, textarea, .menu, .scrim")) return false;
+  const row = ev.target.closest?.(".proj-trow[data-projsel]");
+  if (!row || !row.closest(".proj-tree")) return false;
+  // Leave the delete / fold buttons alone — they have their own clicks.
+  if (ev.target.closest?.("[data-projrmpath], [data-projrootfold], [data-projtwist]")) return false;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const path = row.dataset.projsel ?? "";
+  const isDir = row.dataset.dir === "1";
+  proj.sel = path;
+  proj.selDir = isDir;
+  projPaintTreeSelection();
+  projShowTreeMenu(ev.clientX, ev.clientY, path, isDir);
+  return true;
+}
+/** Absolute host path for a project-relative tree path ("" = project root). */
+function projAbsFromRel(rel) {
+  const root = projOf(proj.open)?.root;
+  if (!root) return "";
+  const r = String(rel || "").replace(/^[/\\]+/, "");
+  if (!r) return root;
+  const win = /\\/.test(root) && !/\//.test(root);
+  const sep = win ? "\\" : "/";
+  const base = root.replace(/[/\\]+$/, "");
+  return `${base}${sep}${r.split("/").join(sep)}`;
+}
+/** Directory to `cd` into: folders as-is; files → parent; root → project root. */
+function projTermDirFor(rel, isDir) {
+  const abs = projAbsFromRel(rel);
+  if (!abs) return "";
+  if (isDir || !rel) return abs;
+  const i = Math.max(abs.lastIndexOf("/"), abs.lastIndexOf("\\"));
+  if (i <= 0) return projOf(proj.open)?.root || abs;
+  return abs.slice(0, i);
+}
+/** Tear down a session's PTY and point it at `dir` so the next boot starts there (no echoed `cd`). */
+function projTermResetToCwd(sess, dir) {
+  if (!sess || !dir) return;
+  if (sess.id && (sess.opened || sess.term)) send("term", { name: "close", id: sess.id });
+  try { sess.term?.dispose(); } catch { /* */ }
+  sess.term = null;
+  sess.fit = null;
+  sess.opened = false;
+  sess.exited = false;
+  sess.cwd = dir;
+  // Keep the same tab id/num; drop OSC title until the new shell retitles.
+  sess.title = tr("Terminal {n}", { n: sess.num });
+  try { sess.el.replaceChildren(); } catch { /* */ }
+}
+/** Switch to the project terminal already rooted at the tree path — no visible `cd`. */
+function projOpenInTerm(rel, isDir) {
+  const dir = projTermDirFor(rel, isDir);
+  if (!dir || !proj.open) return;
+  if (proj.pty.projectId && proj.pty.projectId !== proj.open) projTermCloseAll();
+  proj.pty.projectId = proj.open;
+  proj.pane = "term";
+  // Reuse the active tab (or create one) with cwd baked into the PTY open.
+  if (!proj.pty.sessions.length) {
+    proj.pty.sessions.push(projTermMakeSession(dir));
+    proj.pty.at = 0;
+  } else {
+    projTermResetToCwd(projTermActive(), dir);
+  }
+  if (proj._termTabsFollow !== false) proj._revealTermTab = true;
+  if (ui.view === "projects") render();
+  else projMountTerm();
+}
+/** After rename/delete: retarget open tabs, selection and expanded dirs. */
+function projRetargetPaths(from, to) {
+  if (!from) return;
+  const map = (p) => {
+    if (!p) return p;
+    if (to == null) {
+      if (p === from || p.startsWith(from + "/")) return null;
+      return p;
+    }
+    if (p === from) return to;
+    if (p.startsWith(from + "/")) return to + p.slice(from.length);
+    return p;
+  };
+  for (const t of proj.tabs || []) {
+    const next = map(t.path);
+    if (next == null) continue;
+    t.path = next;
+  }
+  if (to == null) {
+    proj.tabs = (proj.tabs || []).filter((t) => t.path !== from && !t.path.startsWith(from + "/"));
+  }
+  const act = map(proj.active);
+  proj.active = act == null ? (proj.tabs[0]?.path || "") : act;
+  const sel = map(proj.sel);
+  if (sel == null) { proj.sel = ""; proj.selDir = true; }
+  else proj.sel = sel;
+  const nextDirs = {};
+  for (const [k, v] of Object.entries(proj.openDirs || {})) {
+    const nk = map(k);
+    if (nk == null) continue;
+    nextDirs[nk] = v;
+  }
+  proj.openDirs = nextDirs;
+}
+function projTreeNewFile(into) {
+  if (!proj.open) return;
+  askText(tr("New file"), tr("File name"), (name) => {
+    const path = into ? `${into}/${name}` : name;
+    send("projectnewfile", { name: proj.open, value: { path } });
+    if (into) proj.openDirs[into] = true;
+    else proj.openDirs[""] = true;
+  });
+}
+function projTreeNewFolder(into) {
+  if (!proj.open) return;
+  askText(tr("New folder"), tr("Folder name"), (name) => {
+    const path = into ? `${into}/${name}` : name;
+    send("projectmkdir", { name: proj.open, value: { path } });
+    if (into) proj.openDirs[into] = true;
+    else proj.openDirs[""] = true;
+    proj.openDirs[path] = true;
+  });
+}
+function projTreeRename(path) {
+  if (!path || !proj.open) return;
+  const base = path.split("/").pop() || path;
+  const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+  askText(tr("Rename"), tr("Name"), (name) => {
+    const clean = String(name || "").trim();
+    if (!clean) return;
+    if (/[\\/]/.test(clean)) { toast("error", tr("Name cannot contain / or \\")); return; }
+    const to = parent ? `${parent}/${clean}` : clean;
+    if (to === path) return;
+    projRetargetPaths(path, to);
+    send("projectrename", { name: proj.open, value: { from: path, to } });
+    if (ui.view === "projects") render();
+  }, base);
+}
+function projTreeDelete(path) {
+  if (!path || !proj.open) return;
+  confirmRemove(tr("Delete {path}?", { path: esc(path) }), tr("This cannot be undone."), tr("Delete"), () => {
+    send("projectrmpath", { name: proj.open, value: { path } });
+    projRetargetPaths(path, null);
+    if (ui.view === "projects") render();
+  });
+}
+function projTreeCopyPath(path, relative) {
+  const text = relative
+    ? (path || ".")
+    : (projAbsFromRel(path) || path || "");
+  if (!text) return;
+  send("copy", { name: text });
+  toast("ok", tr("Copied"));
+}
+function projTreeReveal(path) {
+  if (!proj.open) return;
+  send("projectreveal", { name: proj.open, value: { path: path || "" } });
+}
+function projTreeMenuAction(action, ctx) {
+  if (!action || !ctx) return;
+  const { path, isDir } = ctx;
+  if (action === "openterm") projOpenInTerm(path, isDir);
+  else if (action === "reveal") projTreeReveal(path);
+  else if (action === "newfile") projTreeNewFile(isDir ? path : (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ""));
+  else if (action === "newfolder") projTreeNewFolder(isDir ? path : (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ""));
+  else if (action === "copyabs") projTreeCopyPath(path, false);
+  else if (action === "copyrel") projTreeCopyPath(path, true);
+  else if (action === "rename") projTreeRename(path);
+  else if (action === "delete") projTreeDelete(path);
+}
+/**
+ * Tree context menu — order matches common IDEs, works on macOS / Windows / Linux:
+ *   Open in Terminal → Open location → New… → Copy paths → Rename / Delete
+ */
+function projShowTreeMenu(clientX, clientY, path, isDir) {
+  closeMenu();
+  proj._treeMenu = { path, isDir: !!isDir };
+  const items = [];
+  items.push(["Open in Terminal", "openterm"]);
+  // Platform-neutral label (Finder / Explorer / file manager) — same as Notes.
+  items.push(["Open location", "reveal"]);
+  if (isDir) {
+    items.push("---");
+    items.push(["New file", "newfile"]);
+    items.push(["New folder", "newfolder"]);
+  }
+  items.push("---");
+  items.push(["Copy Path", "copyabs"]);
+  items.push(["Copy Relative Path", "copyrel"]);
+  if (path) {
+    items.push("---");
+    items.push(["Rename", "rename"]);
+    items.push(["Delete", "delete", "danger"]);
+  }
+  const menu = document.createElement("div");
+  menu.className = "menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = items.map((row) => {
+    if (row === "---") return `<div class="sep" role="separator"></div>`;
+    const [label, action, cls] = row;
+    return `<button type="button" role="menuitem" class="${cls || ""}" data-projtreemenu="${action}">${tr(label)}</button>`;
+  }).join("");
+  document.body.append(menu);
+  const k = menu.getBoundingClientRect().width / menu.offsetWidth || 1;
+  const w = menu.offsetWidth * k, h = menu.offsetHeight * k;
+  let left = clientX + 2, top = clientY + 2;
+  if (left + w > innerWidth - 8) left = Math.max(8, innerWidth - 8 - w);
+  if (top + h > innerHeight - 8) top = Math.max(8, clientY - h);
+  menu.style.left = `${left / k}px`;
+  menu.style.top = `${top / k}px`;
+  const openedAt = Date.now();
+  menu.querySelectorAll("[data-projtreemenu]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (Date.now() - openedAt < 280) return;
+      proj._ignoreMenuClick = false;
+      clearTimeout(proj._ignoreMenuClickTimer);
+      const action = btn.dataset.projtreemenu;
+      const ctx = proj._treeMenu;
+      proj._treeMenu = null;
+      closeMenu();
+      projTreeMenuAction(action, ctx);
+    });
+  });
+  proj._ignoreMenuClick = true;
+  clearTimeout(proj._ignoreMenuClickTimer);
+  proj._ignoreMenuClickTimer = setTimeout(() => { proj._ignoreMenuClick = false; }, 400);
+}
+function projShowTabMenu(clientX, clientY, kind, id) {
+  if (!id) return;
+  closeMenu();
+  // Snapshot target in JS (paths in data-* mangle; index needed for left/right).
+  const index = kind === "editor"
+    ? (proj.tabs || []).findIndex((t) => t.path === id)
+    : (proj.pty.sessions || []).findIndex((s) => s.id === id);
+  proj._tabMenu = { kind, id, index };
+  const items = [
+    ["Close", "close"],
+    ["Close Others", "others"],
+    ["Close to the Left", "left"],
+    ["Close to the Right", "right"],
+    ["Close All", "all", "danger"],
+  ];
+  // Build the menu here and bind each item directly — document click + confirm() in
+  // WKWebView was dropping bulk-close actions (only single Close looked reliable).
+  const menu = document.createElement("div");
+  menu.className = "menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = items.map(([label, action, cls]) =>
+    `<button type="button" role="menuitem" class="${cls || ""}" data-projtabmenu="${action}">${tr(label)}</button>`).join("");
+  document.body.append(menu);
+  const k = menu.getBoundingClientRect().width / menu.offsetWidth || 1;
+  const w = menu.offsetWidth * k, h = menu.offsetHeight * k;
+  // Nudge off the cursor so a post-contextmenu click can't land on "Close".
+  let left = clientX + 2, top = clientY + 2;
+  if (left + w > innerWidth - 8) left = Math.max(8, innerWidth - 8 - w);
+  if (top + h > innerHeight - 8) top = Math.max(8, clientY - h);
+  menu.style.left = `${left / k}px`;
+  menu.style.top = `${top / k}px`;
+  const openedAt = Date.now();
+  menu.querySelectorAll("[data-projtabmenu]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      // Ignore the synthetic click some WebViews fire on the menu under the cursor.
+      if (Date.now() - openedAt < 280) return;
+      proj._ignoreMenuClick = false;
+      clearTimeout(proj._ignoreMenuClickTimer);
+      const action = btn.dataset.projtabmenu;
+      closeMenu();
+      projTabMenuAction(action);
+    });
+  });
+  // Swallow the next non-menu click some WebViews emit after contextmenu.
+  proj._ignoreMenuClick = true;
+  clearTimeout(proj._ignoreMenuClickTimer);
+  proj._ignoreMenuClickTimer = setTimeout(() => { proj._ignoreMenuClick = false; }, 400);
+}
+/** keep(tab, index) → true to retain. Uses confirmRemove (confirm() is flaky in WKWebView). */
+function projCloseEditorTabs(keep) {
+  projOpenFlush();
+  const tabs = proj.tabs || [];
+  const closing = tabs.filter((t, i) => !keep(t, i));
+  const dirty = closing.filter((t) => projTabDirty(t)).length;
+  const apply = () => {
+    proj.tabs = (proj.tabs || []).filter(keep);
+    if (!proj.tabs.some((t) => t.path === proj.active)) proj.active = proj.tabs[0]?.path || "";
+    if (ui.view === "projects") render();
+  };
+  if (!closing.length) return;
+  if (dirty) {
+    confirmRemove(
+      dirty === 1 ? tr("Discard unsaved changes?") : tr("Discard unsaved changes in {n} tabs?", { n: dirty }),
+      "",
+      "Discard",
+      apply
+    );
+    return;
+  }
+  apply();
+}
+function projTabMenuAction(action) {
+  const ctx = proj._tabMenu;
+  proj._tabMenu = null;
+  if (!ctx || !action) return;
+  const { kind, id } = ctx;
+  if (kind === "editor") {
+    let i = typeof ctx.index === "number" && ctx.index >= 0
+      ? ctx.index
+      : (proj.tabs || []).findIndex((t) => t.path === id);
+    // Path may have moved if tabs changed; re-resolve when snapshot is stale.
+    if (i >= 0 && proj.tabs[i]?.path !== id) i = (proj.tabs || []).findIndex((t) => t.path === id);
+    if (i < 0 && action !== "all") return;
+    if (action === "close") return projCloseTab(id);
+    if (action === "others") return projCloseEditorTabs((t) => t.path === id);
+    if (action === "left") return projCloseEditorTabs((_, idx) => idx >= i);
+    if (action === "right") return projCloseEditorTabs((_, idx) => idx <= i);
+    if (action === "all") return projCloseEditorTabs(() => false);
+  } else if (kind === "term") {
+    let i = typeof ctx.index === "number" && ctx.index >= 0
+      ? ctx.index
+      : (proj.pty.sessions || []).findIndex((s) => s.id === id);
+    if (i >= 0 && proj.pty.sessions[i]?.id !== id) i = (proj.pty.sessions || []).findIndex((s) => s.id === id);
+    if (i < 0 && action !== "all") return;
+    if (action === "close") return projTermCloseTab(id);
+    if (action === "others") {
+      const keep = proj.pty.sessions[i];
+      for (const s of [...proj.pty.sessions]) if (s.id !== id) projTermCloseSession(s);
+      proj.pty.sessions = keep ? [keep] : [];
+      proj.pty.at = 0;
+      if (!proj.pty.sessions.length && proj.pane === "term") projTermEnsureOne();
+      if (ui.view === "projects" && proj.pane === "term") render();
+      else projMountTerm();
+      return;
+    }
+    if (action === "left") {
+      const drop = proj.pty.sessions.splice(0, i);
+      drop.forEach(projTermCloseSession);
+      proj.pty.at = 0;
+      if (ui.view === "projects" && proj.pane === "term") render();
+      else projMountTerm();
+      return;
+    }
+    if (action === "right") {
+      const drop = proj.pty.sessions.splice(i + 1);
+      drop.forEach(projTermCloseSession);
+      proj.pty.at = Math.min(proj.pty.at, Math.max(0, proj.pty.sessions.length - 1));
+      if (ui.view === "projects" && proj.pane === "term") render();
+      else projMountTerm();
+      return;
+    }
+    if (action === "all") {
+      projTermCloseAll();
+      if (proj.pane === "term") projTermEnsureOne();
+      if (ui.view === "projects" && proj.pane === "term") render();
+      else projMountTerm();
+    }
+  }
+}
+/** Textareas always expose LF; disk files (e.g. .bat) often use CRLF — compare in LF form. */
+function projNormNl(s) { return String(s ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n"); }
+function projDetectEol(s) {
+  const t = String(s ?? "");
+  if (t.includes("\r\n")) return "\r\n";
+  if (t.includes("\r")) return "\r";
+  return "\n";
+}
+function projToEol(s, eol) {
+  const n = projNormNl(s);
+  return !eol || eol === "\n" ? n : n.replace(/\n/g, eol);
+}
+function projTabDirty(t, text) {
+  if (!t || t.loading) return false;
+  return projNormNl(text ?? t.text) !== projNormNl(t.saved || "");
+}
+function projOpenFlush() {
+  const ta = $("proj-editor");
+  const t = projTab(proj.active);
+  if (!t || t.loading) return;
+  // Preview has no textarea — body already lives on the tab.
+  if (!ta) return;
+  t.text = ta.value;
+  // Align baseline when only EOL differs — otherwise every CRLF file looks dirty.
+  if (!projTabDirty(t)) { t.saved = t.text; t.dirty = false; }
+  else t.dirty = true;
+}
+function projShowEditorPane() {
+  proj.pane = "editor";
+  const ed = document.querySelector(".proj-editor-wrap");
+  const tm = document.querySelector(".proj-term-wrap");
+  if (ed) ed.hidden = false;
+  if (tm) tm.hidden = true;
+  document.querySelectorAll(".proj-pane-toggle [data-projpane]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.projpane === "editor");
+  });
+}
+function projOpenFile(path) {
+  if (!path || !proj.open) return;
+  projOpenFlush();
+  projShowEditorPane();
+  // Opening from the tree always brings that tab into view.
+  const wantReveal = true;
+  const existing = projTab(path);
+  if (existing) {
+    proj.active = path; proj.sel = path; proj.selDir = false;
+    if (ui.view === "projects") {
+      if (projSwapEditorTo(path, wantReveal)) return;
+      proj._revealEdTab = true;
+      render();
+    }
+    return;
+  }
+  proj.tabs.push({ path, text: "", saved: "", dirty: false, loading: true, eol: "\n", mdMode: projIsMd(path) ? "preview" : undefined });
+  proj.active = path; proj.sel = path; proj.selDir = false;
+  if (ui.view === "projects" && projPatchOpenNewTab(path, wantReveal)) {
+    send("projectread", { name: proj.open, value: { path } });
+    return;
+  }
+  proj._revealEdTab = true;
+  if (ui.view === "projects") render();
+  send("projectread", { name: proj.open, value: { path } });
+}
+function projCloseTab(path) {
+  projOpenFlush();
+  const t = projTab(path);
+  const apply = () => {
+    proj.tabs = proj.tabs.filter((x) => x.path !== path);
+    if (proj.active === path) proj.active = proj.tabs[0]?.path || "";
+    if (ui.view === "projects") render();
+  };
+  // confirm() is unreliable in WKWebView — use the same scrim dialog as elsewhere.
+  if (projTabDirty(t)) return confirmRemove(tr("Discard unsaved changes?"), "", "Discard", apply);
+  apply();
+}
+function projSaveActive() {
+  projOpenFlush();
+  const t = projTab(proj.active);
+  if (!t || !proj.open || t.loading) return;
+  send("projectsave", { name: proj.open, value: { path: t.path, text: projToEol(t.text, t.eol || "\n") } });
+}
+function projShellQuote(s) {
+  const t = String(s ?? "");
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(t)) return t;
+  return `'${t.replace(/'/g, `'\\''`)}'`;
+}
+function projTermActive() { return proj.pty.sessions[proj.pty.at] || null; }
+function projTermById(id) { return (proj.pty.sessions || []).find((s) => s.id === id) || null; }
+function projTermLabel(s, i) {
+  if (s?.title) return s.title;
+  return tr("Terminal {n}", { n: (i ?? proj.pty.sessions.indexOf(s)) + 1 });
+}
+function projTermCloseSession(sess) {
+  if (!sess) return;
+  if (sess.id) send("term", { name: "close", id: sess.id });
+  try { sess.term?.dispose(); } catch { /* already gone */ }
+  sess.el?.remove();
+  sess.term = null; sess.fit = null; sess.opened = false;
+}
+function projTermCloseAll() {
+  for (const s of proj.pty.sessions) projTermCloseSession(s);
+  proj.pty.sessions = [];
+  proj.pty.at = 0;
+  proj.pty.projectId = null;
+  proj.pty.pending = null;
+  proj.pty.wantShells = false;
+}
+function projTermFit(sess = projTermActive()) {
+  if (!sess?.term || !sess.el?.isConnected || sess.el.hidden || !sess.el.offsetWidth) return;
+  try { sess.fit.fit(); } catch { /* not laid out yet */ }
+}
+function projTermFitAll() { for (const s of proj.pty.sessions) if (!s.el?.hidden) projTermFit(s); }
+function projTermSend(text) {
+  const s = projTermActive();
+  if (!s?.id || s.exited || !text) return false;
+  send("term", { name: "input", id: s.id, value: htB64(text) });
+  return true;
+}
+/** Clear any half-typed line (Ctrl+U) then run `cmd` — avoids `./foo` + `bash foo up` gluing together. */
+function projTermRunLine(cmd) {
+  const line = String(cmd || "").trim();
+  if (!line) return false;
+  // \x15 = kill-to-start-of-line in bash/zsh/fish bindkey defaults.
+  return projTermSend(`\x15${line}\r`);
+}
+function projTermFlushPending() {
+  const fn = proj.pty.pending;
+  proj.pty.pending = null;
+  if (fn) setTimeout(fn, 280);
+}
+function projTermMakeSession(cwd) {
+  const el = document.createElement("div");
+  el.className = "proj-htx";
+  const num = ++proj.pty.n;
+  return {
+    id: `p${num}`,
+    num,
+    // Provisional label until the PTY sends OSC title — keeps the tab strip non-empty.
+    title: tr("Terminal {n}", { n: num }),
+    cwd,
+    el,
+    term: null,
+    fit: null,
+    exited: false,
+    opened: false,
+    shell: null,
+  };
+}
+function projTermBoot(sess) {
+  if (!sess || typeof Terminal !== "function") return;
+  if (sess.term && !sess.exited) {
+    projTermFit(sess);
+    sess.term.focus();
+    return;
+  }
+  if (!ht.shells) {
+    proj.pty.wantShells = true;
+    return send("term", { name: "shells" });
+  }
+  if (sess.term) {
+    if (sess.id) send("term", { name: "close", id: sess.id });
+    try { sess.term.dispose(); } catch { /* */ }
+    sess.term = null; sess.fit = null; sess.opened = false;
+  }
+  const shell = ht.def || ht.shells[0]?.id || "";
+  const id = sess.id || `p${++proj.pty.n}`;
+  sess.id = id;
+  const term = new Terminal(htTermOpts());
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.loadAddon(new WebLinksAddon.WebLinksAddon((ev, uri) => { ev.preventDefault?.(); send("term", { name: "link", value: uri }); }));
+  term.open(sess.el);
+  term.onData((d) => { const cur = projTermById(id); if (cur && !cur.exited) send("term", { name: "input", id, value: htB64(d) }); });
+  term.onBinary((d) => { const cur = projTermById(id); if (cur && !cur.exited) send("term", { name: "input", id, value: btoa(d) }); });
+  term.onResize(({ cols, rows }) => { const cur = projTermById(id); if (cur?.opened) send("term", { name: "resize", id, value: { cols, rows } }); });
+  term.onTitleChange((t) => {
+    const cur = projTermById(id);
+    if (!cur) return;
+    const next = String(t || "").trim().slice(0, 40);
+    if (next) cur.title = next;
+    const btn = document.querySelector(`[data-projtermtab="${CSS.escape(id)}"] .nm`);
+    if (btn) btn.textContent = projTermLabel(cur);
+    else projSyncTermTabs();
+  });
+  sess.term = term; sess.fit = fit; sess.shell = shell;
+  sess.exited = false; sess.opened = false;
+  projTermFit(sess);
+  send("term", { name: "open", id, value: { shell, cols: term.cols, rows: term.rows, cwd: sess.cwd } });
+  sess.opened = true;
+  term.focus();
+}
+function projTermEnsureOne() {
+  const root = projOf(proj.open)?.root;
+  if (!root) return null;
+  if (proj.pty.projectId && proj.pty.projectId !== proj.open) projTermCloseAll();
+  proj.pty.projectId = proj.open;
+  if (!proj.pty.sessions.length) {
+    const s = projTermMakeSession(root);
+    proj.pty.sessions.push(s);
+    proj.pty.at = 0;
+  }
+  return projTermActive();
+}
+function projTermNew() {
+  const root = projOf(proj.open)?.root;
+  if (!root) return;
+  if (proj.pty.projectId && proj.pty.projectId !== proj.open) projTermCloseAll();
+  proj.pty.projectId = proj.open;
+  const s = projTermMakeSession(root);
+  proj.pty.sessions.push(s);
+  proj.pty.at = proj.pty.sessions.length - 1;
+  if (proj._termTabsFollow !== false) proj._revealTermTab = true;
+  if (ui.view === "projects" && proj.pane === "term") render();
+  else projMountTerm();
+}
+function projTermSelect(id) {
+  const i = proj.pty.sessions.findIndex((s) => s.id === id);
+  if (i < 0) return;
+  proj.pty.at = i;
+  // Selecting from the strip: keep the user's scroll — don't force-follow.
+  if (ui.view === "projects" && proj.pane === "term") render();
+  else projMountTerm();
+}
+function projTermCloseTab(id) {
+  const i = proj.pty.sessions.findIndex((s) => s.id === id);
+  if (i < 0) return;
+  projTermCloseSession(proj.pty.sessions[i]);
+  proj.pty.sessions.splice(i, 1);
+  if (!proj.pty.sessions.length) {
+    proj.pty.at = 0;
+    if (proj.pane === "term") projTermEnsureOne();
+  } else if (proj.pty.at >= proj.pty.sessions.length) {
+    proj.pty.at = proj.pty.sessions.length - 1;
+  } else if (proj.pty.at > i) {
+    proj.pty.at -= 1;
+  } else if (proj.pty.at === i) {
+    proj.pty.at = Math.min(i, proj.pty.sessions.length - 1);
+  }
+  if (ui.view === "projects" && proj.pane === "term") render();
+  else projMountTerm();
+}
+function projTermTabsHtml() {
+  const tabs = proj.pty.sessions.map((s, i) => {
+    const on = i === proj.pty.at ? " on" : "";
+    return `<button type="button" class="proj-tab${on}" data-projtermtab="${esc(s.id)}" title="${esc(projTermLabel(s, i))}">
+      <span class="nm">${esc(projTermLabel(s, i))}</span>
+      <span class="x" data-projtermclose="${esc(s.id)}" title="${tr("Close")}">×</span></button>`;
+  }).join("");
+  return `<div class="proj-tabs">${tabs}<button type="button" class="proj-tab-add" data-projtermnew title="${tr("New terminal")}" aria-label="${tr("New terminal")}">+</button></div>`;
+}
+/* Keep the term tab strip in sync after ensureOne/boot (first open used to leave only "+"). */
+function projSyncTermTabs() {
+  const wrap = document.querySelector(".proj-term-wrap");
+  if (!wrap || ui.view !== "projects") return;
+  let strip = wrap.querySelector(":scope > .proj-tabs");
+  const need = (proj.pty.sessions || []).length;
+  const have = strip ? strip.querySelectorAll("[data-projtermtab]").length : 0;
+  const missing = (proj.pty.sessions || []).some((s) => !strip?.querySelector(`[data-projtermtab="${CSS.escape(s.id)}"]`));
+  if (!strip || missing || have !== need) {
+    const tmp = document.createElement("div");
+    tmp.innerHTML = projTermTabsHtml();
+    const next = tmp.firstElementChild;
+    if (strip) strip.replaceWith(next);
+    else wrap.insertBefore(next, wrap.firstChild);
+    projBindTabStrip(next, "term");
+    strip = next;
+  } else {
+    strip.querySelectorAll("[data-projtermtab]").forEach((btn) => {
+      const s = projTermById(btn.dataset.projtermtab);
+      const i = proj.pty.sessions.indexOf(s);
+      btn.classList.toggle("on", i === proj.pty.at);
+      const nm = btn.querySelector(".nm");
+      if (nm && s) nm.textContent = projTermLabel(s, i);
+      if (s) btn.title = projTermLabel(s, i);
+    });
+  }
+}
+function projMountTerm(then) {
+  if (then) proj.pty.pending = then;
+  const wrap = $("proj-term-wrap");
+  const body = $("proj-term-body");
+  if (!wrap || !body || !projOf(proj.open)?.root) return;
+  if (proj.pty.projectId && proj.pty.projectId !== proj.open) projTermCloseAll();
+  const sess = projTermEnsureOne();
+  if (!sess) return;
+  // Session may have been created after the last render — paint the tab immediately.
+  projSyncTermTabs();
+  for (const s of proj.pty.sessions) {
+    if (s.el.parentElement !== body) body.appendChild(s.el);
+    s.el.hidden = s !== sess;
+  }
+  if (!proj.pty._ro) proj.pty._ro = new ResizeObserver(() => projTermFitAll());
+  proj.pty._ro.disconnect();
+  proj.pty._ro.observe(body);
+  projTermBoot(sess);
+  projTermFlushPending();
+}
+function projFocusTerm() {
+  if (proj.pane !== "term") return;
+  projMountTerm();
+  projTermActive()?.term?.focus();
+}
+function projRunInTerm(line) {
+  const cmd = String(line || "").trim();
+  if (!cmd || !proj.open) return;
+  proj.pane = "term";
+  if (ui.view === "projects") render();
+  projMountTerm(() => projTermRunLine(cmd));
+}
+/** Run a project script; ask for optional args (remembered per path). Empty = no args. */
+function projRunScript(path) {
+  if (!path || !proj.open) return;
+  const name = path.split("/").pop() || path;
+  const last = (proj.scriptArgs && proj.scriptArgs[path]) || "";
+  askText(
+    tr("Run {name}", { name }),
+    tr("Arguments (optional), e.g. --push"),
+    (args) => {
+      proj.scriptArgs = proj.scriptArgs || {};
+      proj.scriptArgs[path] = args;
+      const a = String(args || "").trim();
+      // Append raw argv text (user-typed flags); do not quote the whole string.
+      projRunInTerm(`bash ${projShellQuote(path)}${a ? ` ${a}` : ""}`);
+    },
+    last,
+    { allowEmpty: true, allowSlash: true, ok: tr("Run") },
+  );
+}
+function projFileKind(path) {
+  const base = (path || "").split("/").pop() || "";
+  const lower = base.toLowerCase();
+  if (/^(docker-)?compose\.ya?ml$/.test(lower) || lower.endsWith(".compose.yml") || lower.endsWith(".compose.yaml")) return "compose";
+  if (lower === "dockerfile" || lower.startsWith("dockerfile.")) return "dockerfile";
+  if (/\.(sh|bash|ps1|cmd|bat)$/.test(lower) || lower.endsWith(".sh")) return "script";
+  return "";
+}
+function projIsMd(path) {
+  const lower = ((path || "").split("/").pop() || "").toLowerCase();
+  return /\.(md|markdown|mdown|mkd)$/.test(lower);
+}
+/** Markdown tabs default to Preview; non-md stays edit-only. */
+function projMdModeOf(t) {
+  if (!t || !projIsMd(t.path)) return "edit";
+  return t.mdMode === "edit" ? "edit" : "preview"; // treat legacy "split" as preview
+}
+function projMdModeSegHtml(path) {
+  if (!projIsMd(path)) return "";
+  const mode = projMdModeOf(projTab(path));
+  return `<div class="seg proj-md-mode" role="group" aria-label="${tr("Preview")}">
+    <button type="button" data-projmdmode="edit" aria-pressed="${mode === "edit"}">${tr("Edit")}</button>
+    <button type="button" data-projmdmode="preview" aria-pressed="${mode === "preview"}">${tr("Preview")}</button>
+  </div>`;
+}
+function projBadge(p) {
+  if (p.source === "kit") return `<span class="badge kit">${tr("Kit")}</span>`;
+  if (p.source === "linked") return `<span class="badge">${tr("Linked")}</span>`;
+  return `<span class="badge">${tr("Workspace")}</span>`;
+}
+const PROJ_ICONS = [
+  "briefcase", "cube", "stack", "hammer", "database", "globe", "lightning", "harddrive", "package", "rocket",
+  "code", "folder", "network", "gear", "sparkle", "shieldcheck", "bug", "github", "lock", "note", "plug", "usb",
+  "circuitry", "broadcast", "terminal", "desktop", "browser", "cloud", "gitbranch", "cpu", "tree", "appwindow",
+  "flask", "atom", "robot", "puzzle", "paintbrush", "camera", "music", "gamepad", "storefront", "users", "chart",
+  "mappin", "house", "car", "airplane", "leaf", "fire", "drop", "planet", "magicwand", "anchor", "coffee", "book",
+  "heart", "star", "flower", "boat", "bike", "palette", "megaphone", "bell", "key", "wallet", "shopping", "firstaid",
+  "gradcap", "lightbulb", "fingerprint", "compass", "flag", "trophy", "timer", "infinity", "diamond", "circles",
+  "train", "cloudarrow", "buildings", "wrench", "calendar", "clock", "confetti", "trendup",
+].filter((n) => PH[n]);
+function projIconOf(p) { const i = p?.icon || "briefcase"; return PH[i] ? i : "briefcase"; }
+function projColorOf(p) { const c = (p?.color || "#84CC16").toUpperCase(); return /^#[0-9A-F]{6}$/.test(c) ? c : "#84CC16"; }
+function projCloseIconPop() {
+  document.querySelector("#proj-modal .ico-pop")?.classList.remove("open");
+}
+function projCardIco(p) {
+  const icon = projIconOf(p), color = projColorOf(p);
+  return `<div class="proj-card-ico"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH[icon]}"/></svg></div>`;
+}
+function projCloseCreate() {
+  if (proj._createEsc) {
+    document.removeEventListener("keydown", proj._createEsc);
+    proj._createEsc = null;
+  }
+  proj.creating = false;
+  proj.editingId = null;
+  proj._createPending = false;
+  document.getElementById("proj-modal")?.remove();
+}
+function projNameTaken(name, exceptId) {
+  return (proj.list || []).some((p) => p.name === name && p.id !== exceptId);
+}
+function projSetCreateErr(msg) {
+  const err = $("proj-name-err");
+  const inp = $("proj-name");
+  if (err) err.textContent = msg || "";
+  if (inp) {
+    inp.classList.toggle("bad", !!msg);
+    if (msg) inp.focus();
+  }
+}
+function projOpenCreate() {
+  proj.creating = true;
+  proj.editingId = null;
+  proj.draft = { name: "", summary: "", source: "workspace", icon: "briefcase", color: "#84CC16" };
+  projPaintCreate();
+}
+function projOpenEdit(id) {
+  const p = projOf(id);
+  if (!p) return;
+  proj.creating = true;
+  proj.editingId = id;
+  proj.draft = {
+    name: p.name || "",
+    summary: p.summary || "",
+    source: p.source || "workspace",
+    icon: projIconOf(p),
+    color: projColorOf(p),
+  };
+  projPaintCreate();
+}
+function projPaintCreate() {
+  document.getElementById("proj-modal")?.remove();
+  if (proj._createEsc) {
+    document.removeEventListener("keydown", proj._createEsc);
+    proj._createEsc = null;
+  }
+  const editing = !!proj.editingId;
+  const d = proj.draft;
+  const icon = projIconOf(d), color = projColorOf(d);
+  d.icon = icon; d.color = color;
+  const icos = PROJ_ICONS.map((n) => `<button type="button" class="ico${icon === n ? " on" : ""}" data-projico="${n}" style="--proj-c:${esc(color)}" title="${n}"><svg viewBox="0 0 256 256"><path d="${PH[n]}"/></svg></button>`).join("");
+  const caret = `<svg class="caret" viewBox="0 0 256 256"><path d="${PH.caret || ""}"/></svg>`;
+  const title = editing ? tr("Edit project") : tr("New project");
+  const modes = editing ? "" : `<div class="modes">
+      <label class="mode${d.source === "workspace" ? " on" : ""}"><input type="radio" name="proj-src" value="workspace"${d.source === "workspace" ? " checked" : ""} />
+        <span><b>${tr("Blank workspace")}</b><span class="sub">${tr("Upload Dockerfiles, compose files and scripts in the project page.")}</span></span></label>
+      <label class="mode${d.source === "linked" ? " on" : ""}"><input type="radio" name="proj-src" value="linked"${d.source === "linked" ? " checked" : ""} />
+        <span><b>${tr("Link a local folder")}</b><span class="sub">${tr("Point at an existing folder like src/docker. Files stay where they are.")}</span></span></label>
+    </div>`;
+  const scrim = document.createElement("div");
+  scrim.className = "proj-modal";
+  scrim.id = "proj-modal";
+  scrim.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+    <div class="head">
+      <h3>${esc(title)}</h3>
+      <button type="button" class="xclose" data-projclosecreate title="${tr("Close")}" aria-label="${tr("Close")}">${CROSS}</button>
+    </div>
+    <label>${tr("Name")}<input type="text" id="proj-name" value="${esc(d.name)}" placeholder="${tr("e.g. szda-web docker")}" autocomplete="off" />
+      <span class="ferr" id="proj-name-err" role="alert"></span></label>
+    <label>${tr("Description")}<textarea id="proj-sum" placeholder="${tr("Short guide for others (shown on the card)")}">${esc(d.summary)}</textarea></label>
+    <div class="proj-pick">
+      <div class="field">
+        <span>${tr("Icon")}</span>
+        <button type="button" class="ico-trig" data-projicoopen aria-haspopup="listbox" aria-expanded="false" title="${tr("Choose icon")}">
+          <span class="preview" style="--proj-c:${esc(color)}"><svg viewBox="0 0 256 256"><path d="${PH[icon]}"/></svg></span>
+          <span class="lbl">${tr("Choose icon")}</span>
+          ${caret}
+        </button>
+      </div>
+      <div class="field">
+        <span>${tr("Color")}</span>
+        <label class="color-trig" title="${tr("Pick a color")}" style="--c:${esc(color)}">
+          <input type="color" id="proj-color" value="${esc(color.toLowerCase())}" />
+          <span class="swatch" aria-hidden="true"></span>
+          <span class="hex" id="proj-color-hex">${esc(color)}</span>
+        </label>
+      </div>
+      <div class="ico-pop" role="listbox" aria-label="${tr("Choose icon")}">${icos}</div>
+    </div>
+    ${modes}
+    <div class="actions">
+      <button class="btn quiet" type="button" data-projcancelcreate>${tr("Cancel")}</button>
+      <button class="btn primary" type="button" data-projcreate>${tr(editing ? "Save" : "Create")}</button>
+    </div>
+  </div>`;
+  document.body.append(scrim);
+  const pop = scrim.querySelector(".ico-pop");
+  const trig = scrim.querySelector("[data-projicoopen]");
+  const setPop = (open) => {
+    pop?.classList.toggle("open", open);
+    if (trig) trig.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  // Close only via × / Cancel / Esc — not by clicking the scrim. Esc closes icon pop first.
+  proj._createEsc = (ev) => {
+    if (ev.key !== "Escape") return;
+    if (!document.getElementById("proj-modal")) return;
+    ev.preventDefault();
+    if (pop?.classList.contains("open")) { setPop(false); return; }
+    projCloseCreate();
+  };
+  document.addEventListener("keydown", proj._createEsc);
+  scrim.querySelectorAll('input[name="proj-src"]').forEach((r) => r.addEventListener("change", () => {
+    proj.draft.source = r.value;
+    scrim.querySelectorAll(".mode").forEach((m) => m.classList.toggle("on", m.querySelector("input")?.value === proj.draft.source));
+  }));
+  const paintPick = () => {
+    const c = proj.draft.color, ico = proj.draft.icon;
+    const prev = scrim.querySelector(".ico-trig .preview");
+    if (prev) {
+      prev.style.setProperty("--proj-c", c);
+      prev.innerHTML = `<svg viewBox="0 0 256 256"><path d="${PH[ico] || PH.briefcase}"/></svg>`;
+    }
+    scrim.querySelectorAll("[data-projico]").forEach((b) => {
+      b.classList.toggle("on", b.dataset.projico === ico);
+      b.style.setProperty("--proj-c", c);
+    });
+    const ct = scrim.querySelector(".color-trig");
+    if (ct) ct.style.setProperty("--c", c);
+    const hex = $("proj-color-hex"); if (hex) hex.textContent = c;
+    const inp = $("proj-color"); if (inp && inp.value.toUpperCase() !== c) inp.value = c.toLowerCase();
+  };
+  trig.onclick = (ev) => {
+    ev.stopPropagation();
+    setPop(!pop.classList.contains("open"));
+  };
+  pop.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-projico]");
+    if (!b) return;
+    proj.draft.icon = b.dataset.projico;
+    paintPick();
+    setPop(false);
+  });
+  scrim.querySelector(".sheet")?.addEventListener("click", (ev) => {
+    if (pop?.classList.contains("open") && !ev.target.closest(".ico-pop, [data-projicoopen]")) setPop(false);
+  });
+  $("proj-color")?.addEventListener("input", (ev) => {
+    const v = (ev.target.value || "").toUpperCase();
+    if (/^#[0-9A-F]{6}$/.test(v)) { proj.draft.color = v; paintPick(); }
+  });
+  scrim.querySelector("[data-projclosecreate]").onclick = () => projCloseCreate();
+  scrim.querySelector("[data-projcancelcreate]").onclick = () => projCloseCreate();
+  $("proj-name")?.addEventListener("input", () => projSetCreateErr(""));
+  scrim.querySelector("[data-projcreate]").onclick = () => {
+    const name = ($("proj-name")?.value || "").trim();
+    const summary = $("proj-sum")?.value || "";
+    const source = scrim.querySelector('input[name="proj-src"]:checked')?.value || d.source || "workspace";
+    const icon = proj.draft.icon || "briefcase";
+    const color = proj.draft.color || "#84CC16";
+    if (!name) { projSetCreateErr(tr("Name is required")); return; }
+    if (projNameTaken(name, proj.editingId || undefined)) { projSetCreateErr(tr("A project with that name already exists")); return; }
+    if (editing) {
+      proj._createPending = true;
+      const go = scrim.querySelector("[data-projcreate]");
+      if (go) go.disabled = true;
+      send("projectmeta", { name: proj.editingId, value: { name, summary, icon, color } });
+      return;
+    }
+    if (source === "linked") {
+      projCloseCreate();
+      send("projectlinkopen", { value: { name, summary, icon, color } });
+      return;
+    }
+    // Keep the modal open until the server accepts — duplicate / folder clash stays inline.
+    proj._createPending = true;
+    const go = scrim.querySelector("[data-projcreate]");
+    if (go) go.disabled = true;
+    send("projectadd", { value: { source: "workspace", name, summary, icon, color } });
+  };
+  setTimeout(() => $("proj-name")?.focus(), 0);
+}
+function renderProjects() {
+  const right = $("hright");
+  if (!proj.open) {
+    morph(right, `<button class="btn primary" data-projnew>${tr("New project")}</button>`);
+  } else {
+    const p = projOf(proj.open);
+    morph(right, `<button class="btn" data-projexport="${esc(proj.open)}">${tr("Export kit…")}</button>`
+      + `<button class="btn quiet" data-projreveal="${esc(proj.open)}">${tr(LINUX || WIN ? "Show in file manager" : "Show in Finder")}</button>`
+      + `<button class="btn quiet" data-projedit="${esc(proj.open)}">${tr("Edit")}</button>`
+      + `<button class="btn danger quiet" data-projrm="${esc(proj.open)}">${tr("Remove")}</button>`);
+  }
+  if (proj.list == null) {
+    setHTML($("content"), `<div class="empty"><div><i class="sh-spin"></i><p>${tr("Loading projects…")}</p></div></div>`);
+    return;
+  }
+  if (proj.open) return renderProjectPage();
+  const cards = (proj.list || []).map((p) => {
+    const color = projColorOf(p);
+    const pins = (p.pins || []).slice(0, 3).map((pin) => {
+      const label = pin.label || pin.path;
+      return `<button class="btn" data-projpinrun="${esc(p.id)}" data-kind="${esc(pin.kind)}" data-path="${esc(pin.path)}" data-args="${esc(pin.args || "")}">${esc(label)}</button>`;
+    }).join("");
+    const acts = `<div class="card-acts">
+        <button type="button" class="btn quiet ic" data-projedit="${esc(p.id)}" title="${tr("Edit")}" aria-label="${tr("Edit")}"><svg viewBox="0 0 256 256"><path d="${PH.pencil}"/></svg></button>
+        <button type="button" class="btn quiet ic danger" data-projrm="${esc(p.id)}" title="${tr("Remove")}" aria-label="${tr("Remove")}"><svg viewBox="0 0 256 256"><path d="${PH.trash}"/></svg></button>
+      </div>`;
+    const blurb = p.summary || (p.source === "workspace" ? tr("Empty workspace — upload materials") : p.root);
+    return `<div class="proj-card${p.missing ? " missing" : ""}" style="--proj-c:${esc(color)}" data-projopen="${esc(p.id)}">
+      <div class="top">${projCardIco(p)}<div class="card-side">${projBadge(p)}${acts}</div></div>
+      <div class="meta"><b title="${esc(p.name)}">${esc(p.name)}</b>
+        <div class="sub" title="${esc(blurb)}">${esc(blurb)}</div>
+        ${p.missing ? `<div class="warn">${tr("Folder missing")}</div>` : ""}
+      </div>
+      ${pins ? `<div class="pins" onclick="event.stopPropagation()">${pins}</div>` : ""}
+      <div class="foot"><span>${pins ? "" : tr("Open to upload materials")}</span><span class="go">${tr("Open")} →</span></div>
+    </div>`;
+  }).join("");
+  const add = `<div class="proj-card add" data-projnew><div class="plus">+</div><div class="hint">${tr("New project")}</div></div>`;
+  setHTML($("content"), `<div class="proj-list">${cards}${add}</div>`);
+}
+function projFileIcon(path) {
+  return projTreeIconMeta(path, false).icon;
+}
+/** Icon glyph + tint class for the project tree (folder / md / yaml / shell…). */
+function projTreeIconMeta(path, isDir) {
+  if (isDir) return { icon: "folder", kind: "dir" };
+  const lower = ((path || "").split("/").pop() || "").toLowerCase();
+  if (projIsMd(path)) return { icon: "note", kind: "md" };
+  const k = projFileKind(path);
+  if (k === "compose") return { icon: "stack", kind: "yaml" };
+  if (k === "dockerfile") return { icon: "cube", kind: "docker" };
+  if (k === "script") {
+    if (/\.(cmd|bat)$/.test(lower)) return { icon: "terminal", kind: "bat" };
+    if (/\.ps1$/.test(lower)) return { icon: "terminal", kind: "ps" };
+    return { icon: "play", kind: "shell" };
+  }
+  if (/\.(ya?ml)$/.test(lower)) return { icon: "code", kind: "yaml" };
+  if (lower === ".env" || lower.startsWith(".env.") || /\.(env|properties|ini|conf|cfg)$/.test(lower)) return { icon: "gear", kind: "env" };
+  if (/\.jsonc?$/.test(lower)) return { icon: "code", kind: "json" };
+  if (/\.toml$/.test(lower)) return { icon: "gear", kind: "toml" };
+  return { icon: "note", kind: "file" };
+}
+function projTreeRow(path, name, isDir, depth) {
+  const isRoot = path === "";
+  const chosen = proj.selDir === isDir && proj.sel === path ? " chosen" : "";
+  const root = isRoot ? " root" : "";
+  const pad = `style="padding-left:${4 + depth * 14}px"`;
+  const expanded = isDir && projDirOpen(path);
+  // Root keeps a left spacer; its right control expands/collapses 1st-level folders only.
+  const twist = isRoot
+    ? `<span class="twist leaf" aria-hidden="true"></span>`
+    : isDir
+      ? `<button type="button" class="twist" data-projtwist="${esc(path)}" aria-expanded="${expanded}" title="${tr(expanded ? "Collapse" : "Expand")}"><svg viewBox="0 0 256 256"><path d="${PH.caret}"/></svg></button>`
+      : `<span class="twist leaf" aria-hidden="true"></span>`;
+  const meta = projTreeIconMeta(path, isDir);
+  const icon = PH[meta.icon] ? meta.icon : "note";
+  const tip = isRoot ? name : (path || name);
+  const del = isRoot ? "" : `<span class="acts"><button type="button" class="btn quiet ic" data-projrmpath="${esc(path)}" title="${tr("Delete")}"><svg viewBox="0 0 256 256"><path d="${PH.trash}"/></svg></button></span>`;
+  let rootFold = "";
+  if (isRoot) {
+    const kidsOpen = projRootKidsExpanded();
+    const hasKids = projRootLevelDirs().length > 0;
+    rootFold = `<button type="button" class="root-fold" data-projrootfold aria-expanded="${kidsOpen}" ${hasKids ? "" : "disabled "}title="${tr(kidsOpen ? "Collapse" : "Expand")}"><svg viewBox="0 0 256 256"><path d="${PH[kidsOpen ? "collapse" : "expand"]}"/></svg></button>`;
+  }
+  return `<div class="proj-trow${isDir ? " dir" : ""}${root}${chosen}" data-projsel="${esc(path)}" data-dir="${isDir ? "1" : "0"}" ${pad}>
+    ${twist}<svg class="ic ik-${esc(meta.kind)}" viewBox="0 0 256 256" aria-hidden="true"><path d="${PH[icon]}"/></svg>
+    <span class="nm" title="${esc(tip)}">${esc(name)}</span>${del}${rootFold}</div>`;
+}
+function projTreeHtml(entries) {
+  const p = projOf(proj.open);
+  const rootLabel = p?.name || tr("Project root");
+  // Root is always shown expanded: list 1st-level entries; deeper levels follow openDirs.
+  proj.openDirs[""] = true;
+  const walk = (items, pre, depth) => {
+    let html = "";
+    for (const e of items || []) {
+      const path = pre ? `${pre}/${e.name}` : e.name;
+      if (e.dir) {
+        html += projTreeRow(path, e.name, true, depth);
+        if (projDirOpen(path) && (e.children || []).length) html += walk(e.children, path, depth + 1);
+      } else {
+        html += projTreeRow(path, e.name, false, depth);
+      }
+    }
+    return html;
+  };
+  let kids = "";
+  if (!entries || !entries.length) {
+    kids = `<div class="muted">${tr("No materials yet. Upload files or a folder.")}</div>`;
+  } else {
+    kids = walk(entries, "", 1);
+  }
+  // Root stays pinned; only the body (1st-level+) scrolls.
+  return `<div class="proj-tree-root">${projTreeRow("", rootLabel, true, 0)}</div><div class="proj-tree-body">${kids}</div>`;
+}
+function renderProjectPage() {
+  const p = projOf(proj.open);
+  if (!p) { proj.open = null; return renderProjects(); }
+  setHTML($("title"), `<span class="crumb"><button data-projback>${tr("Projects")}</button><span class="sep">›</span><span title="${esc(p.name)}">${esc(p.name)}</span></span>`);
+  const tab = projTab(proj.active);
+  const kind = projFileKind(proj.active);
+  const actBtn = kind === "compose"
+    ? `<button class="btn" data-projact="compose" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Open")}</button>`
+    : kind === "dockerfile"
+      ? `<button class="btn" data-projact="build" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Build")}</button>`
+      : kind === "script"
+        ? `<button class="btn" data-projact="run" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Run")}</button>`
+        : "";
+  const tabs = (proj.tabs || []).map((t) => {
+    const on = t.path === proj.active ? " on" : "";
+    const mark = t.dirty || t.loading ? "• " : "";
+    const label = t.path.split("/").pop() || t.path;
+    return `<button class="proj-tab${on}" data-projtab="${esc(t.path)}" title="${esc(t.path)}"><span>${mark}${esc(label)}</span>
+      <span class="x" data-projtabclose="${esc(t.path)}" title="${tr("Close")}">×</span></button>`;
+  }).join("");
+  const mdMode = tab ? projMdModeOf(tab) : "edit";
+  let editorBody;
+  if (!tab) {
+    editorBody = `<div class="proj-editor-empty">${tr("Open a file from the tree, or create a new one.")}</div>`;
+  } else if (mdMode === "preview" && !tab.loading) {
+    editorBody = `<div class="notes-preview proj-md-preview md-doc" id="proj-md-preview">${projMdPreviewHtml(tab.text)}</div>`;
+  } else {
+    const lang = projLangOf(tab.path);
+    editorBody = `<div class="proj-code" id="proj-code" data-lang="${esc(lang)}"><pre class="proj-code-hl" aria-hidden="true"></pre><textarea class="proj-editor" id="proj-editor" spellcheck="false"${tab.loading ? " disabled" : ""}>${esc(tab.text)}</textarea></div>`;
+  }
+  const editorPane = `<div class="proj-editor-wrap" ${proj.pane === "editor" ? "" : "hidden"}>
+      ${tabs ? `<div class="proj-tabs">${tabs}</div>` : ""}
+      ${editorBody}
+    </div>`;
+  // Create the first session before painting tabs — otherwise first open shows only "+".
+  if (proj.pane === "term") projTermEnsureOne();
+  const termPane = `<div class="proj-term-wrap" id="proj-term-wrap" ${proj.pane === "term" ? "" : "hidden"}>
+      ${projTermTabsHtml()}
+      <div class="proj-term-body" id="proj-term-body"></div>
+    </div>`;
+  const { can: canCreate } = projCreateToolsState();
+  const dis = canCreate ? "" : " disabled";
+  const tip = (label) => esc(canCreate ? tr(label) : tr("Select a folder to add files"));
+  // Remounting #content resets scroll; keep tree + tab strip (+ editor body when same file).
+  const treeScroll = document.querySelector(".proj-tree-body")?.scrollTop || 0;
+  const keepEdPath = proj.active && ($("proj-editor") || $("proj-md-preview")) ? proj.active : "";
+  const edBodyScroll = keepEdPath
+    ? (($("proj-editor") || $("proj-md-preview"))?.scrollTop || 0)
+    : 0;
+  const keepMdPreview = keepEdPath === proj.active && mdMode === "preview";
+  projCaptureTabScroll();
+  setHTML($("content"), `<div class="proj-ide">
+      <div class="proj-ide-side">
+        <div class="proj-tree-tools${canCreate ? "" : " locked"}">
+          <button type="button" class="btn ic with-up act-up" data-projupfiles="${esc(p.id)}" data-tiptitle="${esc(tr("Upload files…"))}" title="${tip("Upload files…")}"${dis}><svg viewBox="0 0 256 256"><path d="${PH.note}"/></svg></button>
+          <button type="button" class="btn ic with-up act-up" data-projupdir="${esc(p.id)}" data-tiptitle="${esc(tr("Upload folder…"))}" title="${tip("Upload folder…")}"${dis}><svg viewBox="0 0 256 256"><path d="${PH.folder}"/></svg></button>
+          <button type="button" class="btn ic with-plus act-new" data-projnewfile="${esc(p.id)}" data-tiptitle="${esc(tr("New file"))}" title="${tip("New file")}"${dis}><svg viewBox="0 0 256 256"><path d="${PH.note}"/></svg></button>
+          <button type="button" class="btn ic with-plus act-new" data-projmkdir="${esc(p.id)}" data-tiptitle="${esc(tr("New folder"))}" title="${tip("New folder")}"${dis}><svg viewBox="0 0 256 256"><path d="${PH.folder}"/></svg></button>
+        </div>
+        <div class="proj-tree">${proj.tree != null ? projTreeHtml(proj.tree) : `<span class="muted">${tr("Loading…")}</span>`}</div>
+      </div>
+      <div class="proj-ide-main">
+        <div class="proj-ide-bar">
+          <div class="proj-pane-toggle">
+            <button type="button" class="${proj.pane === "editor" ? "on" : ""}" data-projpane="editor">${tr("Editor")}</button>
+            <button type="button" class="${proj.pane === "term" ? "on" : ""}" data-projpane="term">${tr("Terminal")}</button>
+          </div>
+          ${proj.pane === "editor" ? projMdModeSegHtml(proj.active) : ""}
+          <span class="grow"></span>
+          <span class="proj-ide-acts">${proj.pane === "editor" && tab && !tab.loading ? `<button class="btn primary" data-projsavefile>${tr("Save")}</button>` : ""}${proj.pane === "editor" ? actBtn : ""}</span>
+        </div>
+        ${editorPane}
+        ${termPane}
+      </div>
+    </div>`);
+  const treeBody = document.querySelector(".proj-tree-body");
+  if (treeBody && treeScroll) treeBody.scrollTop = treeScroll;
+  // Remount resets strip scrollLeft. If we will reveal the active tab, skip that
+  // strip's restore so we don't bounce old-offset → new-tab.
+  const revealEd = !!proj._revealEdTab, revealTm = !!proj._revealTermTab;
+  projRestoreTabScroll({ skipEd: revealEd, skipTerm: revealTm });
+  const ta = $("proj-editor");
+  const mdPrev = $("proj-md-preview");
+  if (ta) {
+    // First paint: textarea normalizes CRLF→LF; sync baseline so • / discard stay honest.
+    if (tab && !tab.loading && !tab.dirty) {
+      const v = ta.value;
+      if (projNormNl(v) === projNormNl(tab.saved || "")) { tab.text = v; tab.saved = v; tab.dirty = false; }
+    }
+    // Same file remount (tree refresh / save): keep the caret region stable.
+    if (keepEdPath === proj.active && !tab?.loading) ta.scrollTop = edBodyScroll;
+    else if (tab && !tab.loading) ta.scrollTop = 0;
+    projBindEditor(ta);
+  } else if (mdPrev) {
+    if (keepMdPreview && !tab?.loading) mdPrev.scrollTop = edBodyScroll;
+    else if (tab && !tab.loading) mdPrev.scrollTop = 0;
+  }
+  // Full remount rebuilds the wrap — restore find bar if it was open.
+  if (proj.find?.open && proj.pane === "editor" && ta && !ta.disabled) {
+    projFindPaintChrome();
+    projFindRefresh({ keepIndex: true });
+  }
+  if (proj.pane === "term") setTimeout(() => projFocusTerm(), 0);
+  projBindTabStrip(projTabStrip("editor"), "editor");
+  projBindTabStrip(projTabStrip("term"), "term");
+  // Explicit open asked for a reveal — force it (tree open should always show the tab).
+  if (revealEd || revealTm) {
+    proj._revealEdTab = false; proj._revealTermTab = false;
+    if (revealEd && proj.pane === "editor" && proj.active) {
+      const el = document.querySelector(`.proj-editor-wrap [data-projtab="${CSS.escape(proj.active)}"]`);
+      projRevealTabEl(el?.closest(".proj-tabs"), el, true);
+    }
+    if (revealTm && proj.pane === "term") {
+      const s = projTermActive();
+      if (s?.id) {
+        const el = document.querySelector(`.proj-term-wrap [data-projtermtab="${CSS.escape(s.id)}"]`);
+        projRevealTabEl(el?.closest(".proj-tabs"), el, true);
+      }
+    }
+  }
+}
+function projEvent(e) {
+  if (e.type === "projects") {
+    proj.list = e.projects || [];
+    const n = $("n-projects"); if (n) n.textContent = proj.list.length || "";
+    if (ui.view === "projects") render();
+  } else if (e.type === "project") {
+    const p = e.project; if (!p) return;
+    if (!proj.list) proj.list = [];
+    const i = proj.list.findIndex((x) => x.id === p.id);
+    if (i >= 0) proj.list[i] = p; else proj.list.unshift(p);
+    const n = $("n-projects"); if (n) n.textContent = proj.list.length || "";
+    // Create opens the new project; edit/meta save must stay on the card list.
+    const openedFromCreate = proj._createPending && !proj.editingId;
+    if (proj._createPending) projCloseCreate();
+    if (openedFromCreate && !proj.open) projOpen(p.id);
+    else if (ui.view === "projects") render();
+  } else if (e.type === "projectremoved") {
+    proj.list = (proj.list || []).filter((x) => x.id !== e.id);
+    if (proj.open === e.id) { projTermCloseAll(); proj.open = null; proj.tabs = []; proj.active = ""; }
+    if (ui.view === "projects") render();
+  } else if (e.type === "projecttree") {
+    if (e.id === proj.open) {
+      projOpenFlush();
+      proj.tree = e.entries || [];
+      projSeedOpenDirs(proj.tree, "");
+      if (ui.view === "projects") render();
+    }
+  } else if (e.type === "projectfile") {
+    if (e.id !== proj.open) return;
+    let t = projTab(e.path);
+    if (!t) {
+      t = { path: e.path, text: "", saved: "", dirty: false, eol: "\n", mdMode: projIsMd(e.path) ? "preview" : undefined };
+      proj.tabs.push(t);
+    } else if (t.mdMode == null && projIsMd(e.path)) {
+      t.mdMode = "preview";
+    }
+    const raw = e.text || "";
+    t.eol = projDetectEol(raw);
+    // Keep editor memory in LF (matches textarea.value); restore t.eol on save.
+    t.text = projNormNl(raw); t.saved = t.text; t.dirty = false; t.loading = false;
+    proj.active = e.path; proj.sel = e.path; proj.selDir = false; proj.pane = "editor";
+    // Prefer in-place fill — avoids a second full remount after the loading tab.
+    const tabEl = document.querySelector(`.proj-editor-wrap [data-projtab="${CSS.escape(e.path)}"]`);
+    if (ui.view === "projects" && tabEl && proj.pane === "editor" && projRemountEditorBody(e.path, { scrollTop: 0 })) {
+      const ta = $("proj-editor");
+      if (ta) {
+        const v = ta.value;
+        if (projNormNl(v) === projNormNl(t.saved || "")) { t.text = v; t.saved = v; }
+      }
+      projPaintEditorChrome();
+      proj._revealEdTab = false;
+      return;
+    }
+    if (proj._edTabsFollow !== false) proj._revealEdTab = true;
+    if (ui.view === "projects") render();
+  } else if (e.type === "projectfilesaved") {
+    if (e.id !== proj.open) return;
+    const t = projTab(e.path);
+    if (t) { t.saved = t.text; t.dirty = false; }
+    // Clear the dirty bullet without remounting the IDE.
+    if (ui.view === "projects") {
+      const btn = document.querySelector(`.proj-editor-wrap [data-projtab="${CSS.escape(e.path)}"]`);
+      if (btn) {
+        const span = btn.querySelector(":scope > span:not(.x)");
+        const label = (t?.path || e.path).split("/").pop() || e.path;
+        if (span) span.textContent = label;
+        return;
+      }
+      render();
+    }
+  } else if (e.type === "projectrun") {
+    // Legacy one-shot runs (pins): echo into the active xterm without wiping scrollback.
+    if (e.id && proj.open && e.id !== proj.open) return;
+    proj.pane = "term";
+    if (ui.view === "projects") render();
+    projMountTerm();
+    const write = (t) => projTermActive()?.term?.write(String(t).replace(/\r?\n/g, "\r\n"));
+    if (e.phase === "start") write(`\r\n\x1b[2m$ ${String(e.path || "").replace(/[\r\n]/g, " ")}\x1b[0m\r\n`);
+    else if (e.phase === "log") write(e.text || "");
+    else if (e.phase === "done" && e.code != null) write(`\r\n\x1b[2m[exit ${e.code}]\x1b[0m\r\n`);
+    else if (e.phase === "cancelled") write(`\r\n\x1b[2m[${tr("Cancel")}]\x1b[0m\r\n`);
+  }
+}
+function projClick(t) {
+  let el;
+  if (t("[data-projnew]")) projOpenCreate();
+  else if (t("[data-projimport]")) send("projectimportopen");
+  else if ((el = t("[data-projexport]"))) send("projectexportopen", { name: el.dataset.projexport, value: { name: projOf(el.dataset.projexport)?.name || "project" } });
+  else if ((el = t("[data-projedit]"))) { evStop(el); projOpenEdit(el.dataset.projedit); }
+  else if ((el = t("[data-projrm]"))) {
+    // Must run before [data-projopen]: the trash sits inside the card, and the
+    // open branch would match first then no-op on .btn — delete never fired.
+    evStop(el);
+    const id = el.dataset.projrm, p = projOf(id);
+    const note = p?.source === "linked"
+      ? tr("Only the bookmark is removed. Your folder on disk is left alone.")
+      : tr("Project files in Kiri are deleted. Linked folders on disk are left alone.");
+    confirmRemove(tr("Remove project {name}?", { name: esc(p?.name || id) }), note, tr("Remove"), () => send("projectremove", { name: id }));
+  }
+  else if ((el = t("[data-projopen]"))) { if (!t(".pins, .btn, .card-acts")) projOpen(el.dataset.projopen); }
+  else if (t("[data-projback]")) projBack();
+  else if ((el = t("[data-projreveal]"))) send("projectreveal", { name: el.dataset.projreveal });
+  else if ((el = t("[data-projcancel]"))) {
+    const live = projTermActive();
+    if (live?.id && !live.exited) projTermSend("\x03");
+    else send("projectcancel", { name: el.dataset.projcancel });
+  } else if (t("[data-projsavefile]")) projSaveActive();
+  else if ((el = t("[data-projmdmode]"))) {
+    const tab = projTab(proj.active);
+    if (!tab || !projIsMd(tab.path)) return true;
+    projOpenFlush();
+    tab.mdMode = el.dataset.projmdmode === "edit" ? "edit" : "preview";
+    if (ui.view === "projects" && proj.pane === "editor" && projRemountEditorBody(tab.path, { scrollTop: 0 })) {
+      projPaintEditorChrome();
+    } else if (ui.view === "projects") render();
+  } else if ((el = t("[data-mdcopy]")) && t(".proj-editor-wrap")) {
+    const code = el.closest(".md-code")?.querySelector("code")?.textContent || "";
+    send("copy", { name: code }); copiedBtn(el);
+  } else if ((el = t("[data-projpane]"))) {
+    projOpenFlush();
+    proj.pane = el.dataset.projpane;
+    if (proj.pane === "term") projTermEnsureOne();
+    if (ui.view === "projects") render();
+  }
+  else if ((el = t("[data-projtermclose]"))) { evStop(el); projTermCloseTab(el.dataset.projtermclose); }
+  else if (t("[data-projtermnew]")) { evStop(t("[data-projtermnew]")); projTermNew(); }
+  else if ((el = t("[data-projtermtab]"))) { if (!t("[data-projtermclose]")) projTermSelect(el.dataset.projtermtab); }
+  else if ((el = t("[data-projtabclose]"))) { evStop(el); projCloseTab(el.dataset.projtabclose); }
+  else if ((el = t("[data-projtab]"))) {
+    projOpenFlush();
+    const path = el.dataset.projtab;
+    proj.active = path; proj.sel = path; proj.selDir = false; proj.pane = "editor";
+    // Clicking a tab in the strip: swap in place, never chase scroll.
+    if (ui.view === "projects" && !projSwapEditorTo(path, false)) render();
+  }
+  else if ((el = t("[data-projrootfold]"))) { if (el.disabled) return true; evStop(el); projToggleRootKids(); }
+  else if ((el = t("[data-projtwist]"))) { evStop(el); projToggleDir(el.dataset.projtwist); }
+  else if ((el = t("[data-projupfiles]"))) {
+    if (!projCanCreate()) { toast("error", tr("Select a folder to add files")); return true; }
+    send("projectuploadfiles", { name: el.dataset.projupfiles, value: { into: projIntoDir() } });
+  } else if ((el = t("[data-projupdir]"))) {
+    if (!projCanCreate()) { toast("error", tr("Select a folder to add files")); return true; }
+    send("projectuploaddir", { name: el.dataset.projupdir, value: { into: projIntoDir() } });
+  } else if ((el = t("[data-projnewfile]"))) {
+    if (!projCanCreate()) { toast("error", tr("Select a folder to add files")); return true; }
+    const id = el.dataset.projnewfile;
+    const into = projIntoDir();
+    askText(tr("New file"), tr("File name"), (name) => {
+      const path = into ? `${into}/${name}` : name;
+      send("projectnewfile", { name: id, value: { path } });
+    });
+  } else if ((el = t("[data-projmkdir]"))) {
+    if (!projCanCreate()) { toast("error", tr("Select a folder to add files")); return true; }
+    const id = el.dataset.projmkdir;
+    const into = projIntoDir();
+    askText(tr("New folder"), tr("Folder name"), (name) => {
+      const path = into ? `${into}/${name}` : name;
+      send("projectmkdir", { name: id, value: { path } });
+      if (into) proj.openDirs[into] = true;
+      else proj.openDirs[""] = true;
+    });
+  } else if ((el = t("[data-projrmpath]"))) {
+    evStop(el);
+    const path = el.dataset.projrmpath;
+    confirmRemove(tr("Delete {path}?", { path: esc(path) }), tr("This cannot be undone."), tr("Delete"), () => {
+      send("projectrmpath", { name: proj.open, value: { path } });
+      proj.tabs = proj.tabs.filter((x) => x.path !== path && !x.path.startsWith(path + "/"));
+      if (proj.active === path || proj.active.startsWith(path + "/")) proj.active = proj.tabs[0]?.path || "";
+      if (proj.sel === path || (proj.sel && proj.sel.startsWith(path + "/"))) { proj.sel = ""; proj.selDir = true; }
+    });
+  } else if ((el = t("[data-projsel]"))) {
+    if (t("[data-projtwist]") || t("[data-projrmpath]") || t("[data-projrootfold]")) return true;
+    const path = el.dataset.projsel, isDir = el.dataset.dir === "1";
+    proj.sel = path; proj.selDir = isDir;
+    if (isDir) projPaintTreeSelection();
+    else projOpenFile(path);
+  } else if ((el = t("[data-projpinrun]"))) {
+    const id = el.dataset.projpinrun, kind = el.dataset.kind, path = el.dataset.path, args = el.dataset.args || "";
+    if (kind === "compose") { send("projectcompose", { name: id, value: { path } }); }
+    else if (kind === "dockerfile") {
+      if (proj.open !== id) projOpen(id);
+      projRunInTerm(`docker build -f ${projShellQuote(path)} .`);
+    } else {
+      if (proj.open !== id) projOpen(id);
+      const a = String(args || "").trim();
+      projRunInTerm(`bash ${projShellQuote(path)}${a ? ` ${a}` : ""}`);
+    }
+  } else if ((el = t("[data-projact]"))) {
+    const act = el.dataset.projact, path = el.dataset.path;
+    if (act === "compose") send("projectcompose", { name: el.dataset.id, value: { path } });
+    else if (act === "build") projRunInTerm(`docker build -f ${projShellQuote(path)} .`);
+    else if (act === "run") projRunScript(path);
+    else projRunInTerm(`bash ${projShellQuote(path)}`);
+  } else return false;
+  return true;
+}
+function evStop(el) { try { el.closest?.("button")?.blur(); } catch (_) {} }
+
+
 function show(view) {
   closeDetail();
   // Coming back to Images, every Run button is play again.
@@ -8417,6 +11454,7 @@ function show(view) {
   if (view === "share") { send("shares"); send("shareusage"); shPoll(); }
   if (view === "notes") { ui.notes.confirmDel = false; send("notes"); }
   if (view === "compose") { cmp.open = null; cmp.asked = 0; cmpAsk(); }
+  if (view === "projects") { proj.open = null; proj.asked = 0; projAsk(); }
   if (view === "images") send("imgnotes");
   if (view === "settings") { if (!fontLists.families.length) send("fonts"); send("about"); send("logins"); send("resources"); send("proxy"); send("daemon"); if (!ui.imp.sources) send("importsources"); if (prefs.tab === "diagnostics") diagOpen(); }
   render();
@@ -8866,9 +11904,35 @@ function showMenu(button, items) {
   menu.style.top = `${top / k}px`;
   menu.querySelector("button")?.focus();
 }
+/** Context menu at a mouse point (project editor / terminal tabs). */
+function showMenuAt(clientX, clientY, items) {
+  closeMenu();
+  const menu = document.createElement("div");
+  menu.className = "menu";
+  menu.setAttribute("role", "menu");
+  menu.innerHTML = items.map(([label, attrs, cls]) => `<button role="menuitem" class="${cls || ""}" ${attrs}>${tr(label)}</button>`).join("");
+  document.body.append(menu);
+  const k = menu.getBoundingClientRect().width / menu.offsetWidth || 1;
+  const w = menu.offsetWidth * k, h = menu.offsetHeight * k;
+  let left = clientX, top = clientY;
+  if (left + w > innerWidth - 8) left = Math.max(8, innerWidth - 8 - w);
+  if (top + h > innerHeight - 8) top = Math.max(8, clientY - h);
+  menu.style.left = `${left / k}px`;
+  menu.style.top = `${top / k}px`;
+  menu.querySelector("button")?.focus();
+}
 document.addEventListener("click", (ev) => {
+  // Swallow the click some platforms emit right after contextmenu (dismiss / remount).
+  // Never swallow clicks on the menu itself — tab items bind their own handlers.
+  if (proj._ignoreMenuClick) {
+    proj._ignoreMenuClick = false;
+    clearTimeout(proj._ignoreMenuClickTimer);
+    if (!ev.target.closest(".menu")) return;
+  }
   const item = ev.target.closest(".menu button");
   if (item) {
+    // Tab / tree menu items bind their own click handlers.
+    if (item.dataset.projtabmenu || item.dataset.projtreemenu) return;
     if (item.dataset.langPick) setPref("lang", item.dataset.langPick);
     else if (item.dataset.ports) openPorts(item.dataset.ports);
     else if (item.dataset.c) containerAction(item.dataset.c, item.dataset.id);
@@ -9153,6 +12217,49 @@ function confirmRemove(title, note, label, go, kind = "danger") {
     if (ev.target.closest("[data-go]")) { go(); close(); }
   });
   scrim.querySelector("[data-close]")?.focus();
+}
+
+/** In-app text prompt — WKWebView's window.prompt() is a no-op.
+ *  opts: { allowEmpty, allowSlash, ok } — Create-file defaults; Run-script uses allowEmpty+allowSlash. */
+function askText(title, placeholder, go, initial = "", opts = {}) {
+  const allowEmpty = !!opts.allowEmpty;
+  const allowSlash = !!opts.allowSlash;
+  const okLabel = opts.ok || tr("Create");
+  const scrim = document.createElement("div");
+  scrim.className = "scrim";
+  scrim.innerHTML = `<div class="dialog" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+    <h3>${esc(title)}</h3>
+    <input class="field ask-field" id="ask-text" type="text" placeholder="${esc(placeholder)}" value="${esc(initial)}" autocomplete="off" spellcheck="false" />
+    <div class="row-end"><span></span><span>
+      <button type="button" class="btn" data-close>${tr("Cancel")}</button>
+      <button type="button" class="btn primary" data-go>${esc(okLabel)}</button>
+    </span></div>
+  </div>`;
+  document.body.append(scrim);
+  const inp = scrim.querySelector("#ask-text");
+  let done = false;
+  const close = () => { scrim.remove(); document.removeEventListener("keydown", onKey); };
+  const submit = () => {
+    if (done) return;
+    const name = (inp?.value || "").trim();
+    if (!allowEmpty && !name) { inp?.focus(); return; }
+    if (!allowSlash && /[\\/]/.test(name)) { toast("error", tr("Name cannot contain / or \\")); inp?.focus(); return; }
+    done = true;
+    close();
+    // Defer past this click so removing the scrim can't click-through onto Run again.
+    setTimeout(() => go(name), 0);
+  };
+  const onKey = (ev) => {
+    if (ev.key === "Escape") { ev.preventDefault(); close(); }
+    else if (ev.key === "Enter" && ev.target === inp) { ev.preventDefault(); ev.stopPropagation(); submit(); }
+  };
+  document.addEventListener("keydown", onKey);
+  scrim.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (ev.target === scrim || ev.target.closest("[data-close]")) return close();
+    if (ev.target.closest("[data-go]")) { ev.preventDefault(); submit(); }
+  });
+  requestAnimationFrame(() => { inp?.focus(); inp?.select(); });
 }
 
 /* A container action; removing asks first. */
@@ -10317,6 +13424,7 @@ function render() {
   renderHead();
   $("n-containers").textContent = kept("containers").length;
   const nCompose = $("n-compose"); if (nCompose) nCompose.textContent = cmpCount() || "";
+  const nProjects = $("n-projects"); if (nProjects) nProjects.textContent = (proj.list || []).length || "";
   navTags();
   $("n-images").textContent = kept("images").length;
   $("n-volumes").textContent = kept("volumes").length;
@@ -10330,6 +13438,7 @@ function render() {
   if (v === "settings") return renderSettings();
   if (v === "share") return renderShare();
   if (v === "notes") return renderNotes();
+  if (v === "projects") return renderProjects();
   if (ui.vm === "stopped") return renderEmpty("stopped");
   if ((v === "containers" || v === "compose") && ui.detail) {
     // The list refreshes while you edit the environment: keep your place.
@@ -11809,12 +14918,16 @@ window.kiri = {
         groupActed();
         fixWatch();
         if (ui.view === "compose") cmpAsk();
+        // Sidebar Projects count needs the store; ask once lists are flowing if we never have.
+        if (proj.list == null) projAsk();
         render();
         paintEngine();
         if (ui.openAfter && ui.containers.some((c) => c.Id === ui.openAfter)) { openDetail(ui.openAfter); ui.openAfter = null; openedTab(); }
         break;
       case "pull": pullEvent(e); break;
       case "composeprojects": case "composefile": case "composeplan": case "composeapply": case "composelogs": case "composeforget": case "composecancel": case "composerestore": case "composeaction": case "composeopened": case "composerestored": cmpEvent(e); break;
+      case "projects": case "project": case "projectremoved": case "projecttree": case "projectrun": case "projectexported":
+      case "projectfile": case "projectfilesaved": projEvent(e); break;
       case "buildpruned": ui.bwPruning = false; toast(e.error ? "error" : "ok", e.error ? tr("Couldn't clear the build cache: {error}", { error: trErr(e.error) }) : (e.freed ? tr("Build cache cleared: freed {size}", { size: size(e.freed) }) : tr("Build cache cleared"))); if (ui.view === "settings") render(); break;
       case "hub":
         (e.kind === "search" ? pp.search : pp.tags).set(e.key, e.error ? { error: e.error } : { items: e.items || [] });
@@ -11833,6 +14946,14 @@ window.kiri = {
           ui.mirrorsMsg = e.kind === "ok" ? tr("daemon.json saved") : trErr(e.text);
           ui.mirrorsMsgKind = e.kind === "ok" ? "ok" : "err";
           if (ui.view === "settings" && prefs.tab === "network") render();
+        }
+        // New-project modal: keep errors on the form, not a toast after dismiss.
+        if (proj._createPending && document.getElementById("proj-modal") && e.kind === "error") {
+          proj._createPending = false;
+          const go = document.querySelector("#proj-modal [data-projcreate]");
+          if (go) go.disabled = false;
+          projSetCreateErr(trErr(e.text));
+          break;
         }
         toast(e.kind, e.kind === "error" ? trErr(e.text) : tr(e.text), e.op, e.open, e.act); break;
       case "listening":
@@ -12047,6 +15168,8 @@ document.querySelectorAll("nav").forEach((n) => n.addEventListener("click", (ev)
   if (b) show(b.dataset.view);
 }));
 $("content").addEventListener("click", (ev) => {
+  // Right-click aftermath / open tab menu: don't treat as a left-click on a tab.
+  if (proj._ignoreMenuClick || ev.target.closest?.(".menu")) return;
   const t = (sel) => ev.target.closest(sel);
   let el;
   // A click on a resize edge, or the one that ends a drag, doesn't sort.
@@ -12102,6 +15225,7 @@ $("content").addEventListener("click", (ev) => {
   else if ((el = t("[data-gopen]"))) cmpOpen(el.dataset.gopen);
   else if (t("[data-ctrcompose]")) show("compose");
   else if (composeClick(t)) {}
+  else if (projClick(t)) {}
   else if ((el = t("[data-group]"))) toggleGroup(el);
   else if ((el = t("[data-stab]"))) { prefs.tab = el.dataset.stab; if (prefs.tab === "about") send("about"); if (prefs.tab === "builds") send("buildwith"); if (prefs.tab === "registries") send("logins"); if (prefs.tab === "diagnostics") diagOpen(); render(); }
   else if (diagClick(t)) {}
@@ -12236,6 +15360,7 @@ $("updcard").addEventListener("click", (ev) => {
 });
 $("title").addEventListener("click", (ev) => { if (ev.target.closest("[data-back]")) { closeDetail(); render(); } });
 $("title").addEventListener("click", (ev) => { if (ev.target.closest("[data-cmpback]")) { closeDetail(); cmp.open = null; cmp.key = ""; render(); } });
+$("title").addEventListener("click", (ev) => { if (ev.target.closest("[data-projback]")) { projBack(); } });
 $("title").addEventListener("click", (ev) => { const el = ev.target.closest("[data-cdproj]"); if (el) { closeDetail(); cmpOpen(el.dataset.cdproj); } });
 /* The strip's search: it narrows the list on screen as you type (the page
    has no Filter box of its own). Esc clears it; ⌘K / Ctrl+K and ⌘F / Ctrl+F
@@ -12246,10 +15371,25 @@ $("gq").addEventListener("keydown", (ev) => {
 });
 document.addEventListener("keydown", (ev) => {
   const mod = WIN || LINUX ? ev.ctrlKey && !ev.metaKey : ev.metaKey && !ev.ctrlKey;
-  if (mod && !ev.altKey && !ev.shiftKey && (ev.key.toLowerCase() === "k" || ev.key.toLowerCase() === "f")) {
+  const key = ev.key.toLowerCase();
+  // Project editor: ⌘F / Ctrl+F find, ⌘H / Ctrl+H replace — before the strip filter.
+  if (mod && !ev.altKey && !ev.shiftKey && (key === "f" || key === "h") && projFindCanUse()) {
+    // Don't steal when typing into another dialog/scrim field.
+    if (!ev.target.closest?.(".scrim, .dialog, .proj-modal, .menu")) {
+      ev.preventDefault();
+      projFindOpen(key === "h");
+      return;
+    }
+  }
+  if (ev.key === "Escape" && proj.find?.open && (ev.target.closest?.("#proj-find") || ev.target.id === "proj-editor")) {
+    ev.preventDefault();
+    projFindClose();
+    return;
+  }
+  if (mod && !ev.altKey && !ev.shiftKey && (key === "k" || key === "f")) {
     ev.preventDefault();
     // In a container's logs, ⌘F / Ctrl+F finds in the logs.
-    const f = ev.key.toLowerCase() === "f" && $("log-filter")?.isConnected ? $("log-filter") : $("gq");
+    const f = key === "f" && $("log-filter")?.isConnected ? $("log-filter") : $("gq");
     f.focus(); f.select();
   }
 });
@@ -12260,7 +15400,7 @@ $("vm-toggle").addEventListener("click", () => powerEngine(engineShown().shown =
 /* Not `chrome`: WebView2 has a window.chrome that older runtimes make
    non-configurable, and redeclaring it is a SyntaxError for this whole script. */
 const dragArea = ".strip, .toolbar, aside, .navlabel, .toolbar h2, .toolbar .sub, .toolbar .spacer";
-const interactive = "button, input, a, select, textarea, nav, .vm, .gfind";
+const interactive = "button, input, a, select, textarea, nav, .vm, .gfind, .proj-find";
 document.addEventListener("mousedown", (ev) => {
   if (ev.button !== 0 || ev.detail > 1) return;
   const t = ev.target;
@@ -14249,41 +17389,123 @@ function renderNotes() {
 function mdToHtml(src) {
   const blocks = [];
   let s = String(src || "").replace(/\r\n?/g, "\n");
-  s = s.replace(/```([\w+-]*)\n([\s\S]*?)```/g, (_, lang, code) => {
+  // Fenced code — keep language label for IDEA-like chrome.
+  s = s.replace(/```([\w+-]*)[ \t]*\n([\s\S]*?)```/g, (_, lang, code) => {
     const i = blocks.length;
-    blocks.push(`<div class="md-code"><button type="button" class="md-copy" data-mdcopy>${tr("Copy")}</button><pre><code>${esc(code.replace(/\n$/, ""))}</code></pre></div>`);
+    const label = lang ? `<span class="md-lang">${esc(lang)}</span>` : "";
+    blocks.push(`<div class="md-code">${label}<button type="button" class="md-copy" data-mdcopy>${tr("Copy")}</button><pre><code>${esc(code.replace(/\n$/, ""))}</code></pre></div>`);
     return `\n\0B${i}\0\n`;
   });
   const inline = (t) => esc(t)
+    .replace(/!\[([^\]]*)\]\((https?:[^)\s]+)\)/g, '<img class="md-img" src="$2" alt="$1" loading="lazy">')
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" rel="noopener noreferrer">$1</a>')
     .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/~~([^~]+)~~/g, "<del>$1</del>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/__([^_]+)__/g, "<strong>$1</strong>")
     .replace(/(^|[\s(])\*([^*]+)\*(?=[\s).,!?:;]|$)/g, "$1<em>$2</em>")
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" rel="noopener noreferrer">$1</a>');
+    .replace(/(^|[\s(])_([^_]+)_(?=[\s).,!?:;]|$)/g, "$1<em>$2</em>");
+  const splitCells = (line) => {
+    let L = line.trim();
+    if (L.startsWith("|")) L = L.slice(1);
+    if (L.endsWith("|")) L = L.slice(0, -1);
+    return L.split("|").map((c) => c.trim());
+  };
+  const isSep = (line) => /^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/.test(line) || /^\s*:?-+:?\s*(\|\s*:?-+:?\s*)+$/.test(line);
   const out = [];
   for (const raw of s.split(/\n{2,}/)) {
     const chunk = raw.trimEnd();
     if (!chunk.trim()) continue;
     const bm = chunk.trim().match(/^\0B(\d+)\0$/);
     if (bm) { out.push(blocks[+bm[1]]); continue; }
+    // A chunk may mix headings / lists / tables when only single newlines separate them.
     const lines = chunk.split("\n");
-    if (lines.every((l) => /^[-*]\s+/.test(l))) {
-      out.push(`<ul>${lines.map((l) => `<li>${inline(l.replace(/^[-*]\s+/, ""))}</li>`).join("")}</ul>`);
-      continue;
+    let i = 0;
+    const flushPara = (buf) => {
+      if (!buf.length) return;
+      out.push(`<p>${buf.map(inline).join("<br>")}</p>`);
+      buf.length = 0;
+    };
+    const para = [];
+    while (i < lines.length) {
+      const line = lines[i];
+      if (/^\0B(\d+)\0$/.test(line.trim())) {
+        flushPara(para);
+        out.push(blocks[+line.trim().slice(2, -1)]);
+        i += 1;
+        continue;
+      }
+      if (/^(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line.trim())) {
+        flushPara(para);
+        out.push("<hr>");
+        i += 1;
+        continue;
+      }
+      const hm = line.match(/^(#{1,6})\s+(.*)$/);
+      if (hm) {
+        flushPara(para);
+        out.push(`<h${hm[1].length}>${inline(hm[2])}</h${hm[1].length}>`);
+        i += 1;
+        continue;
+      }
+      // GFM table: header + separator + rows
+      if (i + 1 < lines.length && line.includes("|") && isSep(lines[i + 1])) {
+        flushPara(para);
+        const head = splitCells(line);
+        i += 2;
+        const rows = [];
+        while (i < lines.length && lines[i].includes("|") && !isSep(lines[i])) {
+          rows.push(splitCells(lines[i]));
+          i += 1;
+        }
+        const thead = `<thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead>`;
+        const tbody = rows.length
+          ? `<tbody>${rows.map((r) => `<tr>${head.map((_, k) => `<td>${inline(r[k] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody>`
+          : "";
+        out.push(`<table>${thead}${tbody}</table>`);
+        continue;
+      }
+      if (/^[-*]\s+/.test(line)) {
+        flushPara(para);
+        const items = [];
+        let tasks = false;
+        while (i < lines.length && /^[-*]\s+/.test(lines[i])) {
+          const tm = lines[i].match(/^[-*]\s+\[([ xX])\]\s+(.*)$/);
+          if (tm) {
+            tasks = true;
+            items.push(`<li class="md-task"><input type="checkbox" disabled${/x/i.test(tm[1]) ? " checked" : ""}> <span>${inline(tm[2])}</span></li>`);
+          } else {
+            items.push(`<li>${inline(lines[i].replace(/^[-*]\s+/, ""))}</li>`);
+          }
+          i += 1;
+        }
+        out.push(`<ul${tasks ? ' class="md-tasks"' : ""}>${items.join("")}</ul>`);
+        continue;
+      }
+      if (/^\d+\.\s+/.test(line)) {
+        flushPara(para);
+        const items = [];
+        while (i < lines.length && /^\d+\.\s+/.test(lines[i])) {
+          items.push(`<li>${inline(lines[i].replace(/^\d+\.\s+/, ""))}</li>`);
+          i += 1;
+        }
+        out.push(`<ol>${items.join("")}</ol>`);
+        continue;
+      }
+      if (/^>\s?/.test(line)) {
+        flushPara(para);
+        const q = [];
+        while (i < lines.length && /^>\s?/.test(lines[i])) {
+          q.push(inline(lines[i].replace(/^>\s?/, "")));
+          i += 1;
+        }
+        out.push(`<blockquote>${q.join("<br>")}</blockquote>`);
+        continue;
+      }
+      para.push(line);
+      i += 1;
     }
-    if (lines.every((l) => /^\d+\.\s+/.test(l))) {
-      out.push(`<ol>${lines.map((l) => `<li>${inline(l.replace(/^\d+\.\s+/, ""))}</li>`).join("")}</ol>`);
-      continue;
-    }
-    if (lines.length === 1 && /^(#{1,3})\s+/.test(lines[0])) {
-      const m = lines[0].match(/^(#{1,3})\s+(.*)$/);
-      out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`);
-      continue;
-    }
-    if (lines.every((l) => /^>\s?/.test(l))) {
-      out.push(`<blockquote>${lines.map((l) => inline(l.replace(/^>\s?/, ""))).join("<br>")}</blockquote>`);
-      continue;
-    }
-    out.push(`<p>${lines.map(inline).join("<br>")}</p>`);
+    flushPara(para);
   }
   return out.join("");
 }
@@ -14799,6 +18021,7 @@ $("hright").addEventListener("click", (ev) => {
   if ((el = t("[data-vmode]"))) setListLayout(v, el.dataset.vmode);
   else if (t("[data-ppopen]")) pp.open ? closePull() : openPull();
   else if (t("[data-cmpopenfile]")) send("composeopen");
+  else if (projClick(t)) {}
   else if (t("[data-unpick]")) unpick();
   else if (t("[data-pickall]")) { for (const x of pickables(v)) ui.pick.keys.add(L.key(x)); render(); }
   else if (t("[data-junk]")) {
@@ -15554,26 +18777,37 @@ function htPaintChrome() {
 const htFs = () => Math.max(HT_FS.min, Math.min(HT_FS.max, Number(prefs.termFs) || HT_FS.def));
 const htFont = () => prefs.termFont || getComputedStyle(document.documentElement).getPropertyValue("--mono-font").trim() || "monospace";
 function htTheme() {
-  const css = getComputedStyle(document.documentElement), v = (n) => css.getPropertyValue(n).trim();
   const dark = darkNow();
   // ANSI 16: PowerShell / PSReadLine paint commands yellow, strings cyan, etc.
-  // xterm's defaults are tuned for a black screen — on light theme they wash out
-  // (yellow `docker` on white). Keep dark near-defaults; use inkier hues for light.
+  // Dark: mid-tone hues so ls(1) colour-on-colour (e.g. white on cyan) stays readable;
+  // neon brights like #A5F3FC wash out as backgrounds. Light: inkier hues so yellow/
+  // cyan don't disappear on white.
+  // Prefer darkNow() over CSS vars: prefs can flip before prefers-color-scheme catches up.
   const ansi = dark
-    ? { black: "#0B0F13", red: "#F87171", green: "#3FB68B", yellow: "#E3B341",
-        blue: "#6EA8FE", magenta: "#C4B5FD", cyan: "#56D4DD", white: "#D7DCE1",
-        brightBlack: "#66707C", brightRed: "#FCA5A5", brightGreen: "#6EE7B7",
-        brightYellow: "#F5D67B", brightBlue: "#93C5FD", brightMagenta: "#DDD6FE",
-        brightCyan: "#A5F3FC", brightWhite: "#F2F0EB" }
+    ? { black: "#0B0F13", red: "#E06C75", green: "#6BCB8B", yellow: "#D4A84B",
+        blue: "#6BA3E8", magenta: "#B894E8", cyan: "#2F9E98", white: "#D7DCE1",
+        brightBlack: "#6B7280", brightRed: "#F08080", brightGreen: "#86D9A5",
+        brightYellow: "#E6C36A", brightBlue: "#8BB8F0", brightMagenta: "#CDB0F0",
+        brightCyan: "#3AABA5", brightWhite: "#F2F0EB" }
     : { black: "#1F2328", red: "#CF222E", green: "#1A7F37", yellow: "#9A6700",
         blue: "#0550AE", magenta: "#8250DF", cyan: "#0550AE", white: "#6E7781",
         brightBlack: "#656D76", brightRed: "#A40E26", brightGreen: "#116329",
         brightYellow: "#7D4E00", brightBlue: "#0A66C2", brightMagenta: "#6639BA",
         brightCyan: "#0A66C2", brightWhite: "#1F2328" };
-  return { background: v("--term-bg") || (dark ? "#0B0F13" : "#FFFFFF"), foreground: v("--term-fg") || (dark ? "#D7DCE1" : "#1F2328"),
-    cursor: dark ? "#D7DCE1" : "#1F2328", cursorAccent: dark ? "#0B0F13" : "#FFFFFF",
+  const bg = dark ? "#0B0F13" : "#FFFFFF";
+  const fg = dark ? "#D7DCE1" : "#1F2328";
+  return { background: bg, foreground: fg,
+    cursor: fg, cursorAccent: bg,
     selectionBackground: dark ? "rgba(110,168,254,.35)" : "rgba(13,110,253,.22)",
     ...ansi };
+}
+/** Shared xterm options: bump fg against coloured backgrounds (ls executables, etc.). */
+function htTermOpts() {
+  return {
+    fontFamily: htFont(), fontSize: htFs(), theme: htTheme(), cursorBlink: true, scrollback: 10000,
+    allowProposedApi: true, macOptionIsMeta: false, rightClickSelectsWord: false,
+    drawBoldTextInBrightColors: true, minimumContrastRatio: 4.5,
+  };
 }
 let htToastT;
 function htToast(text) {
@@ -15611,8 +18845,7 @@ function htNewPane(shell) {
 }
 function htStart(p) {
   if (p.term || typeof Terminal !== "function") return;
-  const term = new Terminal({ fontFamily: htFont(), fontSize: htFs(), theme: htTheme(), cursorBlink: true, scrollback: 10000, allowProposedApi: true,
-    macOptionIsMeta: false, rightClickSelectsWord: false, drawBoldTextInBrightColors: true });
+  const term = new Terminal(htTermOpts());
   p.term = term;
   p.fit = new FitAddon.FitAddon();
   p.search = new SearchAddon.SearchAddon();
@@ -15809,7 +19042,10 @@ function htApply() {
   htEl.style.setProperty("--ht-unzoom", String(1 / (Number(prefs.scale) || 1)));
   const theme = htTheme(), font = htFont();
   for (const p of ht.panes.values()) if (p.term) { p.term.options.theme = theme; p.term.options.fontFamily = font; }
+  // Project IDE PTYs share htTheme(); keep them in sync when appearance flips.
+  for (const s of proj.pty?.sessions || []) if (s.term) { s.term.options.theme = theme; s.term.options.fontFamily = font; }
   htQueueFit();
+  if (typeof projTermFitAll === "function") projTermFitAll();
 }
 window.htApply = htApply;
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", htApply);
@@ -16057,6 +19293,24 @@ function htOn(e) {
     ht.def = e.default || ht.shells[0]?.id || "";
     if (!htQ(".htmenu").hidden) htMenu();
     if (ht.wantTab) { const want = ht.wantTab; ht.wantTab = false; htNewTab(want === true ? undefined : want); }
+    if (proj.pty.wantShells) {
+      proj.pty.wantShells = false;
+      if (proj.pane === "term" && proj.open) projMountTerm();
+    }
+    return;
+  }
+  // Project detail terminals share the same term protocol.
+  const ps = projTermById(e.id);
+  if (ps?.term) {
+    if (e.ev === "data") ps.term.write(htUnB64(e.b64));
+    else if (e.ev === "paste") {
+      if (e.text) send("term", { name: "input", id: ps.id, value: htB64(e.text) });
+    } else if (e.ev === "exit") {
+      ps.exited = true;
+      if (e.error) {
+        ps.term.write(`\r\n\x1b[31m${tr("Couldn't start {shell}: {error}", { shell: htShellLabel(ps.shell), error: String(e.error).replace(/[\x00-\x1f]/g, " ") })}\x1b[0m\r\n`);
+      }
+    }
     return;
   }
   const p = htPane(e.id);
@@ -16091,6 +19345,8 @@ render();
 send("ready");
 send("shares");
 send("logins");
+// Sidebar badge before the user opens Projects (Compose can count from containers; this can't).
+projAsk();
 </script>
 </body>
 </html>

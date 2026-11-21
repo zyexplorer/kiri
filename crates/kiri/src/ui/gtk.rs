@@ -247,6 +247,65 @@ pub(super) fn pick_compose_file(title: &str, filters: &[String; 2], done: impl F
     });
 }
 
+pub(super) fn pick_project_dir(title: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = title.to_owned();
+    glib::MainContext::default().invoke(move || {
+        let parent = WINDOW.with(|v| v.borrow().clone());
+        let dialog = gtk::FileChooserNative::new(Some(&title), parent.as_ref(), gtk::FileChooserAction::SelectFolder, None, None);
+        let picked = if dialog.run() == gtk::ResponseType::Accept { dialog.filename() } else { None };
+        dialog.destroy();
+        done(picked);
+    });
+}
+
+pub(super) fn pick_project_files(title: &str, done: impl FnOnce(Vec<std::path::PathBuf>) + Send + 'static) {
+    let title = title.to_owned();
+    glib::MainContext::default().invoke(move || {
+        let parent = WINDOW.with(|v| v.borrow().clone());
+        let dialog = gtk::FileChooserNative::new(Some(&title), parent.as_ref(), gtk::FileChooserAction::Open, None, None);
+        dialog.set_select_multiple(true);
+        let picked = if dialog.run() == gtk::ResponseType::Accept {
+            dialog.filenames().into_iter().collect()
+        } else {
+            Vec::new()
+        };
+        dialog.destroy();
+        done(picked);
+    });
+}
+
+pub(super) fn pick_kit_file(title: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = title.to_owned();
+    glib::MainContext::default().invoke(move || {
+        let parent = WINDOW.with(|v| v.borrow().clone());
+        let dialog = gtk::FileChooserNative::new(Some(&title), parent.as_ref(), gtk::FileChooserAction::Open, None, None);
+        let kit = gtk::FileFilter::new();
+        kit.set_name(Some("Kiri kits"));
+        kit.add_pattern("*.kirikit");
+        kit.add_pattern("*.zip");
+        dialog.add_filter(kit);
+        let picked = if dialog.run() == gtk::ResponseType::Accept { dialog.filename() } else { None };
+        dialog.destroy();
+        done(picked);
+    });
+}
+
+pub(super) fn pick_kit_save(title: &str, suggested: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let (title, suggested) = (title.to_owned(), suggested.to_owned());
+    glib::MainContext::default().invoke(move || {
+        let parent = WINDOW.with(|v| v.borrow().clone());
+        let dialog = gtk::FileChooserNative::new(Some(&title), parent.as_ref(), gtk::FileChooserAction::Save, None, None);
+        dialog.set_current_name(&suggested);
+        let kit = gtk::FileFilter::new();
+        kit.set_name(Some("Kiri kits"));
+        kit.add_pattern("*.kirikit");
+        dialog.add_filter(kit);
+        let picked = if dialog.run() == gtk::ResponseType::Accept { dialog.filename() } else { None };
+        dialog.destroy();
+        done(picked);
+    });
+}
+
 /// The installed font families, sorted; `mono` keeps the fixed-pitch ones.
 pub(super) fn font_families(mono: bool) -> Vec<String> {
     let spacing = if mono { ":spacing=mono" } else { ":" };

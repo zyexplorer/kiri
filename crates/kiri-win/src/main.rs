@@ -28,8 +28,11 @@ mod lang;
 #[cfg(windows)]
 #[path = "../../kiri/src/ui/notes.rs"]
 mod notes;
-// notes.rs (shared with the Mac ui module) calls super::reveal; on Windows
-// that resolves here at the crate root, not under app.
+#[cfg(windows)]
+#[path = "../../kiri/src/ui/projects.rs"]
+mod projects;
+// notes.rs / projects.rs (shared with the Mac ui module) call super::reveal;
+// on Windows that resolves here at the crate root, not under app.
 #[cfg(windows)]
 pub(crate) use app::reveal;
 #[cfg(windows)]

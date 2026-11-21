@@ -428,17 +428,45 @@ pub(super) fn paste(done: impl FnOnce(String) + Send + 'static) {
 pub(super) fn pick_compose_file(title: &str, _filters: &[String; 2], done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
     let title = title.to_owned();
     DispatchQueue::main().exec_async(move || {
-        // SAFETY: on the main thread (main queue); NSOpenPanel's documented
-        // messages, with the argument types AppKit declares.
+        done(open_panel(&title, false, Some(&["yaml", "yml"]), false));
+    });
+}
+
+/// Add / link / upload a project folder…: directories only.
+pub(super) fn pick_project_dir(title: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = title.to_owned();
+    DispatchQueue::main().exec_async(move || {
+        done(open_panel(&title, true, None, false));
+    });
+}
+
+/// Upload materials: one or more files.
+pub(super) fn pick_project_files(title: &str, done: impl FnOnce(Vec<std::path::PathBuf>) + Send + 'static) {
+    let title = title.to_owned();
+    DispatchQueue::main().exec_async(move || {
+        done(open_panel_many(&title));
+    });
+}
+
+/// Import a `.kirikit` / zip kit.
+pub(super) fn pick_kit_file(title: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = title.to_owned();
+    DispatchQueue::main().exec_async(move || {
+        done(open_panel(&title, false, Some(&["kirikit", "zip"]), false));
+    });
+}
+
+/// Export kit: save panel with a suggested name.
+pub(super) fn pick_kit_save(title: &str, suggested: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let (title, suggested) = (title.to_owned(), suggested.to_owned());
+    DispatchQueue::main().exec_async(move || {
+        // SAFETY: main queue; NSSavePanel messages as AppKit declares.
         let picked = (|| unsafe {
-            let panel: Retained<AnyObject> = msg_send![objc2::class!(NSOpenPanel), openPanel];
-            let _: () = msg_send![&*panel, setCanChooseFiles: true];
-            let _: () = msg_send![&*panel, setCanChooseDirectories: false];
-            let _: () = msg_send![&*panel, setAllowsMultipleSelection: false];
+            let panel: Retained<AnyObject> = msg_send![objc2::class!(NSSavePanel), savePanel];
             let words = NSString::from_str(&title);
             let _: () = msg_send![&*panel, setTitle: &*words];
-            let _: () = msg_send![&*panel, setMessage: &*words];
-            let kinds = objc2_foundation::NSArray::from_retained_slice(&[NSString::from_str("yaml"), NSString::from_str("yml")]);
+            let _: () = msg_send![&*panel, setNameFieldStringValue: &*NSString::from_str(&suggested)];
+            let kinds = objc2_foundation::NSArray::from_retained_slice(&[NSString::from_str("kirikit")]);
             let _: () = msg_send![&*panel, setAllowedFileTypes: &*kinds];
             let answer: isize = msg_send![&*panel, runModal];
             if answer != 1 {
@@ -450,6 +478,49 @@ pub(super) fn pick_compose_file(title: &str, _filters: &[String; 2], done: impl 
         })();
         done(picked);
     });
+}
+
+fn open_panel(title: &str, directories: bool, kinds: Option<&[&str]>, many: bool) -> Option<std::path::PathBuf> {
+    open_panel_many_inner(title, directories, kinds, many).into_iter().next()
+}
+
+fn open_panel_many(title: &str) -> Vec<std::path::PathBuf> {
+    open_panel_many_inner(title, false, None, true)
+}
+
+fn open_panel_many_inner(title: &str, directories: bool, kinds: Option<&[&str]>, many: bool) -> Vec<std::path::PathBuf> {
+    // SAFETY: main thread; NSOpenPanel documented messages.
+    unsafe {
+        let panel: Retained<AnyObject> = msg_send![objc2::class!(NSOpenPanel), openPanel];
+        let _: () = msg_send![&*panel, setCanChooseFiles: !directories];
+        let _: () = msg_send![&*panel, setCanChooseDirectories: directories];
+        let _: () = msg_send![&*panel, setAllowsMultipleSelection: many];
+        let words = NSString::from_str(title);
+        let _: () = msg_send![&*panel, setTitle: &*words];
+        let _: () = msg_send![&*panel, setMessage: &*words];
+        if let Some(kinds) = kinds {
+            let arr = kinds.iter().map(|k| NSString::from_str(k)).collect::<Vec<_>>();
+            let kinds = objc2_foundation::NSArray::from_retained_slice(&arr);
+            let _: () = msg_send![&*panel, setAllowedFileTypes: &*kinds];
+        }
+        let answer: isize = msg_send![&*panel, runModal];
+        if answer != 1 {
+            return Vec::new();
+        }
+        let urls: Option<Retained<objc2_foundation::NSArray>> = msg_send![&*panel, URLs];
+        let Some(urls) = urls else { return Vec::new() };
+        let mut out = Vec::new();
+        let n: usize = msg_send![&*urls, count];
+        for i in 0..n {
+            let url: Option<Retained<AnyObject>> = msg_send![&*urls, objectAtIndex: i];
+            let Some(url) = url else { continue };
+            let path: Option<Retained<NSString>> = msg_send![&*url, path];
+            if let Some(path) = path {
+                out.push(std::path::PathBuf::from(path.to_string()));
+            }
+        }
+        out
+    }
 }
 
 /// The installed font families, sorted; `mono` keeps the fixed-pitch ones.

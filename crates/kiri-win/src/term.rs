@@ -70,6 +70,7 @@ pub fn handle(action: &str, id: &str, value: &Value, emit: fn(String)) {
         }
         "open" if termwire::valid_id(id) => {
             let (cols, rows) = termwire::size(value);
+            let cwd = termwire::cwd(value);
             let asked = value["shell"].as_str().unwrap_or("").to_owned();
             let id = id.to_owned();
             // Listing WSL's distros runs wsl.exe: not on the window's thread.
@@ -79,7 +80,7 @@ pub fn handle(action: &str, id: &str, value: &Value, emit: fn(String)) {
                 let Some(shell) = list.iter().find(|s| s.id == asked).or(list.first()) else {
                     return emit(termwire::exit(&id, None, Some("No shell found")));
                 };
-                if let Err(e) = open(&id, &command_line(&shell.id), cols, rows, emit) {
+                if let Err(e) = open(&id, &command_line(&shell.id), cols, rows, cwd, emit) {
                     emit(termwire::exit(&id, None, Some(&e.to_string())));
                 }
             });
@@ -135,7 +136,7 @@ pub fn captured(program: &std::path::Path, args: &[&str]) -> std::io::Result<(st
         return Err(std::io::Error::other(format!("CreatePseudoConsole failed ({hr:#x})")));
     }
     let console = Arc::new(Console(Mutex::new(Some(hpc))));
-    let process = match spawn(&command, hpc) {
+    let process = match spawn(&command, hpc, None) {
         Ok(p) => Arc::new(p),
         Err(e) => {
             console.close();
@@ -264,7 +265,7 @@ fn pipe() -> std::io::Result<(OwnedHandle, OwnedHandle)> {
     }
 }
 
-fn open(id: &str, command: &str, cols: u16, rows: u16, emit: fn(String)) -> std::io::Result<()> {
+fn open(id: &str, command: &str, cols: u16, rows: u16, cwd: Option<PathBuf>, emit: fn(String)) -> std::io::Result<()> {
     if let Some(old) = with(|s| s.remove(id)) {
         end(old);
     }
@@ -280,7 +281,7 @@ fn open(id: &str, command: &str, cols: u16, rows: u16, emit: fn(String)) -> std:
     }
     let console = Arc::new(Console(Mutex::new(Some(hpc))));
 
-    let process = match spawn(command, hpc) {
+    let process = match spawn(command, hpc, cwd.as_deref()) {
         Ok(p) => Arc::new(p),
         Err(e) => {
             console.close();
@@ -342,10 +343,13 @@ fn open(id: &str, command: &str, cols: u16, rows: u16, emit: fn(String)) -> std:
     Ok(())
 }
 
-/// Starts `command` attached to the pseudo console `hpc`, in the user's folder.
-fn spawn(command: &str, hpc: HPCON) -> std::io::Result<OwnedHandle> {
+/// Starts `command` attached to the pseudo console `hpc`, in `cwd` or the user's folder.
+fn spawn(command: &str, hpc: HPCON, cwd: Option<&std::path::Path>) -> std::io::Result<OwnedHandle> {
     let mut cmdline: Vec<u16> = command.encode_utf16().chain([0]).collect();
-    let cwd: Option<Vec<u16>> = std::env::var_os("USERPROFILE").map(|p| p.to_string_lossy().encode_utf16().chain([0]).collect());
+    let cwd: Option<Vec<u16>> = cwd
+        .map(|p| p.to_path_buf())
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .map(|p| p.to_string_lossy().encode_utf16().chain([0]).collect());
     let env = environment();
     // SAFETY: the attribute list is sized by the first call and lives in
     // `list` until after CreateProcessW; every pointer passed outlives the

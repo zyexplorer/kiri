@@ -45,6 +45,7 @@ mod logins;
 mod weblogin;
 mod needs;
 mod notes;
+mod projects;
 mod recheck;
 mod sharing;
 #[cfg(unix)]
@@ -2775,6 +2776,94 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         // thread; the path it gives stays here, the page gets the project.
         "composeopen" => {
             window::pick_compose_file(&tr("Open a compose file"), &[tr("Compose files"), tr("YAML files")], |path| compose::picked(path, compose_cli, compose_store, emit));
+            Ok(())
+        }
+        // Projects: linked local folders and importable .kirikit packs.
+        "projects" | "projectremove" | "projectscan" | "projectpin" | "projectmeta" | "projectrun"
+        | "projectbuild" | "projectcompose" | "projectreveal" | "projecttree" | "projectexport"
+        | "projectimport" | "projectadd" | "projectcancel"
+        | "projectmkdir" | "projectrmpath" | "projectwrite" | "projectcopyin"
+        | "projectread" | "projectsave" | "projectrename" | "projectexec" | "projectnewfile" => {
+            let (cmd, id, value) = (msg.cmd.clone(), msg.name.clone(), msg.value);
+            std::thread::spawn(move || {
+                let open_compose = {
+                    let emit = emit;
+                    move |path: std::path::PathBuf| {
+                        compose::picked(Some(path), compose_cli, compose_store, emit);
+                    }
+                };
+                projects::handle(&cmd, &id, &value, state_dir(), emit, open_compose);
+            });
+            Ok(())
+        }
+        // Create dialog chose "link a local folder": pick dir, then create with name/summary.
+        "projectlinkopen" => {
+            let name = msg.value.get("name").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let summary = msg.value.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let icon = msg.value.get("icon").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let color = msg.value.get("color").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            window::pick_project_dir(&tr("Link a project folder"), move |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = state_dir() {
+                        projects::add_linked_path(&state, path, name, summary, icon, color, emit);
+                    }
+                });
+            });
+            Ok(())
+        }
+        // Upload materials into an open project: pick files or a folder.
+        "projectuploadfiles" => {
+            let id = msg.name.clone();
+            let into = msg.value.get("into").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            window::pick_project_files(&tr("Upload files"), move |paths| {
+                if paths.is_empty() {
+                    return;
+                }
+                std::thread::spawn(move || {
+                    if let Some(state) = state_dir() {
+                        projects::copy_picked_into(&state, &id, paths, &into, emit);
+                    }
+                });
+            });
+            Ok(())
+        }
+        "projectuploaddir" => {
+            let id = msg.name.clone();
+            let into = msg.value.get("into").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            window::pick_project_dir(&tr("Upload a folder"), move |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = state_dir() {
+                        projects::copy_picked_into(&state, &id, vec![path], &into, emit);
+                    }
+                });
+            });
+            Ok(())
+        }
+        "projectimportopen" => {
+            window::pick_kit_file(&tr("Import a project kit"), |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = state_dir() {
+                        projects::import_kit_path(&state, path, emit);
+                    }
+                });
+            });
+            Ok(())
+        }
+        "projectexportopen" => {
+            let id = msg.name.clone();
+            let name = msg.value.get("name").and_then(|v| v.as_str()).unwrap_or("project");
+            let suggested = format!("{}.kirikit", name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>());
+            window::pick_kit_save(&tr("Export project kit"), &suggested, move |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = state_dir() {
+                        projects::export_kit_to(&state, &id, path, emit);
+                    }
+                });
+            });
             Ok(())
         }
         // Before Run: what the image's start script won't start without.

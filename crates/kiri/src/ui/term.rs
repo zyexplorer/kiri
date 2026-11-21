@@ -47,11 +47,12 @@ pub fn handle(action: &str, id: &str, value: &Value, emit: fn(String)) {
         }
         "open" if termwire::valid_id(id) => {
             let (cols, rows) = termwire::size(value);
+            let cwd = termwire::cwd(value);
             let asked = value["shell"].as_str().unwrap_or("");
             let (list, default) = shells();
             // Only a shell from the list: the page never names a program.
             let path = list.iter().find(|s| s.id == asked).map_or(default, |s| s.id.clone());
-            if let Err(e) = open(id, Path::new(&path), cols, rows, emit) {
+            if let Err(e) = open(id, Path::new(&path), cols, rows, cwd, emit) {
                 emit(termwire::exit(id, None, Some(&e.to_string())));
             }
         }
@@ -334,7 +335,7 @@ fn keep_size(id: String, master: Arc<File>, cols: u16, rows: u16) {
     });
 }
 
-fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::io::Result<()> {
+fn open(id: &str, shell: &Path, cols: u16, rows: u16, cwd: Option<PathBuf>, emit: fn(String)) -> std::io::Result<()> {
     // A tab the page reopens under the same name replaces the old one.
     if let Some(old) = with(|s| s.remove(id)) {
         end(&old);
@@ -358,8 +359,9 @@ fn open(id: &str, shell: &Path, cols: u16, rows: u16, emit: fn(String)) -> std::
     if std::env::var_os("LANG").is_none() {
         cmd.env("LANG", "en_US.UTF-8");
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        cmd.current_dir(home);
+    // Project terminals pass cwd; otherwise start in the home folder, as before.
+    if let Some(dir) = cwd.or_else(|| std::env::var_os("HOME").map(PathBuf::from)) {
+        cmd.current_dir(dir);
     }
     cmd.stdin(Stdio::from(slave.try_clone()?)).stdout(Stdio::from(slave.try_clone()?)).stderr(Stdio::from(slave));
     // SAFETY: setsid and ioctl are async-signal-safe; they run in the child
