@@ -383,7 +383,7 @@ fn stage_local(pin: &Pin, title: &str, filter_label: &str, filter_pattern: &str)
     if let Some(e) = crate::win::arch_mismatch() {
         return Err(io::Error::other(e));
     }
-    let Some(src) = crate::app::pick_file(title, filter_label, filter_pattern) else {
+    let Some(src) = crate::app::pick_file_blocking(title, filter_label, filter_pattern) else {
         return Ok(false);
     };
     if !src.is_file() {
@@ -582,6 +582,9 @@ fn install_linux(kind: &str) -> io::Result<()> {
         task(1, "done", "");
         task(2, "active", "");
         wsl_ok(quiet("wsl.exe").args(["-d", KIRI_DISTRO, "-u", "root", "--", "/usr/local/bin/kiri-start"]))?;
+        // Hub mirrors before the engine test (mainland China often cannot
+        // reach docker.io). Best-effort: a failure is logged in engine().
+        let _ = seed_hub_mirror(KIRI_DISTRO);
         task(2, "done", "");
         KIRI_DISTRO.to_owned()
     } else {
@@ -615,6 +618,7 @@ fn install_linux(kind: &str) -> io::Result<()> {
         verified("kiri-init")?;
         let install = to_wsl(&distro, &verified("install.sh")?)?;
         wsl_ok(quiet("wsl.exe").args(["-d", &distro, "-u", "root", "--", "sh", &install]))?;
+        let _ = seed_hub_mirror(&distro);
         task(1, "done", "");
         task(2, "done", "");
         distro
@@ -649,13 +653,92 @@ fn docker() -> PathBuf {
     if ours.is_file() { ours } else { bundle().join("bin").join("docker.exe") }
 }
 
-/// Ensures `~/.kiri/daemon.json` in the engine distro has Hub mirrors when
-/// the file is absent (DaoCloud / 1ms.run / xuanyuan). Best-effort: a
-/// failure only means the test pull may hit docker.io directly.
-fn seed_hub_mirror() {
-    let distro = saved().distro.unwrap_or_else(|| KIRI_DISTRO.to_owned());
-    let script = r#"d=/var/lib/kiri-daemon/.kiri; mkdir -p "$d"; f="$d/daemon.json"; [ -f "$f" ] || printf '%s\n' '{"registry-mirrors":["https://docker.m.daocloud.io","https://docker.1ms.run","https://docker.xuanyuan.me"],"max-concurrent-downloads":4,"max-concurrent-uploads":5}' >"$f""#;
-    let _ = quiet("wsl.exe").args(["-d", &distro, "-u", "root", "--", "sh", "-c", script]).status();
+/// Same Hub mirrors as crates/kiri daemon defaults (mainland China).
+const HUB_MIRRORS: &[&str] = &[
+    "https://docker.m.daocloud.io",
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me",
+];
+
+/// Writes `daemon.json` with Hub mirrors when absent. Copies a file from
+/// Windows into the distro (avoids CRLF / quoting breakage of `sh -c`
+/// multi-line scripts on Alpine). Restarts the daemon so it reloads the file.
+fn seed_hub_mirror(distro: &str) -> io::Result<()> {
+    let seed_dir = dir().join("downloads");
+    std::fs::create_dir_all(&seed_dir)?;
+    let seed = seed_dir.join("daemon.json.seed");
+    let body = format!(
+        "{{\n  \"registry-mirrors\": [{}],\n  \"max-concurrent-downloads\": 4,\n  \"max-concurrent-uploads\": 5\n}}\n",
+        HUB_MIRRORS.iter().map(|u| format!("\"{u}\"")).collect::<Vec<_>>().join(", ")
+    );
+    std::fs::write(&seed, body)?;
+    let wsl_seed = to_wsl(distro, &seed)?;
+    // One line, no CR from the Rust source file.
+    let script = format!(
+        "d=/var/lib/kiri-daemon/.kiri; mkdir -p \"$d\"; if [ ! -f \"$d/daemon.json\" ]; then cp \"{wsl_seed}\" \"$d/daemon.json\"; fi; test -s \"$d/daemon.json\""
+    );
+    wsl_ok(quiet("wsl.exe").args(["-d", distro, "-u", "root", "--", "sh", "-c", &script]))?;
+    let _ = quiet("wsl.exe")
+        .args(["-d", distro, "-u", "root", "--", "sh", "-c", "pkill -f '/usr/local/bin/kiri daemon' 2>/dev/null; true"])
+        .status();
+    wsl_ok(quiet("wsl.exe").args(["-d", distro, "-u", "root", "--", "/usr/local/bin/kiri-start"]))?;
+    Ok(())
+}
+
+fn docker_on_kiri(args: &[&str]) -> io::Result<std::process::Output> {
+    if !dir().join("bin").join("docker.exe").is_file() {
+        verified("bin/docker.exe")?;
+    }
+    let pipe = crate::client::pipe();
+    let host = format!("npipe://{}", pipe.replace('\\', "/"));
+    let mut cmd = quiet(&docker().to_string_lossy());
+    cmd.args(["--host", &host]);
+    cmd.args(args);
+    cmd.output()
+}
+
+fn test_hello_ok(out: &std::process::Output) -> bool {
+    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    out.status.success() && text.contains("hello")
+}
+
+fn log_docker_tail(out: &std::process::Output) {
+    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    for l in text.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev() {
+        log_line(l);
+    }
+}
+
+/// Pull alpine via an explicit mirror host (not registry-mirrors), then tag
+/// it as `alpine:latest`. Works even when the engine in WSL is old and does
+/// not honour daemon.json mirrors for `docker pull alpine`.
+fn pull_alpine_via_mirrors() -> bool {
+    for base in HUB_MIRRORS {
+        let host = base.trim_end_matches('/').trim_start_matches("https://").trim_start_matches("http://");
+        let ref_img = format!("{host}/library/alpine:latest");
+        task(2, "active", &format!("mirror {host}"));
+        log_line(&format!("$ docker pull {ref_img}"));
+        let pull = match docker_on_kiri(&["pull", &ref_img]) {
+            Ok(o) => o,
+            Err(e) => {
+                log_line(&format!("pull failed: {e}"));
+                continue;
+            }
+        };
+        log_docker_tail(&pull);
+        if !pull.status.success() {
+            continue;
+        }
+        let _ = docker_on_kiri(&["tag", &ref_img, "alpine:latest"]);
+        log_line("$ docker run --rm alpine echo hello");
+        if let Ok(run) = docker_on_kiri(&["run", "--rm", "alpine", "echo", "hello"]) {
+            log_docker_tail(&run);
+            if test_hello_ok(&run) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Step 3: the engine answers through the pipe and runs a container.
@@ -666,6 +749,13 @@ fn engine() -> io::Result<()> {
         s.tasks = tasks(&[tr("Start the engine"), tr("Connect Windows to it"), tr("Run a test container")]);
     });
     task(0, "active", "");
+    let distro = saved().distro.unwrap_or_else(|| KIRI_DISTRO.to_owned());
+    // Retry after a failed pull often finds the daemon gone; start it again.
+    let _ = quiet("wsl.exe").args(["-d", &distro, "-u", "root", "--", "/usr/local/bin/kiri-start"]).status();
+    match seed_hub_mirror(&distro) {
+        Ok(()) => log_line("registry mirrors: daemon.json ready"),
+        Err(e) => log_line(&format!("registry mirrors not seeded: {e}")),
+    }
     let t0 = Instant::now();
     // Started here, not only waited for: setup resumed after Kiri or
     // Windows restarted finds Kiri's Linux there but its engine not running,
@@ -690,31 +780,38 @@ fn engine() -> io::Result<()> {
     // Windows' proxy before the first pull, through the relay when it is on
     // Windows' loopback: the minute's refresh may not have come yet.
     crate::engine::send_windows_proxy();
+    // 1) Local image (docker load / earlier pull).
+    task(2, "active", "local alpine");
+    log_line("$ docker run --rm --pull=never alpine echo hello");
+    let local = docker_on_kiri(&["run", "--rm", "--pull=never", "alpine", "echo", "hello"])?;
+    log_docker_tail(&local);
+    if test_hello_ok(&local) {
+        task(2, "done", "hello (local)");
+        return tools();
+    }
+    // 2) Plain `alpine` (uses daemon.json mirrors when the engine supports them).
     task(2, "active", &tr("pulling alpine"));
     log_line("$ docker run --rm alpine echo hello");
-    // Hub is often unreachable from mainland China; seed DaoCloud as a
-    // registry-mirror when daemon.json is still missing (engine reloads it
-    // on each pull). Does not overwrite Settings the person already saved.
-    seed_hub_mirror();
-    // Before the installed copy exists, this runs the bundle's docker.exe:
-    // check it first, as the tools step does for the copy it installs.
-    if !dir().join("bin").join("docker.exe").is_file() {
-        verified("bin/docker.exe")?;
+    let out = docker_on_kiri(&["run", "--rm", "alpine", "echo", "hello"])?;
+    log_docker_tail(&out);
+    if test_hello_ok(&out) {
+        task(2, "done", "hello");
+        return tools();
     }
-    let out = quiet(&docker().to_string_lossy()).args(["--host", &format!("npipe://{}", pipe.replace('\\', "/")), "run", "--rm", "alpine", "echo", "hello"]).output()?;
     let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
-    for l in text.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev() {
-        log_line(l);
+    for l in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(20) {
+        crate::serve::log(&format!("setup engine: docker: {l}"));
     }
-    if !out.status.success() || !text.contains("hello") {
-        // All of docker's words in the log, where the setup page shows a few.
-        for l in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(20) {
-            crate::serve::log(&format!("setup engine: docker: {l}"));
-        }
-        return Err(io::Error::other(test_failure(&text)));
+    // 3) Explicit China mirrors as image refs — reliable when Hub is blocked
+    // and older engines ignore registry-mirrors.
+    if pull_alpine_via_mirrors() {
+        task(2, "done", "hello (mirror)");
+        return tools();
     }
-    task(2, "done", "hello");
-    tools()
+    Err(io::Error::other(format!(
+        "{} (import alpine with docker load, or Skip for now)",
+        test_failure(&text)
+    )))
 }
 
 /// Why `docker run alpine` failed, from what docker printed: the engine's
@@ -916,6 +1013,23 @@ pub fn on_message(msg: &str) {
                 "engine" => run("engine", engine),
                 "tools" => run("tools", tools),
                 _ => update(|s| s.error = None),
+            }
+        }
+        // Engine test failed (often Hub unreachable): continue to Docker tools.
+        "setup-skip-test" => {
+            let step = STATE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map_or("", |s| s.step);
+            if step == "engine" {
+                run("tools", || {
+                    update(|s| {
+                        s.error = None;
+                        if let Some(t) = s.tasks.get_mut(2) {
+                            t.state = "done";
+                            t.detail = "skipped".into();
+                        }
+                    });
+                    log_line("test container skipped");
+                    tools()
+                });
             }
         }
         // Offline / flaky download: pick the pinned MSI or .wsl, verify it,

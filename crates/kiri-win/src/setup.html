@@ -565,6 +565,9 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
     "working": "处理中",
     "skipped": "已跳过",
     "pulling alpine": "正在拉取 alpine",
+    "local alpine": "使用本地 alpine",
+    "hello (local)": "hello（本地）",
+    "Skip for now": "暂时跳过",
     "{n} MB · already here": "{n} MB · 已在本地",
     "{n} MB · done": "{n} MB · 完成",
     "{n} MB in {s} s": "{n} MB，用时 {s} 秒",
@@ -587,6 +590,7 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
     "Windows would not register Kiri to carry on after the restart": "Windows 未注册 Kiri 以便重启后继续",
     "Kiri's engine did not answer within a minute": "Kiri 引擎在一分钟内未响应",
     "the test container did not run": "测试容器未能运行",
+    "the test container did not run (Docker Hub unreachable? import alpine with docker load, or Skip for now)": "测试容器未能运行（Docker Hub 不可达？可用 docker load 导入 alpine，或点「暂时跳过」）",
     "installing the Docker tools failed": "安装 Docker 工具失败",
   };
   var ZH_TW = {
@@ -2427,11 +2431,13 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
     if (err == null || err === '') { if (slot.firstChild) slot.innerHTML = ''; delete slot.dataset.errKey; return; }
     var local = S && (S.step === 'wsl' || (S.step === 'linux' && S.linux === 'ubuntu') || S.step === 'welcome');
     var which = S && S.step === 'linux' ? 'ubuntu' : 'wsl';
-    var key = (local ? which : '') + '|' + String(err);
+    var skipTest = S && S.step === 'engine';
+    var key = (local ? which : '') + (skipTest ? '|skip' : '') + '|' + String(err);
     if (slot.dataset.errKey !== key) {
       slot.dataset.errKey = key;
       var actions = '<span class="err-actions"><button type="button" class="btn" data-cmd="setup-retry">' + tr('Try again') + '</button>' +
         (local ? '<button type="button" class="btn" data-cmd="setup-use-local" data-which="' + which + '">' + tr('Use a local file…') + '</button>' : '') +
+        (skipTest ? '<button type="button" class="btn" data-cmd="setup-skip-test">' + tr('Skip for now') + '</button>' : '') +
         '</span>';
       slot.innerHTML = '<div class="err"><span class="err-i" aria-hidden="true">!</span><span class="err-t"></span>' + actions + '</div>';
     }

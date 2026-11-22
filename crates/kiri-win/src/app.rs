@@ -1090,7 +1090,8 @@ pub fn open_url(url: &str) {
 /// cancelled or the dialog could not be shown. Call from a worker thread
 /// (not the window's): it posts `WM_PICK_FILE` and waits — never via
 /// `Handle.run` / `with_ui`, so Show's nested loop does not hold Ui.
-pub fn pick_file(title: &str, filter_label: &str, filter_pattern: &str) -> Option<std::path::PathBuf> {
+/// Distinct from [`pick_file`], which is callback-based for the page.
+pub fn pick_file_blocking(title: &str, filter_label: &str, filter_pattern: &str) -> Option<std::path::PathBuf> {
     let hwnd = WINDOW.load(Ordering::SeqCst);
     if hwnd == 0 {
         return None;

@@ -18,6 +18,7 @@ way the main page does: it sends JSON strings with
 | `setup-switch` | `value`: `"kiri"` | while Ubuntu downloads → "Use Kiri Linux instead" |
 | `setup-cancel` | | any progress screen → "Cancel" (back to the step's start) |
 | `setup-retry` | | error → "Try again" |
+| `setup-skip-test` | | engine step error → "Skip for now" (continues to Docker tools when Hub pull of alpine fails; for offline / mainland China installs that already have a local image or will pull later) |
 | `setup-use-local` | `which`: `"wsl"` or `"ubuntu"` (optional; inferred from the current step) | Welcome → "I already have the installer…"; download error → "Use a local file…" (stages the pinned MSI / `.wsl` into downloads after SHA-256 check, then continues the step) |
 | `setup-default` | `value`: bool | Docker tools → "Make Kiri the default for docker" checkbox |
 | `setup-build` | `value`: `"docker"` or `"kiri"` | Docker tools → Builds (shown only with another engine and Kiri not made docker's default): "Keep building with Docker" / "Build with Kiri" |
