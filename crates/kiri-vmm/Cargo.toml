@@ -14,7 +14,7 @@ block2 = "0.6.2"
 dispatch2 = "0.3.1"
 libc = "0.2"
 objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSError", "NSFileHandle", "NSObject", "NSString", "NSURL"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDictionary", "NSError", "NSFileHandle", "NSObject", "NSString", "NSURL"] }
 objc2-virtualization = { version = "0.3.2", default-features = false, features = [
     "std", "block2", "dispatch2",
     "VZBootLoader", "VZLinuxBootLoader", "VZPlatformConfiguration", "VZGenericPlatformConfiguration",
@@ -31,7 +31,7 @@ objc2-virtualization = { version = "0.3.2", default-features = false, features =
     "VZNetworkDeviceConfiguration", "VZVirtioNetworkDeviceConfiguration",
     "VZNetworkDeviceAttachment", "VZNATNetworkDeviceAttachment", "VZMACAddress",
     "VZDirectorySharingDeviceConfiguration", "VZVirtioFileSystemDeviceConfiguration",
-    "VZDirectoryShare", "VZSingleDirectoryShare", "VZSharedDirectory", "VZLinuxRosettaDirectoryShare",
+    "VZDirectoryShare", "VZSingleDirectoryShare", "VZMultipleDirectoryShare", "VZSharedDirectory", "VZLinuxRosettaDirectoryShare",
 ] }
 
 [lints]

@@ -10,17 +10,22 @@ publish.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 # Share in the window: crates/kiri/src/share.rs, the same library as
 # `kiri share`, with what it needs for the TLS connection to the edge.
 kiri-share-proto = { path = "../kiri-share-proto" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "1"
 libc = "0.2"
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_Com", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_Com", "Win32_System_Console", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 # The window: WebView2 (part of Windows) and plain Win32, as the Mac app is
 # AppKit and WebKit with no UI framework.
 webview2-com = "0.39"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
+
+[dev-dependencies]
+# crates/kiri-win/src/refuse.rs's tests, on any host.
+serde_json = "1"
 
 [build-dependencies]
 # The icon resource in kiri-win.exe (build.rs).

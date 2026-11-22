@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::client::{self, Closer};
-use crate::engine::{emit, notice};
+use crate::engine::{emit, notice, trf};
 
 #[path = "../../kiri/src/ui/lastlogs.rs"]
 mod lastlogs;
@@ -46,7 +46,7 @@ pub fn logs(id: String) {
         let mut stream = match client::Stream::open(&format!("/containers/{id}/logs?follow=1&stdout=1&stderr=1&tail={}", lastlogs::LIVE_TAIL)) {
             Ok(s) => s,
             Err(e) => {
-                emit(notice("error", &format!("Logs: {e}")));
+                emit(notice("error", &trf("Logs: {error}", &[("error", &e)])));
                 return;
             }
         };
@@ -313,8 +313,8 @@ pub fn download(name: String, path: String) {
             Ok(dest.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or(leaf))
         })();
         emit(match result {
-            Ok(f) => notice("ok", &format!("Saved to Downloads as {f}")),
-            Err(e) => notice("error", &format!("Could not save: {e}")),
+            Ok(f) => notice("ok", &trf("Saved to Downloads as {file}", &[("file", &f)])),
+            Err(e) => notice("error", &trf("Could not save: {error}", &[("error", &e)])),
         });
     });
 }
@@ -377,7 +377,7 @@ pub fn terminal(name: &str, pipe: &str) {
         .args(["--host", &host, "exec", "-it", name, "sh", "-c", "exec $(command -v bash || command -v sh)"])
         .spawn();
     if let Err(e) = spawned {
-        emit(notice("error", &format!("Could not open a terminal: {e}")));
+        emit(notice("error", &trf("Could not open a terminal: {error}", &[("error", &e)])));
     }
 }
 

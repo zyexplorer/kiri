@@ -154,6 +154,13 @@ fn send(method: &str, path: &str, body: Option<&Value>, extra: &str) -> io::Resu
     Ok(Response { status, body })
 }
 
+/// Kiri's own version from a `/version` answer: `KiriVersion`, or `Version`
+/// from an engine older than that field (it reported Kiri's version there;
+/// it is now the Docker Engine version clients gate on).
+pub fn kiri_version(version: &Value) -> Option<&str> {
+    version["KiriVersion"].as_str().or_else(|| version["Version"].as_str())
+}
+
 pub fn get(path: &str) -> io::Result<Value> {
     let r = request("GET", path, None)?;
     if !r.ok() {

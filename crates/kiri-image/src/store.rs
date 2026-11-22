@@ -5,13 +5,22 @@
 //! ```text
 //! blobs/sha256/<hex>     compressed layers and configs, exactly as the registry served them
 //! images.json            the image index
+//! images.lock            held while the index is read, changed and rewritten
 //! tmp/                   in-flight downloads, renamed into blobs/ once verified
 //! ```
+//!
+//! The index is only ever replaced whole, by renaming a finished temporary
+//! file over it, so a reader sees the old index or the new one, never a mix.
+//! A change reads the index and writes it back with the lock held, so two
+//! pulls or builds finishing together cannot lose each other's image. An
+//! index that does not parse (written by an older Kiri, or damaged) is moved
+//! aside as `images.json.corrupt-*` and what can be read from it is kept.
 
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 /// The most an image config may be: real ones are a few KB.
 pub const MAX_CONFIG: u64 = 16 << 20;
@@ -117,6 +126,83 @@ pub struct Store {
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// Serializes index changes between the threads of this process; the lock
+/// file does it between processes (the CLI opens the store too).
+static INDEX_LOCK: Mutex<()> = Mutex::new(());
+
+/// Where the program writes error-level lines.
+pub type ErrorLog = fn(&str);
+static ERROR_LOG: OnceLock<ErrorLog> = OnceLock::new();
+
+/// Called once by the daemon, so a damaged index is reported in its log.
+pub fn set_error_log(f: ErrorLog) {
+    let _ = ERROR_LOG.set(f);
+}
+
+fn log_error(message: &str) {
+    match ERROR_LOG.get() {
+        Some(log) => log(message),
+        None => eprintln!("kiri: {message}"),
+    }
+}
+
+/// Held while the index is changed. The file goes first so the process-wide
+/// lock is the last one released.
+#[derive(Debug)]
+struct IndexLock {
+    _file: Option<File>,
+    _guard: MutexGuard<'static, ()>,
+}
+
+/// What `images.json` holds.
+enum Index {
+    Valid(Vec<Image>),
+    Corrupt(Vec<u8>, serde_json::Error),
+}
+
+/// The images that can still be read from a damaged index, see
+/// [`crate::jsonfile::salvage`].
+fn salvage(bytes: &[u8]) -> Vec<Image> {
+    crate::jsonfile::salvage(bytes)
+}
+
+/// The name of every image record in an index, damaged or not, including a
+/// record cut short after its name: what a person needs to know was lost.
+/// A record's `name` is its first field, so only a `"name"` right after a
+/// record's `{` (itself after `[` or `,`) counts, not a label called name.
+fn record_names(bytes: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(bytes);
+    let before = |end: usize| text[..end].trim_end().chars().next_back();
+    let mut names = Vec::new();
+    for (at, _) in text.match_indices("\"name\"") {
+        let brace = text[..at].trim_end().len();
+        if before(brace) != Some('{') || !matches!(before(brace - 1), Some('[' | ',')) {
+            continue;
+        }
+        let Some(value) = text[at + 6..].trim_start().strip_prefix(':') else { continue };
+        if let Some(Ok(name)) = serde_json::Deserializer::from_str(value).into_iter::<String>().next() {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The images a damaged index held that are not in `images`.
+fn missing(bytes: &[u8], images: &[Image]) -> Vec<String> {
+    let mut names = record_names(bytes);
+    names.retain(|n| !images.iter().any(|i| &i.name == n));
+    names.dedup();
+    names
+}
+
+/// The copies of damaged indexes kept beside `images.json`, and the images
+/// they name that the index no longer has. See [`Store::index_damage`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IndexDamage {
+    pub copies: Vec<PathBuf>,
+    pub missing: Vec<String>,
+}
+
 /// The filesystem-safe hexadecimal part of a SHA-256 digest.
 pub fn digest_hex(digest: &str) -> io::Result<&str> {
     let h = digest.strip_prefix("sha256:").unwrap_or_default();
@@ -196,12 +282,117 @@ impl Store {
         Ok(Ingest { file: File::create(&tmp)?, hasher: Sha256::new(), tmp, root: self.root.clone(), written: 0 })
     }
 
+    /// The image index. One that does not parse is repaired first, see
+    /// [`Store::recover`], rather than failing every caller from then on.
     pub fn images(&self) -> io::Result<Vec<Image>> {
+        match self.read_index()? {
+            Index::Valid(images) => Ok(images),
+            Index::Corrupt(..) => {
+                let _lock = self.lock_index()?;
+                self.read_locked()
+            }
+        }
+    }
+
+    fn read_index(&self) -> io::Result<Index> {
         match fs::read(self.root.join("images.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+            Ok(bytes) => Ok(match serde_json::from_slice(&bytes) {
+                Ok(images) => Index::Valid(images),
+                Err(e) => Index::Corrupt(bytes, e),
+            }),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Index::Valid(Vec::new())),
             Err(e) => Err(e),
         }
+    }
+
+    /// Takes the index lock. Everything that rewrites the index holds it from
+    /// reading the index to renaming the new one into place.
+    fn lock_index(&self) -> io::Result<IndexLock> {
+        let guard = INDEX_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let file = File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.root.join("images.lock"))?;
+        let file = match file.lock() {
+            Ok(()) => Some(file),
+            // A filesystem without file locks still has the process-wide one.
+            Err(e) if e.kind() == io::ErrorKind::Unsupported => None,
+            Err(e) => return Err(e),
+        };
+        Ok(IndexLock {
+            _file: file,
+            _guard: guard,
+        })
+    }
+
+    /// The index, read with the lock held, repairing it if it is damaged.
+    fn read_locked(&self) -> io::Result<Vec<Image>> {
+        match self.read_index()? {
+            Index::Valid(images) => Ok(images),
+            Index::Corrupt(bytes, error) => Ok(self.recover(&bytes, &error)),
+        }
+    }
+
+    /// Moves a damaged index aside as `images.json.corrupt-<seconds>-<n>`,
+    /// writes back the images that can still be read from it and logs at
+    /// error level. Never fails: with the index unwritable the caller still
+    /// gets what could be read, and its own write reports the problem.
+    ///
+    /// Blobs are untouched, so an image lost with the index is pulled again
+    /// from the cached layers. The registry's manifests, and so the names and
+    /// layer lists, are not kept on the host: only the index itself can say
+    /// which image a blob belongs to.
+    fn recover(&self, bytes: &[u8], error: &serde_json::Error) -> Vec<Image> {
+        let moved = crate::jsonfile::move_aside(&self.root.join("images.json"));
+        let images = salvage(bytes);
+        let written = if images.is_empty() {
+            Ok(())
+        } else {
+            self.write_index(&images)
+        };
+        let kept = match &moved {
+            Ok(aside) => format!("moved to {}", aside.display()),
+            Err(e) => format!("not moved aside: {e}"),
+        };
+        let wrote = match &written {
+            Ok(()) => String::new(),
+            Err(e) => format!("; the repaired index was not written: {e}"),
+        };
+        let lost = missing(bytes, &images);
+        let lost = if lost.is_empty() {
+            String::new()
+        } else {
+            format!("; dropped from the list: {} (their layers are kept while the copy is)", lost.join(", "))
+        };
+        log_error(&format!(
+            "image index unreadable ({error}): {kept}, {} image(s) recovered{lost}{wrote}",
+            images.len()
+        ));
+        images
+    }
+
+    /// The `images.json.corrupt-*` copies kept beside the index, and the
+    /// images they name that it no longer lists; `None` with no copy. While
+    /// a copy is kept, the layers of the images it may still hold are not
+    /// someone else's to delete: the daemon keeps every unpacked layer and
+    /// says so in `docker info`. Removing the copies ends it.
+    pub fn index_damage(&self) -> io::Result<Option<IndexDamage>> {
+        // Read first: a damaged index is moved aside by this very read.
+        let images = self.images()?;
+        let copies = crate::jsonfile::kept_copies(&self.root.join("images.json"))?;
+        if copies.is_empty() {
+            return Ok(None);
+        }
+        let mut names = Vec::new();
+        for c in &copies {
+            for n in missing(&fs::read(c).unwrap_or_default(), &images) {
+                if !names.contains(&n) {
+                    names.push(n);
+                }
+            }
+        }
+        Ok(Some(IndexDamage { copies, missing: names }))
     }
 
     pub fn find(&self, name: &str) -> io::Result<Option<Image>> {
@@ -211,7 +402,8 @@ impl Store {
 
     /// Adds `image`, replacing any image with the same name.
     pub fn put_image(&self, image: Image) -> io::Result<()> {
-        let mut images = self.images()?;
+        let _lock = self.lock_index()?;
+        let mut images = self.read_locked()?;
         images.retain(|i| i.name != image.name);
         images.push(image);
         self.write_index(&images)
@@ -222,7 +414,8 @@ impl Store {
     /// pin to it. Every tag of the image in that repository gets it, as there.
     /// Not if `name` became another image during the push.
     pub fn set_pushed(&self, name: &str, config_digest: &str, digest: &str) -> io::Result<()> {
-        let mut images = self.images()?;
+        let _lock = self.lock_index()?;
+        let mut images = self.read_locked()?;
         let Some(repo) = images.iter().find(|i| i.name == name && i.config_digest == config_digest).map(|i| i.repo().to_owned()) else { return Ok(()) };
         for i in images.iter_mut().filter(|i| i.config_digest == config_digest && i.repo() == repo) {
             i.digest = digest.to_owned();
@@ -233,7 +426,8 @@ impl Store {
 
     /// Removes the image and deletes blobs no remaining image uses.
     pub fn remove_image(&self, name: &str) -> io::Result<Option<Image>> {
-        let mut images = self.images()?;
+        let _lock = self.lock_index()?;
+        let mut images = self.read_locked()?;
         let Some(pos) = images.iter().position(|i| i.name == name) else { return Ok(None) };
         let removed = images.remove(pos);
         self.write_index(&images)?;
@@ -248,11 +442,11 @@ impl Store {
         Ok(Some(removed))
     }
 
+    /// Replaces the index with `images`, see [`crate::jsonfile::replace`].
+    /// Callers hold the index lock.
     fn write_index(&self, images: &[Image]) -> io::Result<()> {
-        let tmp = self.root.join("tmp/images.json");
         let bytes = serde_json::to_vec_pretty(images).map_err(io::Error::other)?;
-        fs::write(&tmp, bytes)?;
-        fs::rename(tmp, self.root.join("images.json"))
+        crate::jsonfile::replace(&self.root.join("images.json"), &bytes, crate::jsonfile::Durable::Now)
     }
 }
 
@@ -466,6 +660,184 @@ mod tests {
         assert_eq!(repo_digest("localhost:5000/other:1"), None);
         // And a pull by the pushed digest finds the image here.
         assert!(store.find(&format!("localhost:5000/built@{}", d("a"))).unwrap().is_some());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("kiri-store-{tag}-test-{}", std::process::id()))
+    }
+
+    fn named(name: &str) -> Image {
+        Image {
+            name: name.into(),
+            digest: format!("sha256:{}", "1".repeat(64)),
+            index_digest: None,
+            config_digest: format!("sha256:{}", "2".repeat(64)),
+            layers: Vec::new(),
+            size: 0,
+            platform: "linux/arm64".into(),
+            created: String::new(),
+            pulled_at: 0,
+            config: RunConfig::default(),
+        }
+    }
+
+    fn names(store: &Store) -> Vec<String> {
+        let mut n: Vec<String> = store
+            .images()
+            .unwrap()
+            .into_iter()
+            .map(|i| i.name)
+            .collect();
+        n.sort();
+        n
+    }
+
+    fn corrupt_files(root: &Path) -> Vec<PathBuf> {
+        fs::read_dir(root)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("images.json.corrupt-")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_shorter_rewrite_over_a_longer_index_is_recovered() {
+        let root = scratch("interleaved");
+        let _ = fs::remove_dir_all(&root);
+        let store = Store::open(&root).unwrap();
+        let all: Vec<String> = (0..8).map(|i| format!("app{i}:latest")).collect();
+        for n in &all {
+            store.put_image(named(n)).unwrap();
+        }
+        // What two interleaved writers left: a shorter document written over
+        // the longer one in place, without truncating, so the old tail is still there.
+        let path = root.join("images.json");
+        let long = fs::read(&path).unwrap();
+        let shorter = serde_json::to_vec_pretty(&store.images().unwrap()[..7]).unwrap();
+        let mut torn = long.clone();
+        torn[..shorter.len()].copy_from_slice(&shorter);
+        assert!(torn.len() > shorter.len() && serde_json::from_slice::<Vec<Image>>(&torn).is_err());
+        fs::write(&path, &torn).unwrap();
+
+        // The index reads again, with what its first document held, and the damaged file is kept.
+        assert_eq!(names(&store), all[..7]);
+        let aside = corrupt_files(&root);
+        assert_eq!(aside.len(), 1);
+        assert_eq!(fs::read(&aside[0]).unwrap(), torn);
+        assert!(serde_json::from_slice::<Vec<Image>>(&fs::read(&path).unwrap()).is_ok());
+        // And it takes new images as before.
+        store.put_image(named("after:1")).unwrap();
+        assert_eq!(names(&store).len(), 8);
+        assert_eq!(corrupt_files(&root).len(), 1);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_truncated_index_keeps_its_complete_records() {
+        let root = scratch("truncated");
+        let _ = fs::remove_dir_all(&root);
+        let store = Store::open(&root).unwrap();
+        for n in ["a:1", "b:1", "c:1"] {
+            store.put_image(named(n)).unwrap();
+        }
+        let path = root.join("images.json");
+        let bytes = fs::read(&path).unwrap();
+        assert_eq!(store.index_damage().unwrap(), None, "no copy, no damage");
+        fs::write(&path, &bytes[..bytes.len() - 40]).unwrap();
+        // The image cut off is named while the copy is kept (#440), the
+        // first time the index is read too, and is no longer missing once it
+        // is back in the list.
+        let damage = store.index_damage().unwrap().unwrap();
+        assert_eq!(names(&store), ["a:1", "b:1"]);
+        assert_eq!(corrupt_files(&root).len(), 1);
+        assert_eq!((damage.copies, damage.missing), (corrupt_files(&root), vec!["c:1".to_owned()]));
+        store.put_image(named("c:1")).unwrap();
+        assert!(store.index_damage().unwrap().unwrap().missing.is_empty());
+        for c in corrupt_files(&root) {
+            fs::remove_file(c).unwrap();
+        }
+        assert_eq!(store.index_damage().unwrap(), None, "removing the copy ends it");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn record_names_are_the_records_own() {
+        let bytes = serde_json::to_vec_pretty(&vec![named("a:1"), named("b:1"), named("c:1")]).unwrap();
+        assert_eq!(record_names(&bytes), ["a:1", "b:1", "c:1"]);
+        // A field inside a record that is called name too is not a record.
+        assert_eq!(record_names(br#"[{"name": "a:1", "config": {"name": "no"}, "x": [1, {"y": 2}]}, {"name":"b:1"}]"#), ["a:1", "b:1"]);
+        let compact = serde_json::to_vec(&vec![named("a:1"), named("b:1")]).unwrap();
+        assert_eq!(record_names(&compact), ["a:1", "b:1"]);
+        // Cut inside the last record, after its name: still named.
+        let at = bytes.windows(9).rposition(|w| w == b"\"digest\":").unwrap();
+        assert_eq!(missing(&bytes[..at], &[named("a:1")]), ["b:1", "c:1"]);
+        // Cut inside the name itself: no half name.
+        let at = bytes.windows(5).rposition(|w| w == b"c:1\",").unwrap() + 1;
+        assert_eq!(record_names(&bytes[..at]), ["a:1", "b:1"]);
+    }
+
+    #[test]
+    fn an_unreadable_index_starts_over_without_failing_requests() {
+        let root = scratch("garbage");
+        let _ = fs::remove_dir_all(&root);
+        let store = Store::open(&root).unwrap();
+        fs::write(root.join("images.json"), b"not json at all").unwrap();
+        assert!(store.images().unwrap().is_empty());
+        assert!(store.find("alpine:3.20").unwrap().is_none());
+        assert_eq!(corrupt_files(&root).len(), 1);
+        store.put_image(named("alpine:3.20")).unwrap();
+        assert_eq!(names(&store), ["alpine:3.20"]);
+        // A change that finds the damage first repairs it too.
+        fs::write(root.join("images.json"), b"[{").unwrap();
+        store.put_image(named("b:1")).unwrap();
+        assert_eq!(names(&store), ["b:1"]);
+        assert_eq!(corrupt_files(&root).len(), 2);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_writes_all_land_and_leave_no_trailing_bytes() {
+        let root = scratch("concurrent");
+        let _ = fs::remove_dir_all(&root);
+        Store::open(&root).unwrap();
+        // Each writer has its own Store, as the daemon and the CLI do.
+        let writers: Vec<_> = (0..16)
+            .map(|t| {
+                let root = root.clone();
+                std::thread::spawn(move || {
+                    let store = Store::open(&root).unwrap();
+                    for i in 0..10_u32 {
+                        store.put_image(named(&format!("t{t}/img:{i}"))).unwrap();
+                        if i % 3 == 0 {
+                            store
+                                .remove_image(&format!("t{t}/img:{}", i.saturating_sub(1)))
+                                .unwrap();
+                        }
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        let bytes = fs::read(root.join("images.json")).unwrap();
+        let images: Vec<Image> = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(bytes, serde_json::to_vec_pretty(&images).unwrap());
+        // Per writer: 10 added; at i = 0, 3, 6, 9 one is removed (img:0, 2, 5, 8).
+        assert_eq!(images.len(), 16 * (10 - 4));
+        assert!(corrupt_files(&root).is_empty());
+        let stray: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(stray.is_empty(), "{stray:?}");
         fs::remove_dir_all(&root).unwrap();
     }
 

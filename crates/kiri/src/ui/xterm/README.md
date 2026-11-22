@@ -14,4 +14,4 @@ MIT licence: LICENSE here, and in the repository's NOTICE.
 
 To update: download the same paths from https://unpkg.com/<package>@<version>/,
 replace the files, update this table, and run `cargo test -p kiri assemble`
-(the page must stay under WebView2's 2 MB limit) and `python3 scripts/ui-test.py`.
+(the page's sanity checks) and `python3 scripts/ui-test.py`.

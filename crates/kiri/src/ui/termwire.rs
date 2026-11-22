@@ -4,13 +4,16 @@
 //! this file).
 //!
 //! The page sends `{"cmd":"term","name":ACTION,"id":SESSION,"value":…}`:
-//! `shells`; `open` with `{shell, cols, rows}`; `input` with the bytes typed
-//! (base64); `resize` with `{cols, rows}`; `close`; `closeall` when the page
-//! starts; `paste`; and `copy` with the text. The app answers with events of
-//! type `term`: `shells`, `data` (output, base64), `exit`, `paste`.
+//! `shells`; `open` with `{shell, cols, rows}` and optional `cwd` (an existing
+//! directory; else the home folder); `input` with the bytes typed (base64);
+//! `resize` with `{cols, rows}`; `close`; `closeall` when the page starts;
+//! `paste`; and `copy` with the text. The app answers with events of type
+//! `term`: `shells`, `data` (output, base64), `exit`, `paste`.
 //!
 //! Output and input go as base64: a read can end in the middle of a UTF-8
 //! character, and programs send bytes that aren't text at all.
+
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
@@ -32,6 +35,17 @@ pub fn valid_id(id: &str) -> bool {
 pub fn size(v: &Value) -> (u16, u16) {
     let get = |k: &str, d: u64| v[k].as_u64().unwrap_or(d).clamp(2, 1000) as u16;
     (get("cols", 80), get("rows", 24))
+}
+
+/// Optional working directory from `{cwd}`: must already exist as a directory.
+/// Canonicalized so the page can't point at a missing or non-dir path.
+pub fn cwd(v: &Value) -> Option<PathBuf> {
+    let s = v.get("cwd").and_then(|x| x.as_str())?.trim();
+    if s.is_empty() || s.len() > 4096 {
+        return None;
+    }
+    let p = PathBuf::from(s);
+    std::fs::canonicalize(&p).ok().filter(|c| c.is_dir())
 }
 
 pub fn shells(list: &[Shell], default: &str) -> String {
@@ -161,5 +175,14 @@ mod tests {
         assert_eq!(size(&json!({"cols": 120, "rows": 40})), (120, 40));
         assert_eq!(size(&json!({"cols": 0, "rows": 99999})), (2, 1000));
         assert_eq!(size(&json!({})), (80, 24));
+    }
+
+    #[test]
+    fn cwd_only_takes_a_real_directory() {
+        let dir = std::env::temp_dir();
+        let got = cwd(&json!({"cwd": dir.to_string_lossy()}));
+        assert!(got.as_ref().is_some_and(|p| p.is_dir()));
+        assert!(cwd(&json!({"cwd": "/no/such/kiri/dir/ever"})).is_none());
+        assert!(cwd(&json!({})).is_none());
     }
 }

@@ -7,19 +7,19 @@
 //! script added before it loads forwards that to WebView2's
 //! `chrome.webview.postMessage`, so the page itself is unchanged.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment, ICoreWebView2NavigationStartingEventArgs, ICoreWebView2NewWindowRequestedEventArgs, ICoreWebView2WebMessageReceivedEventArgs,
-    ICoreWebView2_3, COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW,
+    CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment, ICoreWebView2NavigationCompletedEventArgs, ICoreWebView2NavigationStartingEventArgs,
+    ICoreWebView2NewWindowRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2WebMessageReceivedEventArgs, ICoreWebView2WebResourceRequestedEventArgs,
 };
 use webview2_com::{
     AddScriptToExecuteOnDocumentCreatedCompletedHandler, CoTaskMemPWSTR, CreateCoreWebView2ControllerCompletedHandler,
     CreateCoreWebView2EnvironmentCompletedHandler, ExecuteScriptCompletedHandler, NavigationCompletedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler,
-    WebMessageReceivedEventHandler,
+    PermissionRequestedEventHandler, WebMessageReceivedEventHandler, WebResourceRequestedEventHandler,
 };
 use windows::core::{w, GUID, Interface, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -31,8 +31,9 @@ use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_D
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW};
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Shell::{
-    FileOpenDialog, IFileOpenDialog, ShellExecuteW, Shell_NotifyIconW, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, NIF_GUID,
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4, SIGDN_FILESYSPATH,
+    FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, ShellExecuteW, Shell_NotifyIconW, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST,
+    FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, NIF_GUID, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4, SIGDN_FILESYSPATH,
 };
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -66,66 +67,9 @@ pub fn in_setup() -> bool {
 }
 
 fn page_html() -> String {
-    if SETUP.load(Ordering::SeqCst) { SETUP_PAGE.to_owned() } else { crate::assemble::page(PAGE) }
+    if SETUP.load(Ordering::SeqCst) { crate::assemble::words(SETUP_PAGE, crate::engine::prefs()["lang"].as_str()) } else { crate::assemble::page(PAGE, crate::engine::prefs()["lang"].as_str()) }
 }
 
-/// Virtual host for the assembled main page. NavigateToString is capped at
-/// 2 MB of the wide string; personal i18n + xterm exceeds that and paints a
-/// blank WebView2. Mapping a folder and Navigating to https://app.kiri.local/
-/// has no such cap. Mac/Linux never take this path.
-const PAGE_HOST: &str = "app.kiri.local";
-const PAGE_URL: &str = "https://app.kiri.local/index.html";
-
-fn main_page_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri").join("webview"))
-}
-
-fn write_main_page() -> std::io::Result<std::path::PathBuf> {
-    let dir = main_page_dir().ok_or_else(|| std::io::Error::other("LOCALAPPDATA is not set"))?;
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join("index.html");
-    let html = crate::assemble::page(PAGE);
-    let tmp = path.with_extension("html.tmp");
-    std::fs::write(&tmp, html.as_bytes())?;
-    std::fs::rename(&tmp, &path)?;
-    Ok(dir)
-}
-
-/// Load setup via NavigateToString (small); the main page via a virtual host.
-fn navigate_page(wv: &ICoreWebView2) {
-    if SETUP.load(Ordering::SeqCst) {
-        let page = CoTaskMemPWSTR::from(SETUP_PAGE);
-        // SAFETY: a live webview, on its own thread.
-        let _ = unsafe { wv.NavigateToString(*page.as_ref().as_pcwstr()) };
-        return;
-    }
-    let Ok(dir) = write_main_page() else {
-        crate::serve::log("webview: could not write the page; falling back to NavigateToString");
-        let page = CoTaskMemPWSTR::from(page_html().as_str());
-        let _ = unsafe { wv.NavigateToString(*page.as_ref().as_pcwstr()) };
-        return;
-    };
-    // SAFETY: a live webview, on its own thread.
-    let mapped = unsafe {
-        wv.cast::<ICoreWebView2_3>().and_then(|wv3| {
-            wv3.SetVirtualHostNameToFolderMapping(
-                &HSTRING::from(PAGE_HOST),
-                &HSTRING::from(dir.to_string_lossy().as_ref()),
-                COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW,
-            )
-        })
-    };
-    if let Err(e) = mapped {
-        crate::serve::log(&format!("webview virtual host: {e}; falling back to NavigateToString"));
-        let page = CoTaskMemPWSTR::from(page_html().as_str());
-        let _ = unsafe { wv.NavigateToString(*page.as_ref().as_pcwstr()) };
-        return;
-    }
-    let uri = CoTaskMemPWSTR::from(PAGE_URL);
-    if let Err(e) = unsafe { wv.Navigate(*uri.as_ref().as_pcwstr()) } {
-        crate::serve::log(&format!("webview Navigate: {e}"));
-    }
-}
 /// Kiri's icon cropped to its artwork for Windows (brand/windows-icons.ps1),
 /// by size: the Mac's has Apple's margin and looks small in the taskbar.
 const ICONS: [(i32, &[u8]); 8] = [
@@ -248,6 +192,151 @@ fn with_ui<R>(f: impl FnOnce(&mut Ui) -> R) -> Option<R> {
     UI.with(|u| u.try_borrow_mut().ok()?.as_mut().map(f))
 }
 
+/// Open a compose file…: Windows' own Open dialog over the window, on its
+/// thread, after the page's message is handled. `filters` are (name,
+/// patterns) pairs, the first one shown first. `done` gets the path, or None
+/// when cancelled, on a thread of its own.
+pub fn pick_file(title: &str, filters: &[(String, String)], done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = HSTRING::from(title);
+    let filters: Vec<(HSTRING, HSTRING)> = filters.iter().map(|(n, p)| (HSTRING::from(n.as_str()), HSTRING::from(p.as_str()))).collect();
+    // The dialog's own message loop runs while it is open: it must not run
+    // inside with_ui (the window's state borrowed), or every job posted
+    // meanwhile finds the window busy and posts itself again, round and
+    // round. Like tray_menu, it needs only the window's handle.
+    bare_job(move |hwnd| {
+        // SAFETY: on the window's thread, where COM is initialised (run).
+        let path = unsafe { open_dialog(hwnd, &title, &filters) }.ok().flatten();
+        std::thread::spawn(move || done(path));
+    });
+}
+
+/// Pick an existing folder (Projects: link / upload folder).
+pub fn pick_folder(title: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = HSTRING::from(title);
+    bare_job(move |hwnd| {
+        let path = unsafe { folder_dialog(hwnd, &title) }.ok().flatten();
+        std::thread::spawn(move || done(path));
+    });
+}
+
+/// Multi-select existing files (Projects: upload materials).
+pub fn pick_files(title: &str, done: impl FnOnce(Vec<std::path::PathBuf>) + Send + 'static) {
+    let title = HSTRING::from(title);
+    bare_job(move |hwnd| {
+        let paths = unsafe { open_dialog_multi(hwnd, &title) }.unwrap_or_default();
+        std::thread::spawn(move || done(paths));
+    });
+}
+
+/// Save-as for `.kirikit` export.
+pub fn pick_save(title: &str, suggested: &str, filters: &[(String, String)], done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = HSTRING::from(title);
+    let suggested = HSTRING::from(suggested);
+    let filters: Vec<(HSTRING, HSTRING)> = filters.iter().map(|(n, p)| (HSTRING::from(n.as_str()), HSTRING::from(p.as_str()))).collect();
+    bare_job(move |hwnd| {
+        let path = unsafe { save_dialog(hwnd, &title, &suggested, &filters) }.ok().flatten();
+        std::thread::spawn(move || done(path));
+    });
+}
+
+fn bare_job(job: impl FnOnce(HWND) + Send + 'static) {
+    BARE.lock().unwrap_or_else(PoisonError::into_inner).push(Box::new(job));
+    let hwnd = WINDOW.load(Ordering::SeqCst);
+    if hwnd != 0 {
+        // SAFETY: posting to our own window; a closed one just drops it.
+        let _ = unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_RUN, WPARAM(0), LPARAM(0)) };
+    }
+}
+
+/// Jobs that need only the window's handle and run outside with_ui (a modal
+/// dialog), on the window's thread.
+type BareJob = Box<dyn FnOnce(HWND) + Send>;
+static BARE: Mutex<Vec<BareJob>> = Mutex::new(Vec::new());
+
+/// IFileOpenDialog: one existing file on disk, or None when cancelled.
+unsafe fn open_dialog(owner: HWND, title: &HSTRING, filters: &[(HSTRING, HSTRING)]) -> windows::core::Result<Option<std::path::PathBuf>> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    // SAFETY: COM calls on this thread's apartment; the filter strings outlive the dialog.
+    unsafe {
+        let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+        let specs: Vec<COMDLG_FILTERSPEC> = filters.iter().map(|(n, p)| COMDLG_FILTERSPEC { pszName: PCWSTR(n.as_ptr()), pszSpec: PCWSTR(p.as_ptr()) }).collect();
+        d.SetFileTypes(&specs)?;
+        d.SetTitle(title)?;
+        d.SetOptions(d.GetOptions()? | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM)?;
+        // Cancel comes back as an error.
+        if d.Show(Some(owner)).is_err() {
+            return Ok(None);
+        }
+        let name = d.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let path = name.to_string().ok();
+        CoTaskMemFree(Some(name.0 as *const _));
+        Ok(path.map(std::path::PathBuf::from))
+    }
+}
+
+unsafe fn folder_dialog(owner: HWND, title: &HSTRING) -> windows::core::Result<Option<std::path::PathBuf>> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    unsafe {
+        let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+        d.SetTitle(title)?;
+        d.SetOptions(d.GetOptions()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)?;
+        if d.Show(Some(owner)).is_err() {
+            return Ok(None);
+        }
+        let name = d.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let path = name.to_string().ok();
+        CoTaskMemFree(Some(name.0 as *const _));
+        Ok(path.map(std::path::PathBuf::from))
+    }
+}
+
+unsafe fn open_dialog_multi(owner: HWND, title: &HSTRING) -> windows::core::Result<Vec<std::path::PathBuf>> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    unsafe {
+        let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+        d.SetTitle(title)?;
+        d.SetOptions(d.GetOptions()? | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM | FOS_ALLOWMULTISELECT)?;
+        if d.Show(Some(owner)).is_err() {
+            return Ok(Vec::new());
+        }
+        let results = d.GetResults()?;
+        let n = results.GetCount()?;
+        let mut out = Vec::with_capacity(n as usize);
+        for i in 0..n {
+            let item = results.GetItemAt(i)?;
+            let name = item.GetDisplayName(SIGDN_FILESYSPATH)?;
+            if let Ok(s) = name.to_string() {
+                out.push(std::path::PathBuf::from(s));
+            }
+            CoTaskMemFree(Some(name.0 as *const _));
+        }
+        Ok(out)
+    }
+}
+
+unsafe fn save_dialog(owner: HWND, title: &HSTRING, suggested: &HSTRING, filters: &[(HSTRING, HSTRING)]) -> windows::core::Result<Option<std::path::PathBuf>> {
+    use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+    use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
+    unsafe {
+        let d: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER)?;
+        let specs: Vec<COMDLG_FILTERSPEC> = filters.iter().map(|(n, p)| COMDLG_FILTERSPEC { pszName: PCWSTR(n.as_ptr()), pszSpec: PCWSTR(p.as_ptr()) }).collect();
+        if !specs.is_empty() {
+            d.SetFileTypes(&specs)?;
+        }
+        d.SetTitle(title)?;
+        d.SetFileName(suggested)?;
+        d.SetOptions(d.GetOptions()? | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)?;
+        if d.Show(Some(owner)).is_err() {
+            return Ok(None);
+        }
+        let name = d.GetResult()?.GetDisplayName(SIGDN_FILESYSPATH)?;
+        let path = name.to_string().ok();
+        CoTaskMemFree(Some(name.0 as *const _));
+        Ok(path.map(std::path::PathBuf::from))
+    }
+}
+
 /// As with_ui, but if the window is busy the job runs once it is not.
 fn with_ui_soon(f: impl FnOnce(&mut Ui) + Send + 'static) {
     let busy = UI.with(|u| u.try_borrow_mut().is_err());
@@ -349,7 +438,7 @@ impl Ui {
         self.loaded = false;
         self.pending.clear();
         if let Some(w) = &self.webview {
-            navigate_page(w);
+            load(w, page_html());
         }
     }
 
@@ -490,6 +579,12 @@ thread_local! {
 /// Runs queued jobs; if the window is busy (a modal loop inside a call on
 /// it), they wait for the next WM_RUN.
 fn run_jobs() {
+    // Taken out of the queue before each runs: a dialog's own loop that
+    // calls this again finds them gone.
+    loop {
+        let Some(bare) = BARE.lock().unwrap_or_else(PoisonError::into_inner).pop() else { break };
+        bare(HWND(WINDOW.load(Ordering::SeqCst) as _));
+    }
     let jobs = std::mem::take(&mut *JOBS.lock().unwrap_or_else(PoisonError::into_inner));
     let mut jobs = jobs.into_iter();
     while let Some(job) = jobs.next() {
@@ -721,10 +816,13 @@ fn start_webview(hwnd: HWND) -> windows::core::Result<()> {
     let env_done = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |result, env: Option<ICoreWebView2Environment>| {
         result?;
         let Some(env) = env else { return Ok(()) };
+        let env_for_page = env.clone();
         let ctl_done = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |result, ctl: Option<ICoreWebView2Controller>| {
             result?;
-            if let Some(ctl) = ctl {
-                webview_ready(hwnd, ctl)?;
+            if let Some(ctl) = ctl
+                && let Err(e) = webview_ready(hwnd, &env_for_page, ctl)
+            {
+                crate::serve::log(&format!("webview: {e}"));
             }
             Ok(())
         }));
@@ -735,7 +833,7 @@ fn start_webview(hwnd: HWND) -> windows::core::Result<()> {
     unsafe { CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), &data_dir(), None, &env_done) }
 }
 
-fn webview_ready(hwnd: HWND, ctl: ICoreWebView2Controller) -> windows::core::Result<()> {
+fn webview_ready(hwnd: HWND, env: &ICoreWebView2Environment, ctl: ICoreWebView2Controller) -> windows::core::Result<()> {
     // SAFETY: the new controller and its webview, on the window's thread.
     unsafe {
         let mut r = RECT::default();
@@ -754,11 +852,118 @@ fn webview_ready(hwnd: HWND, ctl: ICoreWebView2Controller) -> windows::core::Res
         settings.SetAreDevToolsEnabled(cfg!(debug_assertions) || std::env::var_os("KIRI_DEVTOOLS").is_some())?;
         settings.SetAreDefaultContextMenusEnabled(cfg!(debug_assertions))?;
         settings.SetIsZoomControlEnabled(false)?;
+        let shim = CoTaskMemPWSTR::from(shim().as_str());
+        wv.AddScriptToExecuteOnDocumentCreated(*shim.as_ref().as_pcwstr(), &AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(|_, _| Ok(()))))?;
+        match serve_page(&wv, env) {
+            Ok(()) => load(&wv, page_html()),
+            Err(e) => show_error(&wv, &format!("the page's address could not be set up: {e}")),
+        }
+        let theme = crate::engine::prefs()["theme"].as_str().unwrap_or("").to_owned();
+        with_ui(|ui| {
+            ui.controller = Some(ctl.clone());
+            ui.webview = Some(wv);
+            ui.set_theme(&theme);
+        });
+    }
+    Ok(())
+}
 
+thread_local! {
+    /// The page the webview is answered with at page::PAGE_URL, as UTF-8.
+    static SERVED: RefCell<Rc<[u8]>> = RefCell::new(Rc::from(&b""[..]));
+    /// The host is showing the error page through NavigateToString: that
+    /// one navigation away from the page's address is allowed.
+    static STRING_LOAD: Cell<bool> = const { Cell::new(false) };
+    /// The error page is up (or going up): a failure now is only logged,
+    /// so a failing error page can't bring itself back forever.
+    static SHOWING_ERROR: Cell<bool> = const { Cell::new(false) };
+    /// The navigation that NavigationStarting last let through: only its
+    /// end counts. One replaced by the next ends aborted, and one refused
+    /// ends cancelled, with the window still on its page.
+    static LATEST: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Puts `html` in the window: served from memory at page::PAGE_URL, at any
+/// size (page.rs says why not NavigateToString). A failure shows the error
+/// page instead of leaving the window blank.
+fn load(wv: &ICoreWebView2, html: String) {
+    SERVED.with(|s| *s.borrow_mut() = Rc::from(html.into_bytes()));
+    SHOWING_ERROR.set(false);
+    // SAFETY: a live webview, on its own thread.
+    if let Err(e) = unsafe { wv.Navigate(&HSTRING::from(crate::page::PAGE_URL)) } {
+        show_error(wv, &format!("going to the page failed: {e}"));
+    }
+}
+
+/// The window says why its page did not load, and the log has it too.
+fn show_error(wv: &ICoreWebView2, reason: &str) {
+    crate::serve::log(&format!("window: the page did not load: {reason}"));
+    if SHOWING_ERROR.replace(true) {
+        return;
+    }
+    let html = CoTaskMemPWSTR::from(crate::page::error_page(reason).as_str());
+    STRING_LOAD.set(true);
+    // SAFETY: a live webview, on its own thread.
+    if let Err(e) = unsafe { wv.NavigateToString(*html.as_ref().as_pcwstr()) } {
+        STRING_LOAD.set(false);
+        crate::serve::log(&format!("window: the error page did not load either: {e}"));
+    }
+}
+
+/// The page's address, answered from memory (page.rs), and everything that
+/// keeps the window on it: the page is the only document this window
+/// shows, and only it reaches the host commands.
+///
+/// # Safety
+/// `wv` and `env` are live, on the window's thread.
+unsafe fn serve_page(wv: &ICoreWebView2, env: &ICoreWebView2Environment) -> windows::core::Result<()> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2_22, COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+        COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
+    };
+    use windows::Win32::System::Com::IStream;
+    use windows::Win32::UI::Shell::SHCreateMemStream;
+    // SAFETY: the caller's live webview and environment, on their thread.
+    unsafe {
         let mut token = 0;
+        // Every request to the page's host comes here, from any frame
+        // (WebView2 before 124 has only the main frame's filter), and is
+        // answered from memory: it never reaches the network.
+        let filter = HSTRING::from(crate::page::FILTER);
+        match wv.cast::<ICoreWebView2_22>() {
+            Ok(wv22) => wv22.AddWebResourceRequestedFilterWithRequestSourceKinds(&filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL, COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL)?,
+            Err(_) => wv.AddWebResourceRequestedFilter(&filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)?,
+        }
+        let env = env.clone();
+        wv.add_WebResourceRequested(
+            &WebResourceRequestedEventHandler::create(Box::new(move |_, args: Option<ICoreWebView2WebResourceRequestedEventArgs>| {
+                let Some(args) = args else { return Ok(()) };
+                let req = args.Request()?;
+                let (mut uri, mut method) = (PWSTR::null(), PWSTR::null());
+                req.Uri(&mut uri)?;
+                req.Method(&mut method)?;
+                let (uri, method) = (CoTaskMemPWSTR::from(uri).to_string(), CoTaskMemPWSTR::from(method).to_string());
+                let response = match crate::page::answer(&method, &uri) {
+                    crate::page::Answer::Page => {
+                        let body = SERVED.with(|s| s.borrow().clone());
+                        // A stream over a copy of the page, in memory.
+                        let stream = SHCreateMemStream(Some(&body)).ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_OUTOFMEMORY))?;
+                        env.CreateWebResourceResponse(&stream, 200, w!("OK"), &HSTRING::from(crate::page::PAGE_HEADERS))?
+                    }
+                    crate::page::Answer::NotFound => env.CreateWebResourceResponse(None::<&IStream>, 404, w!("Not Found"), &HSTRING::from(crate::page::NOT_FOUND_HEADERS))?,
+                };
+                args.SetResponse(&response)
+            })),
+            &mut token,
+        )?;
         wv.add_WebMessageReceived(
             &WebMessageReceivedEventHandler::create(Box::new(|_, args: Option<ICoreWebView2WebMessageReceivedEventArgs>| {
                 let Some(args) = args else { return Ok(()) };
+                // From the page only, as WebView2's documentation advises.
+                let mut source = PWSTR::null();
+                if args.Source(&mut source).is_err() || !crate::page::from_page(&CoTaskMemPWSTR::from(source).to_string()) {
+                    return Ok(());
+                }
                 let mut s = PWSTR::null();
                 if args.TryGetWebMessageAsString(&mut s).is_ok() {
                     let s = CoTaskMemPWSTR::from(s).to_string();
@@ -770,9 +975,8 @@ fn webview_ready(hwnd: HWND, ctl: ICoreWebView2Controller) -> windows::core::Res
             })),
             &mut token,
         )?;
-        // The page is the only document this window shows: popups are
-        // refused and any navigation away (a dropped link, a slip in the
-        // page) is cancelled, so no other content can reach the host commands.
+        // Popups are refused; links the page opens go to the browser
+        // through the host (open_url).
         wv.add_NewWindowRequested(
             &NewWindowRequestedEventHandler::create(Box::new(|_, args: Option<ICoreWebView2NewWindowRequestedEventArgs>| {
                 if let Some(a) = args {
@@ -782,47 +986,71 @@ fn webview_ready(hwnd: HWND, ctl: ICoreWebView2Controller) -> windows::core::Res
             })),
             &mut token,
         )?;
+        // Any navigation away (a dropped link, a slip in the page) is
+        // cancelled: only the page's address, and the error page when the
+        // host shows it.
         wv.add_NavigationStarting(
             &NavigationStartingEventHandler::create(Box::new(|_, args: Option<ICoreWebView2NavigationStartingEventArgs>| {
                 if let Some(a) = args {
                     let mut uri = PWSTR::null();
                     let ours = a.Uri(&mut uri).is_ok() && {
                         let u = CoTaskMemPWSTR::from(uri).to_string();
-                        // about:/data: for NavigateToString (setup); our virtual host for the main page.
-                        u.is_empty()
-                            || u.starts_with("about:")
-                            || u.starts_with("data:")
-                            || u.starts_with("https://app.kiri.local/")
+                        crate::page::may_navigate(&u, u != crate::page::PAGE_URL && STRING_LOAD.replace(false))
                     };
+                    let mut id = 0;
                     if !ours {
                         let _ = a.SetCancel(true);
+                    } else if a.NavigationId(&mut id).is_ok() {
+                        LATEST.set(id);
                     }
                 }
                 Ok(())
             })),
             &mut token,
         )?;
-        wv.add_NavigationCompleted(
-            &NavigationCompletedEventHandler::create(Box::new(|_, _| {
-                with_ui(|ui| {
-                    ui.loaded = true;
-                    for js in std::mem::take(&mut ui.pending) {
-                        ui.eval(js);
-                    }
-                });
+        // The page has a real origin now, and could ask for the camera,
+        // notifications or the like: it needs none, so none is given.
+        wv.add_PermissionRequested(
+            &PermissionRequestedEventHandler::create(Box::new(|_, args: Option<ICoreWebView2PermissionRequestedEventArgs>| {
+                if let Some(a) = args {
+                    let _ = a.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY);
+                }
                 Ok(())
             })),
             &mut token,
         )?;
-        let shim = CoTaskMemPWSTR::from(shim().as_str());
-        wv.AddScriptToExecuteOnDocumentCreated(*shim.as_ref().as_pcwstr(), &AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(|_, _| Ok(()))))?;
-        navigate_page(&wv);
-        let theme = crate::engine::prefs()["theme"].as_str().unwrap_or("").to_owned();
-        with_ui(|ui| {
-            ui.controller = Some(ctl.clone());
-            ui.webview = Some(wv);
-            ui.set_theme(&theme);
-        });
+        wv.add_NavigationCompleted(
+            &NavigationCompletedEventHandler::create(Box::new(|sender: Option<ICoreWebView2>, args: Option<ICoreWebView2NavigationCompletedEventArgs>| {
+                let (Some(wv), Some(args)) = (sender, args) else { return Ok(()) };
+                let mut id = 0;
+                args.NavigationId(&mut id)?;
+                if id != LATEST.get() {
+                    return Ok(());
+                }
+                let mut ok = windows::core::BOOL::default();
+                args.IsSuccess(&mut ok)?;
+                let mut source = PWSTR::null();
+                wv.Source(&mut source)?;
+                let source = CoTaskMemPWSTR::from(source).to_string();
+                if ok.as_bool() {
+                    // The page itself, not the error page: scripts may run.
+                    if crate::page::from_page(&source) {
+                        with_ui(|ui| {
+                            ui.loaded = true;
+                            for js in std::mem::take(&mut ui.pending) {
+                                ui.eval(js);
+                            }
+                        });
+                    }
+                    return Ok(());
+                }
+                let mut status = COREWEBVIEW2_WEB_ERROR_STATUS::default();
+                args.WebErrorStatus(&mut status)?;
+                show_error(&wv, &format!("WebView2 could not load the page (web error status {})", status.0));
+                Ok(())
+            })),
+            &mut token,
+        )?;
     }
     Ok(())
 }
@@ -970,4 +1198,164 @@ pub fn font_families(mono: bool) -> Vec<String> {
     v.sort_by_key(|n| n.to_lowercase());
     v.dedup();
     v
+}
+
+#[cfg(test)]
+mod tests {
+    //! The real webview, on Windows: `cargo test -p kiri-win -- --ignored webview2`.
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, PM_REMOVE};
+
+    /// Runs this thread's messages until `rx` has an answer, or `secs` pass.
+    fn pump<T>(rx: &mpsc::Receiver<T>, secs: u64) -> Option<T> {
+        let end = Instant::now() + Duration::from_secs(secs);
+        let mut msg = MSG::default();
+        while Instant::now() < end {
+            if let Ok(v) = rx.try_recv() {
+                return Some(v);
+            }
+            // SAFETY: this thread's own message queue.
+            unsafe {
+                while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        rx.try_recv().ok()
+    }
+
+    /// The test's own folder for what would go in %LOCALAPPDATA%.
+    fn local() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("kiri-win-test-webview2-{}", std::process::id()))
+    }
+
+    /// A webview in a window of its own, set up as the app's is.
+    fn webview() -> (ICoreWebView2, ICoreWebView2Controller) {
+        // SAFETY: plain Win32 and WebView2 calls on this thread, which pumps
+        // their callbacks; LOCALAPPDATA is set before anything reads it.
+        unsafe {
+            // The log (serve::log) goes to the test's folder, not Kiri's.
+            std::env::set_var("LOCALAPPDATA", local());
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let hwnd = CreateWindowExW(WINDOW_EX_STYLE::default(), w!("STATIC"), w!("kiri-win test"), WS_OVERLAPPEDWINDOW, 0, 0, 900, 700, None, None, None, None).unwrap();
+            let data = HSTRING::from(local().join("WebView2").as_os_str());
+            let (tx, rx) = mpsc::channel();
+            let done = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |r, env: Option<ICoreWebView2Environment>| {
+                let _ = tx.send(r.map(|()| env));
+                Ok(())
+            }));
+            CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), &data, None, &done).unwrap();
+            let env = pump(&rx, 60).expect("no WebView2 environment").unwrap().unwrap();
+            let (tx, rx) = mpsc::channel();
+            let done = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |r, ctl: Option<ICoreWebView2Controller>| {
+                let _ = tx.send(r.map(|()| ctl));
+                Ok(())
+            }));
+            env.CreateCoreWebView2Controller(hwnd, &done).unwrap();
+            let ctl = pump(&rx, 60).expect("no WebView2 controller").unwrap().unwrap();
+            let wv = ctl.CoreWebView2().unwrap();
+            let shim = CoTaskMemPWSTR::from(shim().as_str());
+            wv.AddScriptToExecuteOnDocumentCreated(*shim.as_ref().as_pcwstr(), &AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(|_, _| Ok(())))).unwrap();
+            serve_page(&wv, &env).unwrap();
+            (wv, ctl)
+        }
+    }
+
+    /// The next navigation's end: whether it succeeded, or None if none ended.
+    fn completed(wv: &ICoreWebView2, secs: u64) -> Option<bool> {
+        let (tx, rx) = mpsc::channel();
+        let mut token = 0;
+        // SAFETY: a live webview, on this thread.
+        unsafe {
+            wv.add_NavigationCompleted(
+                &NavigationCompletedEventHandler::create(Box::new(move |_, args: Option<ICoreWebView2NavigationCompletedEventArgs>| {
+                    let mut ok = windows::core::BOOL::default();
+                    if let Some(a) = args {
+                        a.IsSuccess(&mut ok)?;
+                    }
+                    let _ = tx.send(ok.as_bool());
+                    Ok(())
+                })),
+                &mut token,
+            )
+            .unwrap();
+            let r = pump(&rx, secs);
+            wv.remove_NavigationCompleted(token).unwrap();
+            r
+        }
+    }
+
+    fn eval(wv: &ICoreWebView2, js: &str) -> String {
+        let (tx, rx) = mpsc::channel();
+        let js = CoTaskMemPWSTR::from(js);
+        // SAFETY: a live webview, on this thread.
+        unsafe {
+            wv.ExecuteScript(
+                *js.as_ref().as_pcwstr(),
+                &ExecuteScriptCompletedHandler::create(Box::new(move |_, r: String| {
+                    let _ = tx.send(r);
+                    Ok(())
+                })),
+            )
+            .unwrap();
+        }
+        pump(&rx, 30).expect("the script never answered")
+    }
+
+    #[test]
+    #[ignore = "opens WebView2: run on Windows with --ignored"]
+    fn webview2_shows_the_page_at_its_largest_and_only_it() {
+        let page = crate::lang::FILES.iter().map(|(tag, _)| crate::assemble::page(PAGE, Some(tag))).max_by_key(String::len).unwrap();
+        // Past what NavigateToString takes (a 2,097,152-character base64
+        // address, so about 1.57 MB of UTF-8), which left the window blank (#495).
+        assert!(page.len() > 2_097_152 / 4 * 3, "the page is only {} bytes", page.len());
+        let (wv, _ctl) = webview();
+        load(&wv, page);
+        assert_eq!(completed(&wv, 60), Some(true), "the page did not load");
+        assert_eq!(eval(&wv, "location.href"), format!("\"{}\"", crate::page::PAGE_URL));
+        let len: usize = eval(&wv, "document.documentElement.outerHTML.length").parse().unwrap();
+        assert!(len > 1_048_576, "the page has only {len} characters");
+        // The page's messages reach the host, which takes them by their source.
+        let (tx, rx) = mpsc::channel();
+        let mut token = 0;
+        // SAFETY: a live webview, on this thread.
+        unsafe {
+            wv.add_WebMessageReceived(
+                &WebMessageReceivedEventHandler::create(Box::new(move |_, args: Option<ICoreWebView2WebMessageReceivedEventArgs>| {
+                    let mut source = PWSTR::null();
+                    if let Some(a) = args {
+                        a.Source(&mut source)?;
+                    }
+                    let _ = tx.send(CoTaskMemPWSTR::from(source).to_string());
+                    Ok(())
+                })),
+                &mut token,
+            )
+            .unwrap();
+        }
+        eval(&wv, "window.webkit.messageHandlers.kiri.postMessage({ cmd: 'test' })");
+        let source = pump(&rx, 10).expect("no message from the page");
+        assert!(crate::page::from_page(&source), "a message from {source}");
+        assert_eq!(eval(&wv, "isSecureContext"), "true");
+        // Nothing else on the host.
+        let status = |path: &str| eval(&wv, &format!("(() => {{ const x = new XMLHttpRequest(); x.open('GET', '{path}', false); x.send(); return x.status; }})()"));
+        assert_eq!(status("/favicon.ico"), "404");
+        assert_eq!(status("/?again"), "404");
+        // Navigating away is refused, and the page stays.
+        eval(&wv, "location.href = 'https://example.com/'");
+        assert_ne!(completed(&wv, 10), Some(true), "the window left the page");
+        assert_eq!(eval(&wv, "location.href"), format!("\"{}\"", crate::page::PAGE_URL));
+        // A failure shows its reason, not a blank window.
+        show_error(&wv, "a reason for the test");
+        assert_eq!(completed(&wv, 30), Some(true), "the error page did not load");
+        assert!(eval(&wv, "document.body.innerText").contains("a reason for the test"));
+        let log = std::fs::read_to_string(local().join("Kiri").join("kiri-win.log")).unwrap_or_default();
+        assert!(log.contains("the page did not load: a reason for the test"), "not in the log: {log}");
+        // The error page can't reach the host commands.
+        assert_eq!(eval(&wv, "location.href"), "\"about:blank\"");
+    }
 }

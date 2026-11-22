@@ -5,15 +5,17 @@
 //! a VM that stops before the guest flushes can keep a layer's names but
 //! lose its contents, leaving every file empty.
 
+use std::ffi::CString;
 use std::fs;
 use std::io::{self, BufReader, Read};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use kiri_proto::{LayerBegin, LayerStored};
 
-use super::sys;
+use super::{inroot, sys};
 
 pub fn hex(digest: &str) -> io::Result<&str> {
     let h = digest.strip_prefix("sha256:").unwrap_or(digest);
@@ -188,13 +190,38 @@ fn untar(reader: impl Read, dest: &Path) -> io::Result<u64> {
             continue;
         }
         total += entry.size();
-        entry.unpack_in(dest)?;
+        if entry.header().entry_type().is_hard_link() {
+            let source = entry.link_name()?.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "hard link has no target"))?;
+            let root = inroot::open_root(dest)?;
+            let (from, source) = hardlink_parent(root.as_fd(), &source)?;
+            let (to, name) = hardlink_parent(root.as_fd(), &path)?;
+            // SAFETY: parents are confined directory fds and names are NUL-terminated.
+            // Flags 0 links the symlink itself, without following its absolute target.
+            let ret = unsafe { libc::linkat(from.as_raw_fd(), source.as_ptr(), to.as_raw_fd(), name.as_ptr(), 0) };
+            sys::check(ret as _, "hard link")?;
+        } else {
+            entry.unpack_in(dest)?;
+        }
     }
     Ok(total)
 }
 
 fn escapes() -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, "whiteout escapes the layer")
+    io::Error::new(io::ErrorKind::InvalidData, "archive path escapes the layer")
+}
+
+fn hardlink_parent(root: BorrowedFd<'_>, path: &Path) -> io::Result<(OwnedFd, CString)> {
+    let mut relative = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::Normal(name) => relative.push(name),
+            std::path::Component::CurDir | std::path::Component::RootDir => {}
+            _ => return Err(escapes()),
+        }
+    }
+    let name = relative.file_name().ok_or_else(escapes)?;
+    let parent = inroot::open(root, relative.parent().unwrap_or(Path::new("")), inroot::Last::Dir)?;
+    Ok((parent.fd, sys::cstr(Path::new(name))?))
 }
 
 /// The directory under `dest` a whiteout lives in, made if missing. Every
@@ -240,6 +267,98 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn hardlinks_preserve_source_inode() {
+        use std::os::unix::fs::MetadataExt;
+
+        for (i, link) in [None, Some("target"), Some("/target"), Some("/missing-target")].into_iter().enumerate() {
+            let mut b = tar::Builder::new(Vec::new());
+            b.append_data(&mut header(2, 0o644), "target", &b"[]"[..]).unwrap();
+            let source = if let Some(to) = link {
+                let mut h = header(0, 0o777);
+                h.set_entry_type(tar::EntryType::Symlink);
+                b.append_link(&mut h, "source", to).unwrap();
+                "source"
+            } else {
+                "target"
+            };
+            let mut h = header(0, 0o777);
+            h.set_entry_type(tar::EntryType::Link);
+            b.append_link(&mut h, "nested/manifest.nix", source).unwrap();
+            let bytes = b.into_inner().unwrap();
+            let dest = scratch(&format!("hardlink-{i}"));
+            untar(Capped { inner: &bytes[..], left: u64::MAX }, &dest).unwrap();
+            let from = fs::symlink_metadata(dest.join(source)).unwrap();
+            let to = fs::symlink_metadata(dest.join("nested/manifest.nix")).unwrap();
+            assert_eq!((from.dev(), from.ino()), (to.dev(), to.ino()), "{link:?}");
+            if let Some(link) = link {
+                assert_eq!(fs::read_link(dest.join("nested/manifest.nix")).unwrap(), Path::new(link));
+            } else {
+                assert_eq!(fs::read(dest.join("nested/manifest.nix")).unwrap(), b"[]");
+            }
+            fs::remove_dir_all(dest).unwrap();
+        }
+    }
+
+    #[test]
+    fn hardlinks_resolve_parents_inside_layer() {
+        use std::os::unix::fs::MetadataExt;
+
+        let mut b = tar::Builder::new(Vec::new());
+        b.append_data(&mut header(1, 0o644), "dir/file", &b"x"[..]).unwrap();
+        let mut h = header(0, 0o777);
+        h.set_entry_type(tar::EntryType::Symlink);
+        b.append_link(&mut h, "alias", "dir").unwrap();
+        let mut h = header(0, 0o777);
+        h.set_entry_type(tar::EntryType::Link);
+        b.append_link(&mut h, "alias/copy", "alias/file").unwrap();
+        let bytes = b.into_inner().unwrap();
+        let dest = scratch("hardlink-parents");
+        untar(Capped { inner: &bytes[..], left: u64::MAX }, &dest).unwrap();
+        assert_eq!(fs::read(dest.join("dir/copy")).unwrap(), b"x");
+        assert_eq!(fs::metadata(dest.join("dir/file")).unwrap().ino(), fs::metadata(dest.join("dir/copy")).unwrap().ino());
+        fs::remove_dir_all(dest).unwrap();
+    }
+
+    #[test]
+    fn hardlink_paths_cannot_escape_layer() {
+        use std::os::unix::fs::MetadataExt;
+
+        for (i, (source, target)) in [
+            ("../outside/secret", "copied"),
+            ("escape/secret", "copied"),
+            ("file", "escape/copied"),
+            ("file", "../outside/copied"),
+        ].into_iter().enumerate() {
+            let base = scratch(&format!("hardlink-escape-{i}"));
+            let dest = base.join("layer");
+            let outside = base.join("outside");
+            fs::create_dir(&dest).unwrap();
+            fs::create_dir(&outside).unwrap();
+            fs::write(outside.join("secret"), b"keep").unwrap();
+            let mut b = tar::Builder::new(Vec::new());
+            b.append_data(&mut header(1, 0o644), "file", &b"x"[..]).unwrap();
+            let mut h = header(0, 0o777);
+            h.set_entry_type(tar::EntryType::Symlink);
+            b.append_link(&mut h, "escape", &outside).unwrap();
+            let mut h = header(0, 0o777);
+            h.set_entry_type(tar::EntryType::Link);
+            h.set_link_name(source).unwrap();
+            // The builder refuses a traversal path; an untrusted archive need not.
+            h.as_mut_bytes()[..target.len()].copy_from_slice(target.as_bytes());
+            h.set_cksum();
+            b.append(&h, io::empty()).unwrap();
+            let bytes = b.into_inner().unwrap();
+            let _ = untar(Capped { inner: &bytes[..], left: u64::MAX }, &dest);
+            assert_eq!(fs::read_link(dest.join("escape")).unwrap(), outside);
+            assert!(!dest.join("copied").exists());
+            assert!(!outside.join("copied").exists());
+            assert_eq!(fs::read(outside.join("secret")).unwrap(), b"keep");
+            assert_eq!(fs::symlink_metadata(outside.join("secret")).unwrap().nlink(), 1);
+            fs::remove_dir_all(base).unwrap();
+        }
     }
 
     /// A layer whose first entry makes `foo` a symlink to `/` and whose
@@ -331,6 +450,37 @@ mod tests {
         assert!(untar(Capped { inner: &bytes[..], left: u64::MAX }, &dest).is_err());
         assert!(base.join("keep").is_file());
         let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A hard link to `/bin/tool` links the layer's `bin/tool`, as with Docker
+    /// (issue 302). `..` is refused; `root` → `/` is followed inside the layer,
+    /// where `etc/hostname` doesn't exist; nothing is linked in either case.
+    #[test]
+    fn absolute_hard_link_is_read_from_the_layer_root() {
+        let layer = |to: &str| {
+            let mut b = tar::Builder::new(Vec::new());
+            b.append_data(&mut header(3, 0o755), "bin/tool", &b"hi\n"[..]).unwrap();
+            let mut h = header(0, 0o777);
+            h.set_entry_type(tar::EntryType::Symlink);
+            b.append_link(&mut h, "root", "/").unwrap();
+            let mut h = header(0, 0o755);
+            h.set_entry_type(tar::EntryType::Link);
+            b.append_link(&mut h, "bin/tool-1.0", to).unwrap();
+            b.into_inner().unwrap()
+        };
+        let dest = scratch("abs-link");
+        untar(Capped { inner: &layer("/bin/tool")[..], left: u64::MAX }, &dest).unwrap();
+        let (tool, link) = (fs::metadata(dest.join("bin/tool")).unwrap(), fs::metadata(dest.join("bin/tool-1.0")).unwrap());
+        assert_eq!(std::os::unix::fs::MetadataExt::ino(&link), std::os::unix::fs::MetadataExt::ino(&tool), "not a hard link");
+        let _ = fs::remove_dir_all(&dest);
+
+        for (to, why) in [("/../../etc/hostname", "escapes"), ("/root/etc/hostname", "No such file"), ("/bin/nope", "No such file")] {
+            let dest = scratch("abs-link-bad");
+            let err = untar(Capped { inner: &layer(to)[..], left: u64::MAX }, &dest).expect_err(to);
+            assert!(err.to_string().contains(why), "{to}: unexpected error: {err}");
+            assert!(!dest.join("bin/tool-1.0").exists(), "{to}: linked");
+            let _ = fs::remove_dir_all(&dest);
+        }
     }
 
     /// An ordinary whiteout becomes overlayfs's 0:0 character device and

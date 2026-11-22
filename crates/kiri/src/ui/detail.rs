@@ -53,7 +53,7 @@ pub fn logs(id: String) {
             super::lastlogs::LIVE_TAIL
         )) {
             Ok(s) => s,
-            Err(e) => return emit(notice("error", &format!("Logs: {e}"))),
+            Err(e) => return emit(notice("error", &super::trf("Logs: {error}", &[("error", &e)]))),
         };
         if let Ok(closer) = stream.closer() {
             *LOGS.lock().unwrap_or_else(|e| e.into_inner()) = Some(closer);

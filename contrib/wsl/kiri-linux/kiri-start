@@ -1,8 +1,12 @@
 #!/bin/sh
-# Starts Kiri's engine after setup or when kiri-win wakes the distro.
+# Starts Kiri's engine: when WSL boots the distro (wsl.conf), after setup,
+# when kiri-win starts, and when `kiri bridge` finds no daemon on its socket.
 # The daemon serves its unix socket; kiri-win carries the Windows docker CLI
-# to it over `kiri bridge`.
+# to it over `kiri bridge`. `--restart` (kiri-win's Restart engine) stops the
+# daemon first. Exit 0: it runs; 1: no socket in time (it may still come
+# up), or the old one did not stop; 2: it exited as it started.
 export HOME=/var/lib/kiri-daemon
+sock=$HOME/.kiri/run/docker.sock
 mkdir -p "$HOME" /var/log
 
 # WSL's default resolv.conf uses the NAT gateway as nameserver; that host
@@ -22,14 +26,56 @@ if [ -L /etc/resolv.conf ] || [ -z "$ns" ] || { [ -n "$gw" ] && [ "$ns" = "$gw" 
   fix_resolv
 fi
 
-pgrep -f '/usr/local/bin/kiri daemon' >/dev/null 2>&1 && exit 0
-rm -f "$HOME/.kiri/run/docker.sock"
-nohup /usr/local/bin/kiri daemon >>/var/log/kiri.log 2>&1 &
+# One at a time: the boot command, the bridge, kiri-win and `kiri`
+# (crates/kiri/src/wsl.rs) can each start it at once, and two would each
+# remove the socket and start a daemon. busybox flock has no time limit of
+# its own: -n, tried for 25 s. A plain kiri-start holds it at most 20 s, so
+# one waiting behind it gets it, and finds the daemon it started; the
+# bridge gives a start 25 s, enough for that. One that waits on a
+# --restart gives up, and the restart starts the daemon.
+exec 9>"$HOME/.kiri-start.lock"
 i=0
-while [ "$i" -lt 50 ]; do
-  [ -S "$HOME/.kiri/run/docker.sock" ] && exit 0
+until flock -n 9; do
+  [ "$i" -ge 250 ] && { echo "another kiri-start has not finished in 25 s" >&2; exit 1; }
   sleep 0.1
   i=$((i + 1))
 done
-echo "kiri daemon did not create its socket; see /var/log/kiri.log" >&2
+running() { pgrep -f '/usr/local/bin/kiri daemon' >/dev/null 2>&1; }
+# On SIGTERM the daemon removes its socket, then stops its containers
+# (seconds; ~10 s for one that ignores SIGTERM, up to 120 s for one with a
+# long --stop-timeout: SHUTDOWN_WAIT_CAP, then 2 s after SIGKILL), powers
+# off its VM (up to 10 s), then exits: about 132 s at most. --restart waits
+# 140 s for that.
+if [ "${1:-}" = --restart ] && running; then
+  pkill -f '/usr/local/bin/kiri daemon'
+  i=0
+  while running; do
+    [ "$i" -ge 1400 ] && { echo "the kiri daemon did not stop in 140 s; see /var/log/kiri.log" >&2; exit 1; }
+    sleep 0.1
+    i=$((i + 1))
+  done
+fi
+# A daemon with its socket runs. One without is starting (its socket
+# comes) or stopping (it is gone soon, and one is started here): up to 15 s.
+i=0
+while running; do
+  [ -S "$sock" ] && exit 0
+  [ "$i" -ge 150 ] && { echo "a kiri daemon runs without its socket for 15 s; see /var/log/kiri.log" >&2; exit 1; }
+  sleep 0.1
+  i=$((i + 1))
+done
+rm -f "$sock"
+# The daemon does not keep the lock (fd 9).
+nohup /usr/local/bin/kiri daemon >>/var/log/kiri.log 2>&1 9>&- &
+pid=$!
+i=0
+while [ "$i" -lt 50 ]; do
+  [ -S "$sock" ] && exit 0
+  # Exit 2: it cannot start, and kiri-win need not wait for it.
+  kill -0 "$pid" 2>/dev/null || { echo "kiri daemon exited as it started; see /var/log/kiri.log" >&2; exit 2; }
+  sleep 0.1
+  i=$((i + 1))
+done
+# Exit 1: it may still come up (a slow disk).
+echo "kiri daemon did not create its socket in 5 s; see /var/log/kiri.log" >&2
 exit 1

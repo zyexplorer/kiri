@@ -20,6 +20,12 @@
 <p align="center">
   <a href="https://github.com/libracoder/kiri/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/libracoder/kiri?label=release&color=2f6feb"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-555"></a>
+  <a href="#in-your-language"><img alt="38 languages" src="https://img.shields.io/badge/languages-38-2ea043"></a>
+</p>
+
+<p align="center">
+  🇬🇧 🇮🇩 🇩🇪 🇪🇸 🇫🇷 🇮🇹 🇵🇱 🇧🇷 🇻🇳 🇹🇷 🇷🇺 🇸🇦 🇯🇵 🇰🇷 🇨🇳 🇹🇼<br>
+  <sub>Kiri speaks 38 languages. <a href="#in-your-language">Is yours one?</a></sub>
 </p>
 
 <p align="center">
@@ -42,12 +48,32 @@ The name comes from the Igbo word *ntakịrị*, "small".
 - **Local domains**: `http://<name>.kiri.local`, with HTTPS from Kiri's own certificate authority.
 - **More than containers**: a one-command Kubernetes cluster and Linux machines.
 - **A native window** for containers, images, volumes and networks, plus a menu bar item.
+- **In your language**: 38 languages, on macOS, Windows and Linux alike.
+
+### In your language
+
+Kiri's window and setup come in these languages. It follows your system's language, and you can change it in Settings → Appearance. In Arabic, Persian and Central Kurdish the whole window reads right to left.
+
+| | Language | | Language | | Language | | Language |
+|---|---|---|---|---|---|---|---|
+| 🇬🇧 | English | 🇳🇴 | Norsk bokmål | 🇧🇬 | Български | 🇮🇳 | తెలుగు |
+| 🇮🇩 | Bahasa Indonesia | 🇵🇱 | Polski | 🇷🇺 | Русский | 🇹🇭 | ไทย |
+| 🇦🇩 | Català | 🇧🇷 | Português (Brasil) | 🇺🇦 | Українська | 🇱🇦 | ລາວ |
+| 🇨🇿 | Čeština | 🇷🇴 | Română | 🇰🇿 | Қазақша | 🇯🇵 | 日本語 |
+| 🇩🇪 | Deutsch | 🇦🇱 | Shqip | 🇸🇦 | العربية | 🇰🇷 | 한국어 |
+| 🇪🇸 | Español | 🇸🇮 | Slovenščina | 🇮🇷 | فارسی | 🇨🇳 | 简体中文 |
+| 🇫🇷 | Français | 🇫🇮 | Suomi | 🇮🇶 | کوردیی ناوەندی | 🇹🇼 | 繁體中文 |
+| 🇮🇹 | Italiano | 🇻🇳 | Tiếng Việt | 🇮🇳 | हिन्दी | 🇪🇹 | አማርኛ |
+| 🇱🇹 | Lietuvių | 🇹🇷 | Türkçe | 🇧🇩 | বাংলা |  |  |
+| 🇭🇺 | Magyar | 🇬🇷 | Ελληνικά | 🇮🇳 | தமிழ் |  |  |
+
+Missing yours? Translations live in [`crates/kiri/src/ui/lang`](crates/kiri/src/ui/lang); see [Contributing](#contributing).
 
 ## Install
 
 | Platform | Get it |
 |----------|--------|
-| macOS 14+ (Apple silicon or Intel) | `.dmg` from [runkiri.com/releases](https://runkiri.com/releases/) |
+| macOS 14+ (Apple silicon or Intel) | `.dmg` from [runkiri.com/releases](https://runkiri.com/releases/), or `brew install --cask libracoder/kiri/kiri` |
 | Windows 10 and 11 (x86-64 or Arm, through WSL 2) | `.msi` from [runkiri.com/releases](https://runkiri.com/releases/) |
 | Linux (Ubuntu, Fedora and others) | `.deb` or `.rpm` from [runkiri.com/releases](https://runkiri.com/releases/) |
 
@@ -76,7 +102,7 @@ Docker's commands also work as `kiri` commands (`kiri run`, `kiri ps`,
 | Docker Desktop | 213 ms            | 243 ms       |
 | OrbStack       | 380 ms            | 442 ms       |
 
-Method and every other figure are in [`bench/results.json`](bench/results.json). Rerun with `kiri bench`.
+Method and every other figure are in [`bench/results.json`](bench/results.json). Rerun with `kiri bench --network bridge --runs 30` while all three engines are running.
 
 ## How it works
 
@@ -100,10 +126,9 @@ cgroup. There's no runc, no shim and no dockerd. More detail is in
 
 ## Roadmap
 
-Next is a built-in builder. Kiri will serve Docker's own build endpoints, so
-buildx uses its docker driver against Kiri as it does against Docker
-Desktop. This brings `host-gateway` support to BuildKit builds, and images
-load straight into Kiri.
+Next are more ways to share (Tailscale and Cloudflare Tunnel, in 0.3.0) and
+Coolify support (0.4.0). See [ROADMAP.md](ROADMAP.md) for what's in each
+release.
 
 ## Contributing
 

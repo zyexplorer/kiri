@@ -168,8 +168,12 @@ echo "         $OS"
 echo "client:  $(out "$DOCKER" version --format '{{.Client.Version}}') ($DOCKER${DOCKER_HOST:+ -H $DOCKER_HOST}${DOCKER_CONTEXT:+ --context $DOCKER_CONTEXT})"
 echo "run:     $RUN (label $LABEL)"
 if ! d version >/dev/null 2>&1; then echo "no engine answers"; exit 1; fi
-T=300 out d pull -q $IMG >/dev/null
-T=300 out d pull -q $WEB >/dev/null
+# The two images, from KIRI_TEST_REGISTRY (tests/lib/images.sh), never from
+# Docker Hub, whose hourly pull limit a few runs use up.
+kiri_docker() { d "$@"; }
+# shellcheck source=SCRIPTDIR/lib/images.sh
+. "$(dirname "$0")/lib/images.sh"
+kiri_seed_images $IMG $WEB || echo "an image could not be fetched; the cases that run it will fail"
 
 # Does the engine's host have IPv6 out? Asked from its own network namespace
 # (--network host), the way test-ipv6.com asks a browser's machine.

@@ -375,7 +375,25 @@ pub fn remove(builder: &str, id: &str) -> io::Result<()> {
     if !id.bytes().all(|b| b.is_ascii_alphanumeric()) || builder.starts_with('-') {
         return Err(io::Error::other("not a build"));
     }
-    buildx(&["history", "rm", "--builder", builder, id]).map(|_| ())
+    already_gone(buildx(&["history", "rm", "--builder", builder, id]).map(|_| ()), id, || listed(builder, id))
+}
+
+/// A build another removal got to first (a second click, or several removed
+/// at once) is removed. BuildKit then answers `lease "ref_<id>": not found`,
+/// which showed as "Couldn't remove the build". It answers the same for a
+/// build still running, which stays: so only a build `builder`'s history no
+/// longer lists counts as removed, and a listing that fails keeps the error.
+fn already_gone(result: io::Result<()>, id: &str, listed: impl FnOnce() -> io::Result<bool>) -> io::Result<()> {
+    match result {
+        Err(e) if e.to_string().contains(&format!("lease \"ref_{id}\": not found")) && matches!(listed(), Ok(false)) => Ok(()),
+        r => r,
+    }
+}
+
+/// Whether `builder`'s history still has build `id` (its refs end in the id).
+fn listed(builder: &str, id: &str) -> io::Result<bool> {
+    let (out, _) = buildx(&["history", "ls", "--builder", builder, "--format", "json"])?;
+    Ok(values(&out).iter().any(|r| r["ref"].as_str().and_then(|r| r.rsplit('/').next()) == Some(id)))
 }
 
 /// Standard base64, padding optional; anything else is skipped.
@@ -547,6 +565,25 @@ fn failure(what: &str, stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A build already removed (a second click, or several removed at once)
+    /// is removed: BuildKit's "lease not found" isn't an error to show. But
+    /// BuildKit says the same for a build still running, which stays listed:
+    /// that one, or one Kiri can't list, still says so.
+    #[test]
+    fn removing_a_build_already_gone_is_done() {
+        let lost = r#"lease "ref_b1d0ne": not found"#;
+        let answer = |e: &str| Err(io::Error::other(e.to_owned()));
+        let gone = || Ok(false);
+        assert!(already_gone(answer(lost), "b1d0ne", gone).is_ok(), "removed by the other click");
+        assert!(already_gone(Ok(()), "b1d0ne", || -> io::Result<bool> { panic!("no listing when rm worked") }).is_ok());
+        assert_eq!(already_gone(answer(lost), "b1d0ne", || Ok(true)).unwrap_err().to_string(), lost, "still running, still there");
+        assert_eq!(already_gone(answer(lost), "b1d0ne", || Err(io::Error::other("no builder"))).unwrap_err().to_string(), lost);
+        // Another build's lease, or any other failure, still says so.
+        assert!(already_gone(answer(r#"lease "ref_0ther1": not found"#), "b1d0ne", gone).is_err());
+        let ro = "write /var/lib/buildkit/runc-overlayfs/containerdmeta.db: read-only file system";
+        assert_eq!(already_gone(answer(ro), "b1d0ne", gone).unwrap_err().to_string(), ro);
+    }
 
     #[test]
     fn a_failure_carries_the_tools_last_error_line() {

@@ -20,6 +20,10 @@ for (const v of ["containers", "pods", "services"]) {
 ui.images.push({ Id: "sha256:" + "ab".repeat(32), RepoTags: ["nginx:alpine"], Size: 5e7, Created: Date.now() / 1000 - 86400 });
 show("images"); openImage("nginx:alpine");
 for (const b of document.querySelectorAll("[data-imgtab]")) if (seen(b)) items.push(`image tab ${b.textContent.trim()}`);
+// USB: the same columns everywhere (what the rows offer is the system's).
+kiri.on({ type: "usb", can: "attach", devices: [{ key: "k", name: "Zigbee", id: "10c4:ea60", speed: "full", state: "host", path: "" }] });
+show("usb");
+for (const th of document.querySelectorAll("#content thead th")) { const h = th.textContent.trim(); if (h) items.push(`column usb: ${h}`); }
 show("settings");
 for (const b of document.querySelectorAll("[data-stab]")) items.push(`settings ${b.dataset.stab}`);
 report(items.map((x) => "ITEM " + x));

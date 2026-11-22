@@ -39,6 +39,32 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+/// How the host binary is compiled. `Release` is what ships: one whole-program
+/// pass on one core, the smallest and fastest binary. `Fast` is for feature
+/// builds (`app-dev`, `linux-dev`, `windows-dev`): Cargo.toml's [profile.fast], on every core and
+/// incremental, so a rebuild after an edit takes seconds.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Profile {
+    Release,
+    Fast,
+}
+
+impl Profile {
+    fn dir(self) -> &'static str {
+        match self {
+            Profile::Release => "release",
+            Profile::Fast => "fast",
+        }
+    }
+
+    fn cargo_args(self) -> [&'static str; 2] {
+        match self {
+            Profile::Release => ["--profile", "release"],
+            Profile::Fast => ["--profile", "fast"],
+        }
+    }
+}
+
 /// Which Mac a build is for. Kiri ships one app per architecture rather
 /// than a universal one: the bundled docker CLI, Compose and buildx are most
 /// of the download, and a universal app would carry both builds of each.
@@ -88,11 +114,12 @@ impl Arch {
         Ok(out)
     }
 
-    /// Where the host binary lands: target/release when it is this Mac's own
+    /// Where the host binary lands: target/<profile> when it is this Mac's own
     /// architecture (so `cargo run` and the Apple Silicon build stay as they
-    /// were), target/<triple>/release when cross-built.
-    fn host_bin(self, root: &Path) -> PathBuf {
-        if self.native() { root.join("target/release/kiri") } else { root.join("target").join(self.host_target()).join("release/kiri") }
+    /// were), target/<triple>/<profile> when cross-built.
+    fn host_bin(self, root: &Path, profile: Profile) -> PathBuf {
+        let p = profile.dir();
+        if self.native() { root.join("target").join(p).join("kiri") } else { root.join("target").join(self.host_target()).join(p).join("kiri") }
     }
 
     fn native(self) -> bool {
@@ -133,8 +160,10 @@ fn main() -> ExitCode {
         "guest" => guest(&root, arch),
         "kernel" => kernel(&root, arch),
         "disk" => disk(&root),
-        "host" => host(&root, arch),
-        "linux" => linux(&root),
+        "host" => host(&root, arch, Profile::Release),
+        "linux" => linux(&root, Profile::Release),
+        // The same Linux build with the fast profile, for testing a change.
+        "linux-dev" => linux(&root, Profile::Fast),
         "windows" | "windows-dev" | "msi" | "msi-pack" => match WinArch::from_args() {
             Ok(win) => match task.as_str() {
                 "windows" => windows(&root, false, win),
@@ -145,26 +174,26 @@ fn main() -> ExitCode {
             Err(e) => Err(e),
         },
         "docker-win-arm64" => docker_cli_arm64(&root.join("target/cli-cache")).map(|p| println!("{}", p.display())),
-        "app" => app(&root, arch, false).map(drop),
-        "app-lite" => app(&root, arch, true).map(drop),
+        "app" => app(&root, arch, false, Profile::Release).map(drop),
+        "app-lite" => app(&root, arch, true, Profile::Release).map(drop),
         // `app-dev builds`: Kiri Builds.app, a Kiri Dev of its own for one feature.
         "app-dev" => match std::env::args().nth(2) {
             Some(f) if f.is_empty() || !f.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()) || f == "dev" => {
                 eprintln!("a feature name is lower-case letters and digits, not `dev`");
                 return ExitCode::FAILURE;
             }
-            feature => app(&root, Arch::Arm64, false).and_then(|a| app_dev(&root, &a, feature.as_deref())),
+            feature => app(&root, Arch::Arm64, false, Profile::Fast).and_then(|a| app_dev(&root, &a, feature.as_deref())),
         },
         // The disk image of the app already built, signed but not notarized (to look at it).
         "dmg" => dmg(&root, &root.join(arch.app_dir(false)), arch, false).map(|d| println!("{}", d.display())),
-        "release" => app(&root, arch, false).and_then(|a| release(&root, &a, arch)),
+        "release" => app(&root, arch, false, Profile::Release).and_then(|a| release(&root, &a, arch)),
         // Signs the app already built (on a Mac without the identity).
-        "sign" => sign_app(&root, &root.join(arch.app_dir(false)), arch, false),
+        "sign" => sign_app(&root, &root.join(arch.app_dir(false)), arch, false, Profile::Release),
         // Packs the app already built, without rebuilding it.
         "pack" => release(&root, &root.join(arch.app_dir(false)), arch),
-        "all" => guest(&root, arch).and_then(|()| host(&root, arch)),
+        "all" => guest(&root, arch).and_then(|()| host(&root, arch, Profile::Release)),
         _ => {
-            eprintln!("usage: cargo xtask <guest|kernel|disk|host|linux|windows|windows-dev|msi|msi-pack|docker-win-arm64|app|app-lite|app-dev|release|sign|pack|all> [--arch arm64]");
+            eprintln!("usage: cargo xtask <guest|kernel|disk|host|linux|linux-dev|windows|windows-dev|msi|msi-pack|docker-win-arm64|app|app-lite|app-dev|release|sign|pack|all> [--arch arm64]");
             return ExitCode::FAILURE;
         }
     };
@@ -262,14 +291,14 @@ fn disk(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn host(root: &Path, arch: Arch) -> io::Result<()> {
+fn host(root: &Path, arch: Arch, profile: Profile) -> io::Result<()> {
     let mut build = Command::new(env!("CARGO"));
-    build.current_dir(root).args(["build", "--release", "-p", "kiri"]);
+    build.current_dir(root).arg("build").args(profile.cargo_args()).args(["-p", "kiri"]);
     if !arch.native() {
         build.args(["--target", arch.host_target()]);
     }
     run(&mut build)?;
-    let bin = arch.host_bin(root);
+    let bin = arch.host_bin(root, profile);
     if cfg!(target_os = "macos") {
         // Virtualization.framework refuses to start a VM without this entitlement.
         run(Command::new("codesign").args(["--force", "--sign", "-", "--entitlements"])
@@ -283,13 +312,14 @@ fn host(root: &Path, arch: Arch) -> io::Result<()> {
 /// The Linux host build: native, in a Rust container, so C dependencies
 /// (ring) find a compiler. The cargo registry is cached in a volume.
 /// `--arch amd64` builds x86-64 binaries (on Apple silicon the container
-/// runs under Rosetta), for Linux PCs and WSL2 on Windows.
-fn linux(root: &Path) -> io::Result<()> {
+/// runs under Rosetta), for Linux PCs and WSL2 on Windows. `linux-dev`
+/// builds with the fast profile, into target/linux/fast.
+fn linux(root: &Path, profile: Profile) -> io::Result<()> {
     let amd64 = std::env::args().skip(2).collect::<Vec<_>>().windows(2).any(|w| w[0] == "--arch" && (w[1] == "amd64" || w[1] == "x86_64"));
-    linux_build(root, amd64)
+    linux_build(root, amd64, profile)
 }
 
-fn linux_build(root: &Path, amd64: bool) -> io::Result<()> {
+fn linux_build(root: &Path, amd64: bool, profile: Profile) -> io::Result<()> {
     let (platform, out, cache) = if amd64 { ("linux/amd64", "linux-x86_64", "kiri-cargo-amd64") } else { ("linux/arm64", "linux", "kiri-cargo") };
     run(Command::new("docker").args(["run", "--rm", "--platform", platform, "-v"]).arg(format!("{}:/src", root.display())).args([
         "-v",
@@ -304,10 +334,10 @@ fn linux_build(root: &Path, amd64: bool) -> io::Result<()> {
         "rust:1-alpine",
         "sh",
         "-c",
-        "apk add -q musl-dev && cargo build --release -p kiri -p kiri-init",
+        &format!("apk add -q musl-dev && cargo build --profile {} -p kiri -p kiri-init", profile.dir()),
     ]))?;
     for b in ["kiri", "kiri-init"] {
-        let p = root.join("target").join(out).join("release").join(b);
+        let p = root.join("target").join(out).join(profile.dir()).join(b);
         println!("{} ({} KiB)", p.display(), fs::metadata(&p)?.len() / 1024);
     }
     Ok(())
@@ -387,7 +417,8 @@ fn windows(root: &Path, debug: bool, arch: WinArch) -> io::Result<()> {
     // The static (musl) engine, which runs in Kiri Linux and in Ubuntu, and
     // Kiri Linux itself (scripts/kiri-linux.sh), built in WSL: on Windows,
     // the default distro, with Rust installed. zig cross-compiles, so
-    // either architecture builds in either WSL.
+    // either architecture builds in either WSL. `windows-dev` builds the
+    // engine with the fast profile; the release bundle with the release one.
     let linux = root.join(format!("target/linux-{}-musl", arch.linux()));
     if !cfg!(windows) {
         return Err(io::Error::other("the Windows bundle is built on Windows, in WSL"));
@@ -398,7 +429,8 @@ fn windows(root: &Path, debug: bool, arch: WinArch) -> io::Result<()> {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     };
     let (src, out_dir) = (wsl(root)?, wsl(&linux)?);
-    run(Command::new("wsl.exe").args(["--", "bash", &format!("{src}/scripts/windows-engine.sh"), &src, &out_dir, arch.linux()]))?;
+    let profile = if debug { Profile::Fast } else { Profile::Release };
+    run(Command::new("wsl.exe").args(["--", "bash", &format!("{src}/scripts/windows-engine.sh"), &src, &out_dir, arch.linux(), profile.dir()]))?;
     run(Command::new("wsl.exe").args(["--", "sh", &format!("{src}/scripts/kiri-linux.sh"), &src, &out_dir, &format!("{out_dir}/kiri-linux.tar.gz"), arch.linux()]))?;
     // Assemble the bundle first: the engine, Kiri Linux, the docker CLI,
     // Compose and buildx (pinned, checked, as Kiri.app bundles them) and the
@@ -675,11 +707,29 @@ fn fetch(cache: &Path, name: &str, url: &str) -> io::Result<PathBuf> {
     let path = cache.join(name);
     if !path.is_file() {
         fs::create_dir_all(cache)?;
-        let tmp = cache.join(format!("{name}.part"));
+        // Per process: two checkouts filling the shared cache at once each
+        // write their own part, and the rename is atomic.
+        let tmp = cache.join(format!("{name}.{}.part", std::process::id()));
         run(Command::new("curl").args(["-fsSL", "--retry", "3", "-o"]).arg(&tmp).arg(url))?;
         fs::rename(&tmp, &path)?;
     }
     Ok(path)
+}
+
+/// The download cache all checkouts share: `KIRI_CLI_CACHE`, else the user's
+/// cache folder (~/Library/Caches/kiri-build/cli on a Mac,
+/// $XDG_CACHE_HOME or ~/.cache/kiri-build/cli elsewhere), else target/cli-cache.
+fn shared_cli_cache(root: &Path) -> PathBuf {
+    if let Some(dir) = std::env::var_os("KIRI_CLI_CACHE").filter(|d| !d.is_empty()) {
+        return PathBuf::from(dir);
+    }
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
+    let base = if cfg!(target_os = "macos") {
+        home.map(|h| h.join("Library/Caches"))
+    } else {
+        std::env::var_os("XDG_CACHE_HOME").filter(|d| !d.is_empty()).map(PathBuf::from).or_else(|| home.map(|h| h.join(".cache")))
+    };
+    base.map_or_else(|| root.join("target/cli-cache"), |b| b.join("kiri-build/cli"))
 }
 
 fn sha256(path: &Path) -> io::Result<String> {
@@ -706,8 +756,8 @@ fn verify(file: &Path, want: &str) -> io::Result<()> {
 /// target/Kiri.app, signed with the virtualization entitlement. `lite`:
 /// target/lite/Kiri.app, without the docker CLI, Compose and buildx, which
 /// Kiri Lite downloads on first launch (src/tools.rs).
-fn app(root: &Path, arch: Arch, lite: bool) -> io::Result<PathBuf> {
-    host(root, arch)?;
+fn app(root: &Path, arch: Arch, lite: bool, profile: Profile) -> io::Result<PathBuf> {
+    host(root, arch, profile)?;
     let version = env!("CARGO_PKG_VERSION");
     // Info.plist's versions are numbers only: a test build's 0.1.8-dev.42 is 0.1.8 there.
     let plain = version.split('-').next().unwrap_or(version);
@@ -721,7 +771,7 @@ fn app(root: &Path, arch: Arch, lite: bool) -> io::Result<PathBuf> {
     if !lite {
         fs::create_dir_all(res.join("bin/cli-plugins"))?;
     }
-    fs::copy(arch.host_bin(root), macos.join("kiri"))?;
+    fs::copy(arch.host_bin(root, profile), macos.join("kiri"))?;
     // In Resources, not loose in Contents: codesign refuses a file there
     // ("code object is not signed at all ... In subcomponent: Contents/LICENSE").
     fs::copy(root.join("LICENSE"), res.join("LICENSE"))?;
@@ -739,13 +789,18 @@ fn app(root: &Path, arch: Arch, lite: bool) -> io::Result<PathBuf> {
     if !lite {
         // Intel downloads in their own folder: the docker tarball has the
         // same name for both architectures.
-        let cache = root.join(if arch == Arch::X86_64 { "target/cli-cache/x86_64" } else { "target/cli-cache" });
+        // Downloads go to a cache every checkout shares (each file is checked
+        // against its pinned SHA-256), so a new worktree doesn't fetch the
+        // same 150 MB again. The docker binary is unpacked in this one.
+        let cache = shared_cli_cache(root).join(if arch == Arch::X86_64 { "x86_64" } else { "arm64" });
         let mac = arch.cli();
         let [(docker_v, docker_sum), (compose_v, compose_sum), (buildx_v, buildx_sum)] = mac.tools();
         let tgz = fetch(&cache, &format!("docker-{docker_v}.tgz"), &mac.docker_url(docker_v))?;
         verify(&tgz, docker_sum)?;
-        run(Command::new("tar").args(["-xzf"]).arg(&tgz).arg("-C").arg(&cache).arg("docker/docker"))?;
-        fs::copy(cache.join("docker/docker"), res.join("bin/docker"))?;
+        let unpacked = root.join(if arch == Arch::X86_64 { "target/cli-unpacked/x86_64" } else { "target/cli-unpacked/arm64" });
+        fs::create_dir_all(&unpacked)?;
+        run(Command::new("tar").args(["-xzf"]).arg(&tgz).arg("-C").arg(&unpacked).arg("docker/docker"))?;
+        fs::copy(unpacked.join("docker/docker"), res.join("bin/docker"))?;
         let compose = fetch(&cache, &format!("docker-compose-darwin-{}-{compose_v}", mac.compose_arch()), &mac.compose_url(compose_v))?;
         verify(&compose, compose_sum)?;
         fs::copy(&compose, res.join("bin/cli-plugins/docker-compose"))?;
@@ -799,7 +854,7 @@ fn app(root: &Path, arch: Arch, lite: bool) -> io::Result<PathBuf> {
 "#
         ),
     )?;
-    sign_app(root, &app, arch, lite)?;
+    sign_app(root, &app, arch, lite, profile)?;
     let size = Command::new("du").args(["-sh"]).arg(&app).output()?;
     println!("{} ({})", app.display(), String::from_utf8_lossy(&size.stdout).split_whitespace().next().unwrap_or("?"));
     Ok(app)
@@ -828,18 +883,26 @@ fn app_dev(root: &Path, built: &Path, feature: Option<&str>) -> io::Result<()> {
         .replace("<string>dev.kiri.app</string>", &format!("<string>{id}</string>"));
     fs::write(contents.join("Info.plist"), plist)?;
 
-    let png = root.join("target/kiri-dev-icon.png");
-    run(Command::new("swift").arg(root.join("xtask/dev-icon.swift")).arg(root.join("brand/icon/png/kiri-app-icon-1024.png")).arg(&png).arg(&band))?;
-    let iconset = root.join("target/KiriDev.iconset");
-    let _ = fs::remove_dir_all(&iconset);
-    fs::create_dir_all(&iconset)?;
-    for (size, scale) in [(16, 1), (16, 2), (32, 1), (32, 2), (128, 1), (128, 2), (256, 1), (256, 2), (512, 1), (512, 2)] {
-        let name = if scale == 1 { format!("icon_{size}x{size}.png") } else { format!("icon_{size}x{size}@2x.png") };
-        let px = (size * scale).to_string();
-        run(Command::new("sips").args(["-z", &px, &px]).arg(&png).arg("--out").arg(iconset.join(name)).stdout(std::process::Stdio::null()))?;
+    // The banded icon is drawn once per band and kept: the Swift script and
+    // ten resizes take seconds, and the icon only changes with its inputs.
+    let icns = root.join(format!("target/dev-icon-{band}.icns"));
+    let (script, source) = (root.join("xtask/dev-icon.swift"), root.join("brand/icon/png/kiri-app-icon-1024.png"));
+    let modified = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+    if modified(&icns).is_none_or(|i| [&script, &source].iter().any(|p| modified(p).is_none_or(|m| m > i))) {
+        let png = root.join("target/dev-icon.png");
+        run(Command::new("swift").arg(&script).arg(&source).arg(&png).arg(&band))?;
+        let iconset = root.join("target/KiriDev.iconset");
+        let _ = fs::remove_dir_all(&iconset);
+        fs::create_dir_all(&iconset)?;
+        for (size, scale) in [(16, 1), (16, 2), (32, 1), (32, 2), (128, 1), (128, 2), (256, 1), (256, 2), (512, 1), (512, 2)] {
+            let name = if scale == 1 { format!("icon_{size}x{size}.png") } else { format!("icon_{size}x{size}@2x.png") };
+            let px = (size * scale).to_string();
+            run(Command::new("sips").args(["-z", &px, &px]).arg(&png).arg("--out").arg(iconset.join(name)).stdout(std::process::Stdio::null()))?;
+        }
+        run(Command::new("iconutil").args(["-c", "icns", "-o"]).arg(&icns).arg(&iconset))?;
+        fs::remove_dir_all(&iconset)?;
     }
-    run(Command::new("iconutil").args(["-c", "icns", "-o"]).arg(contents.join("Resources/Kiri.icns")).arg(&iconset))?;
-    fs::remove_dir_all(&iconset)?;
+    fs::copy(&icns, contents.join("Resources/Kiri.icns"))?;
 
     let identity = signing_identity();
     let entitlements = root.join("crates/kiri/kiri.entitlements");
@@ -891,11 +954,14 @@ fn sign(identity: &str, entitlements: Option<&Path>) -> Command {
 /// Signs an app `app` built (here, or on a Mac without the Developer ID
 /// identity, such as the Intel CI Mac), and notarizes it if
 /// KIRI_NOTARY_PROFILE names a profile.
-fn sign_app(root: &Path, app: &Path, arch: Arch, lite: bool) -> io::Result<()> {
+fn sign_app(root: &Path, app: &Path, arch: Arch, lite: bool, profile: Profile) -> io::Result<()> {
     let (macos, res) = (app.join("Contents/MacOS"), app.join("Contents/Resources"));
     // Inside out: the helper binaries first, then the app with the
-    // entitlement Virtualization.framework requires.
-    let identity = signing_identity();
+    // entitlement Virtualization.framework requires. A feature build is
+    // never notarized, so it is signed ad hoc: no hardened runtime and no
+    // timestamp, which asks Apple's server once per file. app_dev signs the
+    // finished app with the identity afterwards.
+    let identity = if profile == Profile::Fast { "-".to_owned() } else { signing_identity() };
     if !lite {
         for f in ["bin/docker", "bin/cli-plugins/docker-compose", "bin/cli-plugins/docker-buildx"] {
             run(sign(&identity, None).arg(res.join(f)))?;
@@ -904,6 +970,9 @@ fn sign_app(root: &Path, app: &Path, arch: Arch, lite: bool) -> io::Result<()> {
     run(sign(&identity, Some(&root.join("crates/kiri/kiri.entitlements"))).arg(macos.join("kiri")))?;
     run(sign(&identity, Some(&root.join("crates/kiri/kiri.entitlements"))).arg(app))?;
     run(Command::new("codesign").args(["--verify", "--deep", "--strict"]).arg(app))?;
+    if profile == Profile::Fast {
+        return Ok(());
+    }
     println!("signed: {}", if identity == "-" { "ad hoc (no Developer ID identity found)" } else { identity.as_str() });
     if let Some(profile) = std::env::var("KIRI_NOTARY_PROFILE").ok().filter(|p| !p.is_empty()) {
         notarize(root, app, &profile, arch, lite)?;

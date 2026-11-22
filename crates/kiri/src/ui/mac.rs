@@ -10,23 +10,16 @@ use std::thread::JoinHandle;
 use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::sel;
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2::sel;
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType,
-    NSMenu, NSMenuDelegate, NSMenuItem, NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType, NSMenu, NSMenuDelegate, NSMenuItem,
+    NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
 };
-use objc2_foundation::{
-    NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
-};
-use objc2_web_kit::{
-    WKScriptMessage, WKScriptMessageHandler, WKUserContentController, WKWebView,
-    WKWebViewConfiguration,
-};
+use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString};
+use objc2_web_kit::{WKScriptMessage, WKScriptMessageHandler, WKUserContentController, WKWebView, WKWebViewConfiguration};
 
-use super::{
-    Cmd, PAGE, diag, emit, engine, json_str, menu_state, prefs, reopen_after_exit, update_check,
-};
+use super::{Cmd, PAGE, diag, emit, engine, json_str, menu_state, prefs, reopen_after_exit, update_check};
 
 thread_local! {
     /// The page, reachable from closures the engine thread schedules on the
@@ -41,8 +34,7 @@ thread_local! {
 /// `autostart` boots the VM as soon as the page has loaded; `view` picks the
 /// sidebar section to open on.
 pub fn run(autostart: bool, view: Option<String>) -> io::Result<()> {
-    let mtm = MainThreadMarker::new()
-        .ok_or_else(|| io::Error::other("kiri ui must run on the main thread"))?;
+    let mtm = MainThreadMarker::new().ok_or_else(|| io::Error::other("kiri ui must run on the main thread"))?;
     // An update Later staged that the last quit didn't install: in now, and
     // the new app opens in this one's place.
     if crate::update::staged().is_some() {
@@ -56,9 +48,7 @@ pub fn run(autostart: bool, view: Option<String>) -> io::Result<()> {
     }
     let (tx, rx) = mpsc::channel();
     let engine_tx = tx.clone();
-    let engine = std::thread::Builder::new()
-        .name("kiri-engine".into())
-        .spawn(move || engine(rx, engine_tx))?;
+    let engine = std::thread::Builder::new().name("kiri-engine".into()).spawn(move || engine(rx, engine_tx))?;
 
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
@@ -72,14 +62,8 @@ pub fn run(autostart: bool, view: Option<String>) -> io::Result<()> {
     let window = make_window(mtm, tx, autostart, view)?;
     // SAFETY: the delegate lives as long as the app; it's removed from no centre.
     unsafe {
-        let centre: Retained<AnyObject> =
-            msg_send![objc2::class!(NSNotificationCenter), defaultCenter];
-        for name in [
-            "NSWindowDidResizeNotification",
-            "NSWindowDidExitFullScreenNotification",
-            "NSWindowDidBecomeKeyNotification",
-            "NSWindowDidResignKeyNotification",
-        ] {
+        let centre: Retained<AnyObject> = msg_send![objc2::class!(NSNotificationCenter), defaultCenter];
+        for name in ["NSWindowDidResizeNotification", "NSWindowDidExitFullScreenNotification", "NSWindowDidBecomeKeyNotification", "NSWindowDidResignKeyNotification"] {
             let _: () = msg_send![&*centre, addObserver: &*delegate, selector: sel!(windowLaidOut:), name: &*NSString::from_str(name), object: &*window];
         }
     }
@@ -91,37 +75,16 @@ pub fn run(autostart: bool, view: Option<String>) -> io::Result<()> {
     Ok(())
 }
 
-fn make_window(
-    mtm: MainThreadMarker,
-    tx: Sender<Cmd>,
-    autostart: bool,
-    view: Option<String>,
-) -> io::Result<Retained<NSWindow>> {
+fn make_window(mtm: MainThreadMarker, tx: Sender<Cmd>, autostart: bool, view: Option<String>) -> io::Result<Retained<NSWindow>> {
     // 1280x800, wide enough for the lists' columns and buttons, and never
     // more than nine tenths of the screen, as on Windows.
     // SAFETY: NSScreen class methods on the main thread; a nil screen gives a zero frame.
     let screen: NSRect = unsafe {
         let main: *mut AnyObject = msg_send![objc2::class!(NSScreen), mainScreen];
-        if main.is_null() {
-            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0))
-        } else {
-            msg_send![main, visibleFrame]
-        }
+        if main.is_null() { NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0)) } else { msg_send![main, visibleFrame] }
     };
-    let fit = |want: f64, room: f64| {
-        if room > 0.0 {
-            want.min(room * 0.9)
-        } else {
-            want
-        }
-    };
-    let frame = NSRect::new(
-        NSPoint::new(0.0, 0.0),
-        NSSize::new(
-            fit(1280.0, screen.size.width),
-            fit(800.0, screen.size.height),
-        ),
-    );
+    let fit = |want: f64, room: f64| if room > 0.0 { want.min(room * 0.9) } else { want };
+    let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(fit(1280.0, screen.size.width), fit(800.0, screen.size.height)));
     let style = NSWindowStyleMask::Titled
         | NSWindowStyleMask::Closable
         | NSWindowStyleMask::Miniaturizable
@@ -150,22 +113,21 @@ fn make_window(
     let webview = unsafe {
         let config = WKWebViewConfiguration::new(mtm);
         let handler = MessageHandler::new(mtm, tx, autostart, view);
-        config.userContentController().addScriptMessageHandler_name(
-            ProtocolObject::from_ref(&*handler),
-            &NSString::from_str("kiri"),
-        );
+        config
+            .userContentController()
+            .addScriptMessageHandler_name(ProtocolObject::from_ref(&*handler), &NSString::from_str("kiri"));
         let webview = WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &config);
         if cfg!(debug_assertions) {
             webview.setInspectable(true);
         }
         // Let the page paint its own background instead of white.
         let no: Retained<AnyObject> = msg_send![objc2::class!(NSNumber), numberWithBool: false];
-        let _: () =
-            msg_send![&webview, setValue: &*no, forKey: &*NSString::from_str("drawsBackground")];
-        webview.loadHTMLString_baseURL(&NSString::from_str(&super::assemble::page(PAGE)), None);
+        let _: () = msg_send![&webview, setValue: &*no, forKey: &*NSString::from_str("drawsBackground")];
+        webview.loadHTMLString_baseURL(&NSString::from_str(&super::assemble::page(PAGE, prefs()["lang"].as_str())), None);
         webview
     };
     window.setContentView(Some(&webview));
+    read_direction();
     place_lights(&window);
     WEBVIEW.with(|w| *w.borrow_mut() = Some(webview));
     WINDOW.with(|w| *w.borrow_mut() = Some(window.clone()));
@@ -175,16 +137,27 @@ fn make_window(
 /// The page's strip across the top (index.html's `.strip`), in points.
 const STRIP: f64 = 44.0;
 
+/// Whether the window's language reads right to left. Kept here, read from
+/// the settings when the window opens and when the language changes
+/// ([`read_direction`]): the traffic lights are placed on every resize, and
+/// that mustn't read a file each time.
+static RTL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn read_direction() {
+    RTL.store(super::lang::rtl(super::lang::resolve(prefs()["lang"].as_str())), std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The traffic lights, moved into the page's strip: 20 points in, centred
 /// in its height. AppKit lays them out again when the window resizes or
-/// leaves full screen, so the delegate calls this then too.
+/// leaves full screen, so the delegate calls this then too. In a
+/// right-to-left language the page's strip starts on the right, and so do
+/// they: close outermost, as macOS itself draws them in Arabic.
 fn place_lights(window: &NSWindow) {
+    let rtl = RTL.load(std::sync::atomic::Ordering::Relaxed);
     // SAFETY: AppKit's own window buttons and their superviews, read and
     // moved on the main thread; every object is retained while it's used.
     unsafe {
-        let buttons: Vec<Retained<AnyObject>> = (0usize..3)
-            .filter_map(|kind| msg_send![window, standardWindowButton: kind])
-            .collect();
+        let buttons: Vec<Retained<AnyObject>> = (0usize..3).filter_map(|kind| msg_send![window, standardWindowButton: kind]).collect();
         let Some(close) = buttons.first() else { return };
         let bar: Option<Retained<AnyObject>> = msg_send![close, superview];
         let Some(bar) = bar else { return };
@@ -197,7 +170,8 @@ fn place_lights(window: &NSWindow) {
         let _: () = msg_send![&*bar, setFrame: NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(frame.size.width, STRIP))];
         for (i, b) in buttons.iter().enumerate() {
             let f: NSRect = msg_send![&**b, frame];
-            let _: () = msg_send![&**b, setFrameOrigin: NSPoint::new(20.0 + 20.0 * i as f64, ((STRIP - f.size.height) / 2.0).round())];
+            let x = if rtl { frame.size.width - 20.0 - f.size.width - 20.0 * i as f64 } else { 20.0 + 20.0 * i as f64 };
+            let _: () = msg_send![&**b, setFrameOrigin: NSPoint::new(x, ((STRIP - f.size.height) / 2.0).round())];
         }
     }
 }
@@ -213,17 +187,16 @@ fn set_dock_icon(app: &NSApplication) {
     }
     // SAFETY: NSData copies the bytes; NSImage reads them; both are released by Retained.
     unsafe {
-        let data: Retained<AnyObject> = msg_send![objc2::class!(NSData), dataWithBytes: ICON_PNG.as_ptr().cast::<std::ffi::c_void>(), length: ICON_PNG.len()];
-        let image: Option<Retained<AnyObject>> =
-            msg_send![msg_send![objc2::class!(NSImage), alloc], initWithData: &*data];
+        let data: Retained<AnyObject> =
+            msg_send![objc2::class!(NSData), dataWithBytes: ICON_PNG.as_ptr().cast::<std::ffi::c_void>(), length: ICON_PNG.len()];
+        let image: Option<Retained<AnyObject>> = msg_send![msg_send![objc2::class!(NSImage), alloc], initWithData: &*data];
         if let Some(image) = image {
             let _: () = msg_send![app, setApplicationIconImage: &*image];
         }
     }
 }
 
-const MENUBAR_PNG: &[u8] =
-    include_bytes!("../../../../brand/icon/png/kiri-menubar-template@2x.png");
+const MENUBAR_PNG: &[u8] = include_bytes!("../../../../brand/icon/png/kiri-menubar-template@2x.png");
 
 /// Kiri in the menu bar: a template image (macOS tints it for light and dark
 /// menu bars) and a menu the delegate fills each time it opens.
@@ -233,16 +206,15 @@ fn status_item(mtm: MainThreadMarker, delegate: &AppDelegate) {
     unsafe {
         let bar: Retained<AnyObject> = msg_send![objc2::class!(NSStatusBar), systemStatusBar];
         let item: Retained<AnyObject> = msg_send![&*bar, statusItemWithLength: -1.0f64];
-        let data: Retained<AnyObject> = msg_send![objc2::class!(NSData), dataWithBytes: MENUBAR_PNG.as_ptr().cast::<std::ffi::c_void>(), length: MENUBAR_PNG.len()];
-        let image: Option<Retained<AnyObject>> =
-            msg_send![msg_send![objc2::class!(NSImage), alloc], initWithData: &*data];
+        let data: Retained<AnyObject> =
+            msg_send![objc2::class!(NSData), dataWithBytes: MENUBAR_PNG.as_ptr().cast::<std::ffi::c_void>(), length: MENUBAR_PNG.len()];
+        let image: Option<Retained<AnyObject>> = msg_send![msg_send![objc2::class!(NSImage), alloc], initWithData: &*data];
         let button: Option<Retained<AnyObject>> = msg_send![&*item, button];
         if let (Some(image), Some(button)) = (image, button) {
             let _: () = msg_send![&*image, setSize: NSSize::new(22.0, 18.0)];
             let _: () = msg_send![&*image, setTemplate: true];
             let _: () = msg_send![&*button, setImage: &*image];
-            let _: () =
-                msg_send![&*button, setToolTip: &*NSString::from_str(crate::flavor::APP.get())];
+            let _: () = msg_send![&*button, setToolTip: &*NSString::from_str(crate::flavor::APP.get())];
         }
         let menu = NSMenu::new(mtm);
         menu.setDelegate(Some(ProtocolObject::from_ref(delegate)));
@@ -264,20 +236,34 @@ pub(super) fn set_appearance(theme: &str) {
     unsafe {
         let app: Retained<AnyObject> = msg_send![objc2::class!(NSApplication), sharedApplication];
         let appearance: Option<Retained<AnyObject>> = match name {
-            Some(n) => {
-                msg_send![objc2::class!(NSAppearance), appearanceNamed: &*NSString::from_str(n)]
-            }
+            Some(n) => msg_send![objc2::class!(NSAppearance), appearanceNamed: &*NSString::from_str(n)],
             None => None,
         };
         let _: () = msg_send![&*app, setAppearance: appearance.as_deref()];
     }
+    // AppKit lays the title bar out again for the new appearance, which puts
+    // the traffic lights back where it keeps them (#187). Lay it out now and
+    // move them into the strip again, as after a resize.
+    WINDOW.with(|w| {
+        if let Some(w) = w.borrow().as_ref() {
+            // SAFETY: main thread; the content view's superview is the
+            // window's frame view, which holds the title bar.
+            unsafe {
+                let content: Option<Retained<AnyObject>> = msg_send![&**w, contentView];
+                let frame: Option<Retained<AnyObject>> = content.and_then(|c| msg_send![&*c, superview]);
+                if let Some(frame) = frame {
+                    let _: () = msg_send![&*frame, layoutSubtreeIfNeeded];
+                }
+            }
+            place_lights(w);
+        }
+    });
 }
 
 /// Shows the window (after it was closed or hidden) and brings Kiri forward,
 /// putting the Dock icon back that closing the window took away.
 fn show_window(mtm: MainThreadMarker) {
-    NSApplication::sharedApplication(mtm)
-        .setActivationPolicy(NSApplicationActivationPolicy::Regular);
+    NSApplication::sharedApplication(mtm).setActivationPolicy(NSApplicationActivationPolicy::Regular);
     WINDOW.with(|w| {
         if let Some(window) = w.borrow().as_ref() {
             window.makeKeyAndOrderFront(None);
@@ -288,8 +274,12 @@ fn show_window(mtm: MainThreadMarker) {
 }
 
 /// The app menu, so the standard shortcuts work: ⌘Q quits (the daemon keeps
-/// running), ⌘W closes, ⌘H hides, ⌘, opens Settings.
+/// running), ⌘W closes, ⌘H hides, ⌘, opens Settings, and Edit's keys reach
+/// the window's text fields.
 fn main_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
+    let l = super::lang::resolve(prefs()["lang"].as_str());
+    let tr = |en: &str| super::lang::tr(l, en);
+    let app = |en: &str| tr(en).replace("{app}", crate::flavor::APP.get());
     let item = |title: &str, action, key: &str| {
         // SAFETY: standard menu item construction on the main thread.
         unsafe {
@@ -302,43 +292,35 @@ fn main_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
         }
     };
     let app_menu = NSMenu::new(mtm);
-    app_menu.addItem(&item("Check for Updates…", sel!(checkForUpdates:), ""));
+    app_menu.addItem(&item(&tr("Check for Updates…"), sel!(checkForUpdates:), ""));
     app_menu.addItem(&NSMenuItem::separatorItem(mtm));
-    app_menu.addItem(&item("Settings…", sel!(openSettings:), ","));
+    app_menu.addItem(&item(&tr("Settings…"), sel!(openSettings:), ","));
     app_menu.addItem(&NSMenuItem::separatorItem(mtm));
-    app_menu.addItem(&item(
-        &format!("Hide {}", crate::flavor::APP),
-        sel!(hide:),
-        "h",
-    ));
+    app_menu.addItem(&item(&app("Hide {app}"), sel!(hide:), "h"));
     // ⌘W asks the page first: in the built-in terminal it closes a pane.
-    app_menu.addItem(&item("Close Window", sel!(closeKey:), "w"));
+    app_menu.addItem(&item(&tr("Close Window"), sel!(closeKey:), "w"));
     app_menu.addItem(&NSMenuItem::separatorItem(mtm));
-    app_menu.addItem(&item(
-        &format!("Quit {}", crate::flavor::APP),
-        sel!(terminate:),
-        "q",
-    ));
+    app_menu.addItem(&item(&app("Quit {app}"), sel!(terminate:), "q"));
     let app_item = NSMenuItem::new(mtm);
     app_item.setSubmenu(Some(&app_menu));
-    // Edit: the standard Cut/Copy/Paste/Select All so ⌘X/C/V/A reach the
-    // WebView's focused field (inputs, textareas). Without this menu AppKit
-    // never dispatches those key equivalents into WKWebView.
+    // Edit: text fields get ⌘Z ⇧⌘Z ⌘X ⌘C ⌘V ⌘A only from a menu item's key.
     let edit_menu = NSMenu::new(mtm);
-    edit_menu.setTitle(&NSString::from_str("Edit"));
-    edit_menu.addItem(&item("Cut", sel!(cut:), "x"));
-    edit_menu.addItem(&item("Copy", sel!(copy:), "c"));
-    edit_menu.addItem(&item("Paste", sel!(paste:), "v"));
+    edit_menu.setTitle(&NSString::from_str(&tr("Edit")));
+    edit_menu.addItem(&item(&tr("Undo"), sel!(undo:), "z"));
+    edit_menu.addItem(&item(&tr("Redo"), sel!(redo:), "Z"));
     edit_menu.addItem(&NSMenuItem::separatorItem(mtm));
-    edit_menu.addItem(&item("Select All", sel!(selectAll:), "a"));
+    edit_menu.addItem(&item(&tr("Cut"), sel!(cut:), "x"));
+    edit_menu.addItem(&item(&tr("Copy"), sel!(copy:), "c"));
+    edit_menu.addItem(&item(&tr("Paste"), sel!(paste:), "v"));
+    edit_menu.addItem(&item(&tr("Select All"), sel!(selectAll:), "a"));
     let edit_item = NSMenuItem::new(mtm);
     edit_item.setSubmenu(Some(&edit_menu));
     // View: ⌘+ / ⌘− / ⌘0 step the text size Settings → Appearance sets.
     let view_menu = NSMenu::new(mtm);
-    view_menu.setTitle(&NSString::from_str("View"));
-    view_menu.addItem(&item("Actual Size", sel!(textActualSize:), "0"));
-    view_menu.addItem(&item("Zoom In", sel!(textBigger:), "+"));
-    view_menu.addItem(&item("Zoom Out", sel!(textSmaller:), "-"));
+    view_menu.setTitle(&NSString::from_str(&tr("View")));
+    view_menu.addItem(&item(&tr("Actual Size"), sel!(textActualSize:), "0"));
+    view_menu.addItem(&item(&tr("Zoom In"), sel!(textBigger:), "+"));
+    view_menu.addItem(&item(&tr("Zoom Out"), sel!(textSmaller:), "-"));
     let view_item = NSMenuItem::new(mtm);
     view_item.setSubmenu(Some(&view_menu));
     let bar = NSMenu::new(mtm);
@@ -346,6 +328,24 @@ fn main_menu(mtm: MainThreadMarker) -> Retained<NSMenu> {
     bar.addItem(&edit_item);
     bar.addItem(&view_item);
     bar
+}
+
+/// The language setting changed: the menu bar's words follow, and the traffic
+/// lights go to the side the page now starts on. The page does its own, and
+/// the menu bar icon's menu is drawn fresh each time it opens.
+pub(super) fn relang() {
+    DispatchQueue::main().exec_async(|| {
+        if let Some(mtm) = MainThreadMarker::new() {
+            NSApplication::sharedApplication(mtm).setMainMenu(Some(&main_menu(mtm)));
+        }
+        // The traffic lights change sides with the reading direction.
+        read_direction();
+        WINDOW.with(|w| {
+            if let Some(w) = w.borrow().as_ref() {
+                place_lights(w);
+            }
+        });
+    });
 }
 
 /// Runs JavaScript in the page. Callable from any thread.
@@ -377,17 +377,10 @@ pub(super) fn quit() {
 /// waits for a release that already happened, holding the window until the
 /// next click.
 pub(super) fn drag() {
-    let Some(mtm) = MainThreadMarker::new() else {
-        return;
-    };
+    let Some(mtm) = MainThreadMarker::new() else { return };
     WINDOW.with(|w| {
-        if let (Some(window), Some(event)) = (
-            w.borrow().as_ref(),
-            NSApplication::sharedApplication(mtm).currentEvent(),
-        ) {
-            if event.r#type() == objc2_app_kit::NSEventType::LeftMouseDown
-                && objc2_app_kit::NSEvent::pressedMouseButtons() & 1 != 0
-            {
+        if let (Some(window), Some(event)) = (w.borrow().as_ref(), NSApplication::sharedApplication(mtm).currentEvent()) {
+            if event.r#type() == objc2_app_kit::NSEventType::LeftMouseDown && objc2_app_kit::NSEvent::pressedMouseButtons() & 1 != 0 {
                 window.performWindowDragWithEvent(&event);
             }
         }
@@ -414,10 +407,7 @@ pub(super) fn zoom() {
 /// The page can't write the clipboard itself.
 pub(super) fn copy(text: &str) {
     use std::io::Write;
-    if let Ok(mut c) = std::process::Command::new("/usr/bin/pbcopy")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-    {
+    if let Ok(mut c) = std::process::Command::new("/usr/bin/pbcopy").stdin(std::process::Stdio::piped()).spawn() {
         let _ = c.stdin.take().map(|mut i| i.write_all(text.as_bytes()));
         let _ = c.wait();
     }
@@ -432,42 +422,127 @@ pub(super) fn paste(done: impl FnOnce(String) + Send + 'static) {
     });
 }
 
+/// Open a compose file…: AppKit's own open panel, on the main thread, for
+/// .yaml and .yml files (an open panel can't offer file names, only kinds).
+/// `done` gets the path, or None when cancelled.
+pub(super) fn pick_compose_file(title: &str, _filters: &[String; 2], done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = title.to_owned();
+    DispatchQueue::main().exec_async(move || {
+        done(open_panel(&title, false, Some(&["yaml", "yml"]), false));
+    });
+}
+
+/// Add / link / upload a project folder…: directories only.
+pub(super) fn pick_project_dir(title: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = title.to_owned();
+    DispatchQueue::main().exec_async(move || {
+        done(open_panel(&title, true, None, false));
+    });
+}
+
+/// Upload materials: one or more files.
+pub(super) fn pick_project_files(title: &str, done: impl FnOnce(Vec<std::path::PathBuf>) + Send + 'static) {
+    let title = title.to_owned();
+    DispatchQueue::main().exec_async(move || {
+        done(open_panel_many(&title));
+    });
+}
+
+/// Import a `.kirikit` / zip kit.
+pub(super) fn pick_kit_file(title: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let title = title.to_owned();
+    DispatchQueue::main().exec_async(move || {
+        done(open_panel(&title, false, Some(&["kirikit", "zip"]), false));
+    });
+}
+
+/// Export kit: save panel with a suggested name.
+pub(super) fn pick_kit_save(title: &str, suggested: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let (title, suggested) = (title.to_owned(), suggested.to_owned());
+    DispatchQueue::main().exec_async(move || {
+        // SAFETY: main queue; NSSavePanel messages as AppKit declares.
+        let picked = (|| unsafe {
+            let panel: Retained<AnyObject> = msg_send![objc2::class!(NSSavePanel), savePanel];
+            let words = NSString::from_str(&title);
+            let _: () = msg_send![&*panel, setTitle: &*words];
+            let _: () = msg_send![&*panel, setNameFieldStringValue: &*NSString::from_str(&suggested)];
+            let kinds = objc2_foundation::NSArray::from_retained_slice(&[NSString::from_str("kirikit")]);
+            let _: () = msg_send![&*panel, setAllowedFileTypes: &*kinds];
+            let answer: isize = msg_send![&*panel, runModal];
+            if answer != 1 {
+                return None;
+            }
+            let url: Option<Retained<AnyObject>> = msg_send![&*panel, URL];
+            let path: Option<Retained<NSString>> = msg_send![&*url?, path];
+            Some(std::path::PathBuf::from(path?.to_string()))
+        })();
+        done(picked);
+    });
+}
+
+fn open_panel(title: &str, directories: bool, kinds: Option<&[&str]>, many: bool) -> Option<std::path::PathBuf> {
+    open_panel_many_inner(title, directories, kinds, many).into_iter().next()
+}
+
+fn open_panel_many(title: &str) -> Vec<std::path::PathBuf> {
+    open_panel_many_inner(title, false, None, true)
+}
+
+fn open_panel_many_inner(title: &str, directories: bool, kinds: Option<&[&str]>, many: bool) -> Vec<std::path::PathBuf> {
+    // SAFETY: main thread; NSOpenPanel documented messages.
+    unsafe {
+        let panel: Retained<AnyObject> = msg_send![objc2::class!(NSOpenPanel), openPanel];
+        let _: () = msg_send![&*panel, setCanChooseFiles: !directories];
+        let _: () = msg_send![&*panel, setCanChooseDirectories: directories];
+        let _: () = msg_send![&*panel, setAllowsMultipleSelection: many];
+        let words = NSString::from_str(title);
+        let _: () = msg_send![&*panel, setTitle: &*words];
+        let _: () = msg_send![&*panel, setMessage: &*words];
+        if let Some(kinds) = kinds {
+            let arr = kinds.iter().map(|k| NSString::from_str(k)).collect::<Vec<_>>();
+            let kinds = objc2_foundation::NSArray::from_retained_slice(&arr);
+            let _: () = msg_send![&*panel, setAllowedFileTypes: &*kinds];
+        }
+        let answer: isize = msg_send![&*panel, runModal];
+        if answer != 1 {
+            return Vec::new();
+        }
+        let urls: Option<Retained<objc2_foundation::NSArray>> = msg_send![&*panel, URLs];
+        let Some(urls) = urls else { return Vec::new() };
+        let mut out = Vec::new();
+        let n: usize = msg_send![&*urls, count];
+        for i in 0..n {
+            let url: Option<Retained<AnyObject>> = msg_send![&*urls, objectAtIndex: i];
+            let Some(url) = url else { continue };
+            let path: Option<Retained<NSString>> = msg_send![&*url, path];
+            if let Some(path) = path {
+                out.push(std::path::PathBuf::from(path.to_string()));
+            }
+        }
+        out
+    }
+}
+
 /// The installed font families, sorted; `mono` keeps the fixed-pitch ones.
 pub(super) fn font_families(mono: bool) -> Vec<String> {
     use objc2_core_foundation::{CFArray, CFDictionary, CFNumber, CFString, CFType};
-    use objc2_core_text::{
-        CTFontCollection, CTFontDescriptor, CTFontSymbolicTraits, kCTFontFamilyNameAttribute,
-        kCTFontSymbolicTrait, kCTFontTraitsAttribute,
-    };
+    use objc2_core_text::{CTFontCollection, CTFontDescriptor, CTFontSymbolicTraits, kCTFontFamilyNameAttribute, kCTFontSymbolicTrait, kCTFontTraitsAttribute};
     // Descriptors, not fonts: opening each fixed-pitch font to ask its family
     // took seconds on first use.
     // SAFETY: CoreText font queries are thread-safe, and every value passed
     // is the type its key takes.
     let descriptors = unsafe {
         let all = if mono {
-            let traits = CFDictionary::<CFString, CFType>::from_slices(
-                &[kCTFontSymbolicTrait],
-                &[&CFNumber::new_i32(
-                    CTFontSymbolicTraits::TraitMonoSpace.0 as i32,
-                )],
-            );
-            let attrs = CFDictionary::<CFString, CFType>::from_slices(
-                &[kCTFontTraitsAttribute],
-                &[&traits],
-            );
+            let traits = CFDictionary::<CFString, CFType>::from_slices(&[kCTFontSymbolicTrait], &[&CFNumber::new_i32(CTFontSymbolicTraits::TraitMonoSpace.0 as i32)]);
+            let attrs = CFDictionary::<CFString, CFType>::from_slices(&[kCTFontTraitsAttribute], &[&traits]);
             let query = CTFontDescriptor::with_attributes(attrs.as_opaque());
-            CTFontCollection::with_font_descriptors(
-                Some(CFArray::from_objects(&[&*query]).as_opaque()),
-                None,
-            )
+            CTFontCollection::with_font_descriptors(Some(CFArray::from_objects(&[&*query]).as_opaque()), None)
         } else {
             CTFontCollection::from_available_fonts(None)
         };
         all.matching_font_descriptors()
     };
-    let Some(descriptors) = descriptors else {
-        return Vec::new();
-    };
+    let Some(descriptors) = descriptors else { return Vec::new() };
     // SAFETY: the collection's matches are font descriptors.
     let descriptors = unsafe { descriptors.cast_unchecked::<CTFontDescriptor>() };
     let mut names: Vec<String> = descriptors
@@ -504,32 +579,16 @@ define_class!(
         fn did_receive(&self, _controller: &WKUserContentController, message: &WKScriptMessage) {
             // SAFETY: reading the body of a message WebKit just delivered.
             let body = unsafe { message.body() };
-            let Ok(text) = body.downcast::<NSString>() else {
-                return;
-            };
+            let Ok(text) = body.downcast::<NSString>() else { return };
             let ivars = self.ivars();
-            super::handle(
-                &text.to_string(),
-                &ivars.tx,
-                ivars.autostart,
-                ivars.view.as_deref(),
-            );
+            super::handle(&text.to_string(), &ivars.tx, ivars.autostart, ivars.view.as_deref());
         }
     }
 );
 
 impl MessageHandler {
-    fn new(
-        mtm: MainThreadMarker,
-        tx: Sender<Cmd>,
-        autostart: bool,
-        view: Option<String>,
-    ) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(HandlerIvars {
-            tx,
-            autostart,
-            view,
-        });
+    fn new(mtm: MainThreadMarker, tx: Sender<Cmd>, autostart: bool, view: Option<String>) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(HandlerIvars { tx, autostart, view });
         // SAFETY: NSObject's init on a freshly allocated object.
         unsafe { msg_send![super(this), init] }
     }
@@ -576,12 +635,17 @@ define_class!(
             if let Some(engine) = self.ivars().engine.borrow_mut().take() {
                 let _ = engine.join();
             }
-            // Later: a downloaded update goes in as the window quits. The
-            // engine moves to it the next time it starts.
-            if crate::update::staged().is_some()
-                && let Err(e) = crate::update::install_staged()
-            {
-                diag::error!("the update did not install", error = e);
+            // Later: a downloaded update goes in as the window quits, and
+            // the engine moves to it now, not at the next login.
+            if crate::update::staged().is_some() {
+                match crate::update::install_staged() {
+                    Ok(version) => {
+                        if let Err(e) = crate::update::restart_engine(&version) {
+                            diag::error!("the engine did not restart on the update", version = version, error = e);
+                        }
+                    }
+                    Err(e) => diag::error!("the update did not install", error = e),
+                }
             }
         }
     }
@@ -650,7 +714,8 @@ define_class!(
 
         #[unsafe(method(toggleVm:))]
         fn toggle_vm(&self, _sender: Option<&AnyObject>) {
-            let running = menu_state().vm == "Running";
+            // Asleep is on (the next docker command wakes it): its switch is Stop, as in the window.
+            let running = matches!(menu_state().vm, "Running" | "Asleep");
             let _ = self.ivars().tx.send(if running { Cmd::Stop } else { Cmd::Start });
         }
 
@@ -686,12 +751,7 @@ impl AppDelegate {
             // SAFETY: standard menu item construction on the main thread; the
             // target is this delegate, which lives for the app's life.
             unsafe {
-                let item = NSMenuItem::initWithTitle_action_keyEquivalent(
-                    NSMenuItem::alloc(mtm),
-                    &NSString::from_str(title),
-                    action,
-                    &NSString::from_str(key),
-                );
+                let item = NSMenuItem::initWithTitle_action_keyEquivalent(NSMenuItem::alloc(mtm), &NSString::from_str(title), action, &NSString::from_str(key));
                 if action.is_some() {
                     item.setTarget(Some(self));
                 } else {
@@ -701,12 +761,14 @@ impl AppDelegate {
                 menu.addItem(&item);
             }
         };
-        add(&format!("Linux VM: {}", state.vm), None, "", 0);
+        let l = super::lang::resolve(prefs()["lang"].as_str());
+        let tr = |en: &str| super::lang::tr(l, en);
+        add(&tr("Linux VM: {state}").replace("{state}", &tr(state.vm)), None, "", 0);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         let mut shown = self.ivars().shown.borrow_mut();
         shown.clear();
         if state.running.is_empty() {
-            add("No containers running", None, "", 0);
+            add(&tr("No containers running"), None, "", 0);
         }
         for (i, (id, name, url)) in state.running.iter().take(12).enumerate() {
             let title = match url {
@@ -717,47 +779,22 @@ impl AppDelegate {
             shown.push((id.clone(), url.clone()));
         }
         if state.running.len() > 12 {
-            add(
-                &format!("and {} more…", state.running.len() - 12),
-                Some(sel!(openWindow:)),
-                "",
-                0,
-            );
+            add(&tr("and {n} more…").replace("{n}", &(state.running.len() - 12).to_string()), Some(sel!(openWindow:)), "", 0);
         }
         menu.addItem(&NSMenuItem::separatorItem(mtm));
-        add("Open Kiri", Some(sel!(openWindow:)), "o", 0);
-        add("Settings…", Some(sel!(openSettings:)), ",", 0);
-        add(
-            if state.vm == "Running" {
-                "Stop Linux VM"
-            } else {
-                "Start Linux VM"
-            },
-            Some(sel!(toggleVm:)),
-            "",
-            0,
-        );
+        add(&tr("Open Kiri"), Some(sel!(openWindow:)), "o", 0);
+        add(&tr("Settings…"), Some(sel!(openSettings:)), ",", 0);
+        add(&if matches!(state.vm, "Running" | "Asleep") { tr("Stop Linux VM") } else { tr("Start Linux VM") }, Some(sel!(toggleVm:)), "", 0);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         // SAFETY: standard menu item construction; terminate: goes to the app.
-        let quit = unsafe {
-            NSMenuItem::initWithTitle_action_keyEquivalent(
-                NSMenuItem::alloc(mtm),
-                &NSString::from_str("Quit Kiri"),
-                Some(sel!(terminate:)),
-                &NSString::from_str("q"),
-            )
-        };
+        let quit = unsafe { NSMenuItem::initWithTitle_action_keyEquivalent(NSMenuItem::alloc(mtm), &NSString::from_str(&tr("Quit Kiri")), Some(sel!(terminate:)), &NSString::from_str("q")) };
         menu.addItem(&quit);
     }
 }
 
 impl AppDelegate {
     fn new(mtm: MainThreadMarker, tx: Sender<Cmd>, engine: JoinHandle<()>) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(AppIvars {
-            tx,
-            engine: RefCell::new(Some(engine)),
-            shown: RefCell::new(Vec::new()),
-        });
+        let this = Self::alloc(mtm).set_ivars(AppIvars { tx, engine: RefCell::new(Some(engine)), shown: RefCell::new(Vec::new()) });
         // SAFETY: NSObject's init on a freshly allocated object.
         unsafe { msg_send![super(this), init] }
     }

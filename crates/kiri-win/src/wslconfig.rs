@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use crate::engine::{emit, notice};
+use crate::engine::{emit, notice, tr, trf};
 
 fn path() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE").map(|h| PathBuf::from(h).join(".wslconfig"))
@@ -170,8 +170,8 @@ pub fn resources(body: Option<Value>) {
         let ev = event();
         match saved {
             // While Kiri's engine runs, the toast offers to restart WSL now.
-            Some(Ok(())) => emit(json!({"type": "notice", "kind": "ok", "text": "Saved in .wslconfig. WSL uses these from its next start", "act": if ev["awake"] == true { "restartvm" } else { "" }}).to_string()),
-            Some(Err(e)) => emit(notice("error", &format!("Could not save .wslconfig: {e}"))),
+            Some(Ok(())) => emit(json!({"type": "notice", "kind": "ok", "text": tr("Saved in .wslconfig. WSL uses these from its next start"), "act": if ev["awake"] == true { "restartvm" } else { "" }}).to_string()),
+            Some(Err(e)) => emit(notice("error", &trf("Could not save .wslconfig: {error}", &[("error", &e)]))),
             None => {}
         }
         emit(ev.to_string());
@@ -185,8 +185,8 @@ pub fn restart() {
         std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
         let r = cmd.arg("--shutdown").status().and_then(|s| if s.success() { Ok(()) } else { Err(io::Error::other("wsl --shutdown failed")) }).and_then(|()| crate::engine::ensure_daemon());
         emit(match r {
-            Ok(()) => notice("ok", "WSL restarted with the new resources"),
-            Err(e) => notice("error", &format!("Could not restart WSL: {e}")),
+            Ok(()) => notice("ok", &tr("WSL restarted with the new resources")),
+            Err(e) => notice("error", &trf("Could not restart WSL: {error}", &[("error", &e)])),
         });
         emit(event().to_string());
     });

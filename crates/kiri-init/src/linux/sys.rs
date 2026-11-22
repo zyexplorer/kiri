@@ -130,14 +130,104 @@ pub unsafe fn clone3(args: &CloneArgs) -> io::Result<libc::pid_t> {
     check(ret, "clone3").map(|p| p as libc::pid_t)
 }
 
+/// The engine's own message as one line of the container's log: a value
+/// over several lines (a key a `user:` named) never goes on, unhidden, over
+/// the lines after it.
+/// Each line break is one space; every other character stays as it is, so
+/// what Kiri hides in Logs finds the value as it is.
+pub fn one_line(s: &str) -> String {
+    s.replace("\r\n", " ").replace(['\n', '\r'], " ")
+}
+
+/// Closes every descriptor from `first` up. For the child between clone and
+/// exec, which holds a copy of all of the agent's descriptors: close-on-exec
+/// closes them only at execve, and until then one is still a way out of the
+/// container (a working directory of `/proc/self/fd/N`).
+pub fn close_from(first: RawFd) {
+    // SAFETY: closing descriptors in this process; nothing is used after.
+    unsafe {
+        if libc::syscall(libc::SYS_close_range, first as libc::c_uint, libc::c_uint::MAX, 0) == 0 {
+            return;
+        }
+        // close_range is Linux 5.9+; older kernels close one at a time.
+        let max = match libc::sysconf(libc::_SC_OPEN_MAX) {
+            n if n > 0 => n.min(1 << 20) as RawFd,
+            _ => 1 << 16,
+        };
+        for fd in first..max {
+            libc::close(fd);
+        }
+    }
+}
+
+/// Whether the current directory is inside this process's root. The kernel
+/// gives a directory outside it as `(unreachable)/…`, which is how a
+/// working directory reached through a leaked descriptor shows.
+pub fn cwd_inside_root() -> bool {
+    let mut buf = [0u8; 4096];
+    // SAFETY: getcwd writes at most `buf.len()` bytes into `buf`.
+    let n = unsafe { libc::syscall(libc::SYS_getcwd, buf.as_mut_ptr(), buf.len()) };
+    n > 0 && buf[0] == b'/'
+}
+
 /// Writes `msg` straight to `fd` and exits without unwinding or running any
 /// destructors. Only for the child between clone and exec.
 pub fn child_fail(fd: RawFd, what: &str, err: io::Error) -> ! {
-    let msg = format!("kiri: cannot start container: {what}: {err}\n");
+    let msg = format!("kiri: cannot start container: {}\n", one_line(&format!("{what}: {err}")));
     // SAFETY: writing a valid buffer to a descriptor we hold, then exiting.
     unsafe {
         libc::write(fd, msg.as_ptr().cast(), msg.len());
         libc::_exit(127)
+    }
+}
+
+/// Reports an execve that failed and exits as Docker ends that container:
+/// 126 when the command may not be run, 127 when it is missing, 255 when
+/// runc's exec itself fails (a script without a shebang, a missing
+/// interpreter). Only for the child between clone and exec. `init`: the
+/// program runs under `--init`, which Docker leaves to tini.
+pub fn exec_fail(fd: RawFd, exe: &CStr, err: io::Error, init: bool) -> ! {
+    let exe = exe.to_string_lossy();
+    let path = Path::new(&*exe);
+    let found = Found { exists: path.exists(), dir: path.is_dir() };
+    let (code, why) = exec_failure(&exe, &err, found, init);
+    // runc reports what it refuses before the start as the daemon's error,
+    // and a failed exec after it on the container's stderr, as is.
+    let msg = if code == 255 { format!("{why}\n") } else { format!("kiri: cannot start container: {}\n", one_line(&why)) };
+    // SAFETY: writing a valid buffer to a descriptor we hold, then exiting.
+    unsafe {
+        libc::write(fd, msg.as_ptr().cast(), msg.len());
+        libc::_exit(code)
+    }
+}
+
+/// What is at the path execve refused.
+#[derive(Clone, Copy, Default)]
+pub struct Found {
+    pub exists: bool,
+    pub dir: bool,
+}
+
+/// The exit code and message for a command execve would not run, worded
+/// as runc words them. Refused before the start: `exec: "/etc/passwd":
+/// permission denied` ends 126 (`exec: "/etc": is a directory: permission
+/// denied` for a directory, which Linux refuses with EACCES), a missing
+/// one 127 (`stat /x: no such file or directory`). Failing in runc's exec
+/// after the start, 255: `exec /x: exec format error` for a file that is
+/// no program (a script without a shebang), `exec /x: no such file or
+/// directory` when the file is there but its interpreter isn't.
+/// Under `--init` (tini), a missing interpreter is 127 and the rest 126.
+pub fn exec_failure(exe: &str, err: &io::Error, found: Found, init: bool) -> (i32, String) {
+    match err.raw_os_error() {
+        Some(libc::EACCES | libc::EISDIR) if found.dir => (126, format!("exec: \"{exe}\": is a directory: permission denied")),
+        Some(libc::EACCES) => (126, format!("exec: \"{exe}\": permission denied")),
+        Some(libc::ENOEXEC) if init => (126, format!("exec: \"{exe}\": exec format error")),
+        Some(libc::ENOEXEC) => (255, format!("exec {exe}: exec format error")),
+        Some(libc::ENOENT) if found.exists && init => (127, format!("exec {exe}: no such file or directory")),
+        Some(libc::ENOENT) if found.exists => (255, format!("exec {exe}: no such file or directory")),
+        Some(libc::ENOENT) => (127, format!("exec: \"{exe}\": stat {exe}: no such file or directory")),
+        Some(libc::ENOTDIR) => (127, format!("exec: \"{exe}\": stat {exe}: not a directory")),
+        _ => (127, format!("exec: \"{exe}\": {err}")),
     }
 }
 
@@ -235,8 +325,143 @@ pub fn open_pty() -> io::Result<(OwnedFd, OwnedFd)> {
     }
 }
 
+/// The descriptor ranges to close so that only 0, 1, 2 and `keep` stay
+/// open: (first, last), inclusive, in order.
+pub fn close_ranges(keep: &[RawFd]) -> Vec<(libc::c_uint, libc::c_uint)> {
+    let mut keep: Vec<libc::c_uint> = keep.iter().filter(|&&fd| fd > 2).map(|&fd| fd as libc::c_uint).collect();
+    keep.sort_unstable();
+    keep.dedup();
+    let mut out = Vec::with_capacity(keep.len() + 1);
+    let mut next = 3;
+    for fd in keep {
+        if fd > next {
+            out.push((next, fd - 1));
+        }
+        next = fd + 1;
+    }
+    out.push((next, libc::c_uint::MAX));
+    out
+}
+
+/// Closes the ranges `close_ranges` gave, without allocating. Before Linux
+/// 5.9 there is no close_range, and the descriptors stay open, as they
+/// always did before.
+pub fn close_now(ranges: &[(libc::c_uint, libc::c_uint)]) {
+    for &(first, last) in ranges {
+        // SAFETY: closing descriptors of this process, which the caller
+        // no longer uses.
+        unsafe { libc::syscall(libc::SYS_close_range, first, last, 0) };
+    }
+}
+
 pub fn resize_pty(fd: RawFd, rows: u16, cols: u16) {
     let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
     // SAFETY: TIOCSWINSZ with a valid winsize on a descriptor we own.
     unsafe { libc::ioctl(fd, libc::TIOCSWINSZ as libc::Ioctl, &ws) };
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    /// A value over several lines never starts a line of its own in the log.
+    #[test]
+    fn the_engines_message_is_one_line() {
+        assert_eq!(super::one_line("user: unknown user -----BEGIN KEY-----\nAAA\r\n-----END KEY-----"), "user: unknown user -----BEGIN KEY----- AAA -----END KEY-----");
+        // A backslash or a quote stays as the value has it.
+        assert_eq!(super::one_line("user: unknown user Bs-x\\yy\"4dd4"), "user: unknown user Bs-x\\yy\"4dd4");
+        assert_eq!(super::one_line("DOM\\bob\\n"), "DOM\\bob\\n");
+        assert_eq!(super::one_line("x\ny\rz"), "x y z");
+    }
+
+    #[test]
+    fn only_the_kept_descriptors_stay_open() {
+        let all = libc::c_uint::MAX;
+        assert_eq!(super::close_ranges(&[]), vec![(3, all)]);
+        // Standard streams are never closed; order and repeats don't matter.
+        assert_eq!(super::close_ranges(&[9, 2, 4, 9, 5, 0]), vec![(3, 3), (6, 8), (10, all)]);
+        assert_eq!(super::close_ranges(&[3]), vec![(4, all)]);
+        // The real thing, in a child of its own: the kept ones stay open,
+        // the rest are closed. Forked from a test with threads, so the
+        // child only makes system calls (the ranges are worked out first).
+        let (unrelated, unrelated_w) = super::pipe().unwrap();
+        let (kept, kept_w) = super::pipe().unwrap();
+        let (report, report_w) = super::pipe().unwrap();
+        use std::os::fd::AsRawFd;
+        let keep = [kept.as_raw_fd(), report_w.as_raw_fd()];
+        let ranges = super::close_ranges(&keep);
+        let check = [unrelated.as_raw_fd(), unrelated_w.as_raw_fd(), kept_w.as_raw_fd(), report.as_raw_fd()];
+        // SAFETY: the child makes only async-signal-safe system calls and
+        // leaves with _exit.
+        unsafe {
+            let pid = libc::fork();
+            assert!(pid >= 0);
+            if pid == 0 {
+                super::close_now(&ranges);
+                let open = |fd| libc::fcntl(fd, libc::F_GETFD) >= 0;
+                let mut ok = keep.iter().all(|&fd| open(fd)) && (0..3).all(open);
+                ok &= check.iter().all(|&fd| !open(fd));
+                libc::write(report_w.as_raw_fd(), if ok { b"y".as_ptr() } else { b"n".as_ptr() }.cast(), 1);
+                libc::_exit(0);
+            }
+            drop(report_w);
+            let mut said = [0u8; 1];
+            assert_eq!(libc::read(report.as_raw_fd(), said.as_mut_ptr().cast(), 1), 1, "the child said nothing");
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+            assert_eq!(&said, b"y", "a kept descriptor was closed, or another left open");
+        }
+    }
+
+    /// A command that may not be run ends 126 and one that is missing 127,
+    /// as with Docker (`docker run alpine /etc/passwd` is 126).
+    #[test]
+    fn exec_failures_end_as_docker_ends_them() {
+        use super::Found;
+        let os = io::Error::from_raw_os_error;
+        let f = super::exec_failure;
+        let file = Found { exists: true, dir: false };
+        let dir = Found { exists: true, dir: true };
+        let none = Found::default();
+        assert_eq!(f("/etc/passwd", &os(libc::EACCES), file, false), (126, "exec: \"/etc/passwd\": permission denied".into()));
+        // Linux refuses a directory with EACCES; runc names it.
+        assert_eq!(f("/etc", &os(libc::EACCES), dir, false), (126, "exec: \"/etc\": is a directory: permission denied".into()));
+        assert_eq!(f("/etc", &os(libc::EISDIR), dir, true).0, 126);
+        assert_eq!(f("/nope", &os(libc::ENOENT), none, false), (127, "exec: \"/nope\": stat /nope: no such file or directory".into()));
+        // runc's exec fails after the start: 255, its own words.
+        assert_eq!(f("/x", &os(libc::ENOEXEC), file, false), (255, "exec /x: exec format error".into()));
+        assert_eq!(f("/run.sh", &os(libc::ENOENT), file, false), (255, "exec /run.sh: no such file or directory".into()));
+        // tini (--init): a missing interpreter is 127.
+        assert_eq!(f("/run.sh", &os(libc::ENOENT), file, true).0, 127);
+    }
+
+    /// The real thing: execve of a directory fails with EACCES, which runc
+    /// words as a directory.
+    #[test]
+    fn exec_of_a_directory_says_so() {
+        let c = std::ffi::CString::new("/").unwrap();
+        let argv = [c.as_ptr(), std::ptr::null()];
+        let envp = [std::ptr::null()];
+        // SAFETY: valid NULL-terminated arrays; execve fails and returns.
+        unsafe { libc::execve(c.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+        let err = io::Error::last_os_error();
+        assert_eq!(super::exec_failure("/", &err, super::Found { exists: true, dir: true }, false), (126, "exec: \"/\": is a directory: permission denied".into()), "{err}");
+    }
+
+    /// The real thing: execve of a file that is not executable fails with
+    /// EACCES, which is 126.
+    #[test]
+    fn exec_of_a_plain_file_is_126() {
+        let dir = std::env::temp_dir().join(format!("kiri-exec-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("plain");
+        std::fs::write(&file, b"not a program").unwrap();
+        let c = std::ffi::CString::new(file.to_str().unwrap()).unwrap();
+        let argv = [c.as_ptr(), std::ptr::null()];
+        let envp = [std::ptr::null()];
+        // SAFETY: valid NULL-terminated arrays; execve fails and returns.
+        unsafe { libc::execve(c.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+        let err = io::Error::last_os_error();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(super::exec_failure(file.to_str().unwrap(), &err, super::Found { exists: true, dir: false }, false).0, 126, "{err}");
+    }
 }

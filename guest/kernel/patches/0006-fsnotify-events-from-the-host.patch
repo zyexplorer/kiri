@@ -1,0 +1,211 @@
+# Header: Kiri shares the Mac's files with its VM over virtiofs, and Apple's
+# virtiofs server tells the guest nothing when a file changes on the Mac, so
+# inotify watchers in containers (Vite, webpack, nodemon, cargo watch) never
+# saw a save made on the Mac. /proc/kiri-fsnotify lets Kiri's guest agent,
+# which hears of those changes from the Mac, raise the fsnotify events Linux
+# raises for a local change ("M\t/mnt/mac/…" → IN_MODIFY, C/A/D likewise).
+# Paths are looked up beneath /mnt/mac only (no symlinks, no other mounts),
+# nothing is written and no dentry dropped, and only the VM's agent may
+# write (root, in the VM's first mount namespace: not a container).
+--- a/fs/notify/Makefile
++++ b/fs/notify/Makefile
+@@ -5,3 +5,5 @@
+ obj-y			+= dnotify/
+ obj-y			+= inotify/
+ obj-y			+= fanotify/
++
++obj-$(CONFIG_FSNOTIFY)		+= kiri_inject.o
+--- /dev/null
++++ b/fs/notify/kiri_inject.c
+@@ -0,0 +1,191 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * /proc/kiri-fsnotify: changes made outside the VM, raised as fsnotify
++ * events inside it.
++ *
++ * Kiri shares the Mac's files with its VM over virtiofs, mounted at
++ * /mnt/mac. Apple's virtiofs server tells the guest nothing when a file
++ * changes on the Mac, so inotify watchers in the VM (file watchers in
++ * containers) never see those changes. Kiri's guest agent hears of them
++ * from the Mac and writes one line per change here, "OP\t/mnt/mac/PATH\n":
++ *
++ *   C  PATH was created          (IN_CREATE on its directory)
++ *   M  PATH was modified         (IN_MODIFY, then IN_CLOSE_WRITE, as a
++ *                                write and close in the VM raise)
++ *   A  PATH's attributes changed (IN_ATTRIB)
++ *   D  PATH was deleted          (IN_DELETE on its directory, IN_DELETE_SELF)
++ *
++ * Only events are raised: nothing is written, and no dentry is dropped
++ * (the share caches nothing, so lookups already ask the Mac). PATH is
++ * looked up beneath /mnt/mac only, crossing no symlink and no mount, and
++ * /mnt/mac must be the FUSE (virtiofs) share: a name can't lead anywhere
++ * else in the VM. Only the VM's own agent may write: root, in the VM's
++ * first mount namespace, so a container can't, even as root.
++ */
++#include <linux/dcache.h>
++#include <linux/err.h>
++#include <linux/fs.h>
++#include <linux/fsnotify.h>
++#include <linux/init.h>
++#include <linux/magic.h>
++#include <linux/mount.h>
++#include <linux/namei.h>
++#include <linux/nsproxy.h>
++#include <linux/proc_fs.h>
++#include <linux/sched/task.h>
++#include <linux/slab.h>
++#include <linux/string.h>
++#include <linux/uaccess.h>
++
++#define KIRI_SHARE "/mnt/mac"
++#define KIRI_SCOPED (LOOKUP_BENEATH | LOOKUP_NO_SYMLINKS | LOOKUP_NO_XDEV | LOOKUP_NO_MAGICLINKS)
++
++/* The file was deleted outside: tell its directory, and the file's own
++ * watchers if the VM still has its inode. */
++static int kiri_deleted(struct path *parent, struct qstr *name)
++{
++	struct inode *dir = d_inode(parent->dentry);
++	struct dentry *child = try_lookup_noperm(name, parent->dentry);
++
++	if (IS_ERR(child))
++		return PTR_ERR(child);
++	if (child && d_really_is_positive(child)) {
++		struct inode *inode = d_inode(child);
++		__u32 mask = FS_DELETE;
++
++		if (S_ISDIR(inode->i_mode))
++			mask |= FS_ISDIR;
++		ihold(inode);
++		fsnotify_name(mask, inode, FSNOTIFY_EVENT_INODE, dir, name, 0);
++		fsnotify_inode(inode, FS_DELETE_SELF);
++		iput(inode);
++	} else {
++		fsnotify_name(FS_DELETE, dir, FSNOTIFY_EVENT_INODE, dir, name, 0);
++	}
++	dput(child);
++	return 0;
++}
++
++/* One change. `rel` is PATH below the share: no leading or trailing '/'. */
++static int kiri_event(struct path *share, char op, char *rel)
++{
++	char *slash = strrchr(rel, '/');
++	struct path parent, target;
++	struct qstr name;
++	char *last;
++	int err;
++
++	if (slash) {
++		*slash = '\0';
++		err = vfs_path_lookup(share->dentry, share->mnt, rel, KIRI_SCOPED | LOOKUP_DIRECTORY, &parent);
++		*slash = '/';
++		if (err)
++			return err;
++		last = slash + 1;
++	} else {
++		parent = *share;
++		path_get(&parent);
++		last = rel;
++	}
++	name = (struct qstr)QSTR_INIT(last, strlen(last));
++
++	if (op == 'D') {
++		err = kiri_deleted(&parent, &name);
++		goto out;
++	}
++	err = vfs_path_lookup(share->dentry, share->mnt, rel, KIRI_SCOPED, &target);
++	if (err)
++		goto out;
++	switch (op) {
++	case 'C':
++		fsnotify_name(d_is_dir(target.dentry) ? FS_CREATE | FS_ISDIR : FS_CREATE,
++			      target.dentry, FSNOTIFY_EVENT_DENTRY, d_inode(parent.dentry), &name, 0);
++		break;
++	case 'M':
++		fsnotify_dentry(target.dentry, FS_MODIFY);
++		if (d_is_reg(target.dentry))
++			fsnotify_dentry(target.dentry, FS_CLOSE_WRITE);
++		break;
++	case 'A':
++		fsnotify_dentry(target.dentry, FS_ATTRIB);
++		break;
++	default:
++		err = -EINVAL;
++	}
++	path_put(&target);
++out:
++	path_put(&parent);
++	return err;
++}
++
++/* PATH below the share, or NULL if the line names anything else. */
++static char *kiri_relative(char *path)
++{
++	size_t n = strlen(KIRI_SHARE);
++	char *rel;
++
++	if (strncmp(path, KIRI_SHARE "/", n + 1))
++		return NULL;
++	rel = path + n + 1;
++	if (!rel[0] || rel[0] == '/' || rel[strlen(rel) - 1] == '/')
++		return NULL;
++	return rel;
++}
++
++static ssize_t kiri_write(struct file *file, const char __user *ubuf,
++			  size_t count, loff_t *ppos)
++{
++	struct path share;
++	char *buf, *line, *next, *rel;
++	int err = 0;
++
++	if (current->nsproxy->mnt_ns != init_task.nsproxy->mnt_ns)
++		return -EPERM;
++	if (count == 0 || count > PATH_MAX + 4)
++		return -EINVAL;
++	if (kern_path(KIRI_SHARE, 0, &share))
++		return -ENOENT;
++	if (share.dentry != share.mnt->mnt_root || share.dentry->d_sb->s_magic != FUSE_SUPER_MAGIC) {
++		path_put(&share);
++		return -EXDEV;
++	}
++	/* Without a watcher there is no one to tell, and a batch costs no
++	 * lookups (a container writing many files to a bind mount sends its
++	 * own changes back). */
++	if (!fsnotify_sb_has_watchers(share.dentry->d_sb)) {
++		path_put(&share);
++		return count;
++	}
++	buf = memdup_user_nul(ubuf, count);
++	if (IS_ERR(buf)) {
++		path_put(&share);
++		return PTR_ERR(buf);
++	}
++	for (line = buf; line && *line; line = next) {
++		next = strchr(line, '\n');
++		if (next)
++			*next++ = '\0';
++		if (!line[0])
++			continue;
++		if (line[1] != '\t' || !(rel = kiri_relative(line + 2))) {
++			err = -EINVAL;
++			continue;
++		}
++		err = kiri_event(&share, line[0], rel);
++	}
++	kfree(buf);
++	path_put(&share);
++	return err ? err : count;
++}
++
++static const struct proc_ops kiri_fsnotify_ops = {
++	.proc_write = kiri_write,
++	.proc_lseek = noop_llseek,
++};
++
++static int __init kiri_fsnotify_init(void)
++{
++	proc_create("kiri-fsnotify", 0200, NULL, &kiri_fsnotify_ops);
++	return 0;
++}
++fs_initcall(kiri_fsnotify_init);

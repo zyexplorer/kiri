@@ -140,4 +140,46 @@ t("a click outside closes it; the row's Pull button pulls that image", () => {
   eq(sent.filter((m) => m.type === "pull").map((m) => m.name), ["postgres:17"], "pulled");
   eq(document.querySelector('[data-pull="postgres:17"]').disabled, true, "busy");
 });
+t("on GitHub, owner/image is a row on ghcr.io, and Enter lists its tags from the registry", () => {
+  openPull();
+  $("ppreg").click();
+  $("ppregmenu").querySelector('[data-reg="ghcr"]').click();
+  eq([pp.reg, $("ppreg").textContent.trim(), /owner\/image/.test($("ppq").placeholder)], ["ghcr", "ghcr.io", true], "chosen");
+  eq(/home-assistant\/home-assistant/.test(pop.querySelector(".pp-hint").textContent), true, "hint names an example");
+  type("acme");
+  eq([pop.querySelectorAll(".pp-it").length, !!pop.querySelector(".pp-hint")], [0, true], "half a name: the hint");
+  sent.length = 0;
+  type("acme/web");
+  const row = pop.querySelector(".pp-it.reg");
+  eq([row.querySelector("small").textContent, sent.some((m) => m.type === "hubsearch")], ["ghcr.io/acme/web", false], "row, and Docker Hub not searched");
+  key("Enter");
+  eq([pp.mode, pp.repo], ["tags", "ghcr.io/acme/web"], "tags");
+  eq(sent.filter((m) => m.type === "hubtags").map((m) => m.name), ["ghcr.io/acme/web"], "asked the registry");
+  kiri.on({ type: "hub", kind: "tags", key: "ghcr.io/acme/web", items: ["latest", "2.1", "2.0"] });
+  key("ArrowDown");
+  eq(pop.querySelector("[data-ppgo]").textContent.trim(), "Pull 2.1", "button");
+  sent.length = 0;
+  key("Enter");
+  eq(sent.filter((m) => m.type === "pull").map((m) => m.name), ["ghcr.io/acme/web:2.1"], "pulled");
+});
+t("a private GitHub image whose tags can't be listed says to sign in, and latest can still be pulled", () => {
+  openPull("acme/secret");
+  key("Enter");
+  kiri.on({ type: "hub", kind: "tags", key: "ghcr.io/acme/secret", error: "403" });
+  eq([pop.querySelector(".sec .r").textContent, pop.querySelector(".pp-note code").textContent, pop.querySelector("[data-ppgo]").textContent.trim()], ["Couldn't list the tags", "docker login ghcr.io", "Pull latest"], "private");
+  closePull();
+});
+t("on Amazon ECR, owner/image is its public gallery, and the hint says how to sign in to your own", () => {
+  openPull();
+  $("ppreg").click();
+  $("ppregmenu").querySelector('[data-reg="ecr"]').click();
+  eq([$("ppreg").textContent.trim() === "public.ecr.aws", /aws ecr get-login-password/.test(pop.querySelector(".pp-hint").textContent)], [true, true], "chosen");
+  type("nginx/nginx:1.27");
+  eq(pop.querySelector(".pp-it.reg small").textContent, "public.ecr.aws/nginx/nginx:1.27", "row");
+  type("123456789012.dkr.ecr.eu-west-1.amazonaws.com/app:3");
+  const first = pop.querySelector(".pp-it");
+  eq([first.classList.contains("exact"), $("ppreg").textContent.trim()], [true, "123456789012.dkr.ecr.eu-west-1.amazonaws.com"], "your own registry, pulled as typed, under ECR's logo");
+  closePull();
+  pp.reg = "docker";
+});
 report(R);

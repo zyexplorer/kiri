@@ -5,12 +5,35 @@
 
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, OwnedFd};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use kiri_proto::{HEADER, Hello, LayerBegin, Msg, Stream};
 use kiri_vmm::{Config, Event, Vm};
+
+/// The virtiofs tag the guest mounts the Mac's folders under: `/mnt/mac`.
+pub const MAC_TAG: &str = "kiri-mac";
+
+/// The Mac's folders the guest is given: the ones a bind mount may name.
+///
+/// `/tmp` and `/var/folders` are not listed because they are links into
+/// `/private`, which the daemon resolves a bind source to before the guest
+/// sees it; `/` is not listed because sharing it would put the whole disk
+/// behind `/mnt/mac`, where any container that reaches the share — a bind of
+/// `/mnt/mac`, or `--cap-add SYS_ADMIN` and `mount -t virtiofs kiri-mac` —
+/// would have it.
+pub fn mac_share_dirs() -> Vec<kiri_vmm::ShareDir> {
+    ["Users", "Volumes", "private"]
+        .iter()
+        .map(|name| kiri_vmm::ShareDir { name: (*name).to_owned(), dir: PathBuf::from("/").join(name) })
+        .collect()
+}
+
+/// The share the guest is given: the Mac's folders under [`MAC_TAG`].
+pub fn mac_share() -> kiri_vmm::Share {
+    kiri_vmm::Share { tag: MAC_TAG.to_owned(), dirs: mac_share_dirs() }
+}
 
 /// How long each boot stage took, measured from the host.
 #[derive(Debug, Clone, Copy)]
@@ -35,6 +58,8 @@ pub struct Latency {
 pub struct BootOptions {
     /// Send the guest console to stdout.
     pub console: bool,
+    /// Keep a bounded, redacted guest console in this file.
+    pub console_log: Option<PathBuf>,
     /// Attach the persistent data disk (layers and containers). Without it
     /// the guest keeps them in memory, which is fine for a quick boot test.
     pub data_disk: bool,
@@ -43,6 +68,24 @@ pub struct BootOptions {
     pub memory_mib: Option<u64>,
     /// The VM's CPUs; 2 if not set.
     pub cpus: Option<usize>,
+}
+
+fn console_output(opts: &BootOptions) -> io::Result<Option<OwnedFd>> {
+    if let Some(path) = &opts.console_log {
+        // The log is for diagnosis: a log that can't be written (a full disk,
+        // a file made read-only) must not stop the VM booting.
+        match crate::diag::console::capture(path) {
+            Ok(fd) => Ok(Some(fd)),
+            Err(e) => {
+                crate::diag::warn!("guest console is not being saved", file = path.display(), error = e);
+                Ok(None)
+            }
+        }
+    } else if opts.console {
+        io::stdout().as_fd().try_clone_to_owned().map(Some)
+    } else {
+        Ok(None)
+    }
 }
 
 /// One container run, as the host asks for it.
@@ -89,9 +132,7 @@ impl Guest {
         // Virtualization.framework cannot boot its x86-64 guest.
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         if translated() {
-            return Err(io::Error::other(
-                "this is Kiri for Intel Macs, and this Mac has Apple silicon: install Kiri for Apple silicon from runkiri.com",
-            ));
+            return Err(io::Error::other("this is Kiri for Intel Macs, and this Mac has Apple silicon: install Kiri for Apple silicon from runkiri.com"));
         }
         if !Vm::is_supported() {
             return Err(io::Error::other(if cfg!(target_os = "linux") {
@@ -107,11 +148,7 @@ impl Guest {
             kernel: PathBuf::new(),
             initrd: agent_binary(),
             cmdline: String::new(),
-            console: if opts.console {
-                Some(io::stdout().as_fd().try_clone_to_owned()?)
-            } else {
-                None
-            },
+            console: console_output(opts)?,
             agent_port: kiri_proto::HOST_PORT,
             disk: None,
             share: None,
@@ -129,11 +166,12 @@ impl Guest {
         let dir = guest_dir();
         // swiotlb=noforce: the VM's virtio devices address all of memory, so
         // the kernel's 64 MB bounce buffer would sit there unused.
-        let mut cmdline = String::from(
-            "console=hvc0 rdinit=/init panic=-1 rcupdate.rcu_expedited=1 swiotlb=noforce",
-        );
-        if !opts.console {
+        let mut cmdline = String::from("console=hvc0 rdinit=/init panic=-1 rcupdate.rcu_expedited=1 swiotlb=noforce");
+        if !opts.console && opts.console_log.is_none() {
             cmdline.push_str(" quiet loglevel=0");
+        } else if !opts.console {
+            // Keep warnings and oopses even in release builds.
+            cmdline.push_str(" quiet loglevel=4");
         }
         let cfg = Config {
             cpus: opts.cpus.unwrap_or(2),
@@ -141,33 +179,16 @@ impl Guest {
             kernel: dir.join(KERNEL),
             initrd: dir.join("initramfs.cpio"),
             cmdline,
-            console: if opts.console {
-                Some(io::stdout().as_fd().try_clone_to_owned()?)
-            } else {
-                None
-            },
+            console: console_output(opts)?,
             agent_port: kiri_proto::HOST_PORT,
-            disk: if opts.data_disk {
-                Some(data_disk(&dir)?)
-            } else {
-                None
-            },
-            nat_mac: if opts.data_disk {
-                Some(mac_address()?)
-            } else {
-                None
-            },
-            // The Mac's filesystem, for bind mounts: /mnt/mac in the guest.
-            share: opts
-                .data_disk
-                .then(|| (PathBuf::from("/"), "kiri-mac".to_owned())),
+            disk: if opts.data_disk { Some(data_disk(&dir)?) } else { None },
+            nat_mac: if opts.data_disk { Some(mac_address()?) } else { None },
+            // The Mac's folders a bind mount may name: /mnt/mac in the guest.
+            share: opts.data_disk.then(mac_share),
             rosetta_tag: opts.data_disk.then(|| "rosetta".to_owned()),
         };
         if !cfg.kernel.is_file() {
-            return Err(missing_kernel(
-                &cfg.kernel,
-                std::env::current_exe().ok().as_deref(),
-            ));
+            return Err(missing_kernel(&cfg.kernel, std::env::current_exe().ok().as_deref()));
         }
         Ok(cfg)
     }
@@ -179,16 +200,9 @@ impl Guest {
         let conn = match vm.next_event(Duration::from_secs(10)) {
             Some(Event::GuestConnected(fd)) => File::from(fd),
             Some(Event::Stopped(why)) => {
-                return Err(io::Error::other(format!(
-                    "guest stopped before connecting: {why:?}"
-                )));
+                return Err(io::Error::other(format!("guest stopped before connecting: {why:?}")));
             }
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "guest did not connect within 10 s",
-                ));
-            }
+            None => return Err(io::Error::new(io::ErrorKind::TimedOut, "guest did not connect within 10 s")),
         };
         let mut guest = Guest {
             vm,
@@ -197,13 +211,7 @@ impl Guest {
             out: Vec::with_capacity(64),
             rtts: Vec::new(),
             seq: 0,
-            hello: Hello {
-                protocol: 0,
-                init_start_ns: 0,
-                ready_ns: 0,
-                mem_total_kib: 0,
-                mem_available_kib: 0,
-            },
+            hello: Hello { protocol: 0, init_start_ns: 0, ready_ns: 0, mem_total_kib: 0, mem_available_kib: 0 },
             timings: BootTimings {
                 vm_started,
                 agent_ready: Duration::ZERO,
@@ -226,9 +234,7 @@ impl Guest {
         }
         guest.timings.agent_ready = t0.elapsed();
         // The guest has no real-time clock source of its own.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         guest.send(Msg::SetTime(now.as_nanos() as u64))?;
         guest.timings.kernel = Duration::from_nanos(guest.hello.init_start_ns);
         guest.timings.init = Duration::from_nanos(guest.hello.ready_ns - guest.hello.init_start_ns);
@@ -246,19 +252,12 @@ impl Guest {
             self.send(Msg::Ping(seq))?;
             match self.read()? {
                 Msg::Pong(v) if v == seq => {}
-                other => {
-                    return Err(io::Error::other(format!(
-                        "expected Pong({seq}), got {other:?}"
-                    )));
-                }
+                other => return Err(io::Error::other(format!("expected Pong({seq}), got {other:?}"))),
             }
             self.rtts.push(s.elapsed());
         }
         self.rtts.sort_unstable();
-        let pct = |p: usize| {
-            self.rtts
-                .get((self.rtts.len() * p / 100).min(self.rtts.len().saturating_sub(1)))
-        };
+        let pct = |p: usize| self.rtts.get((self.rtts.len() * p / 100).min(self.rtts.len().saturating_sub(1)));
         Ok(Latency {
             p50: pct(50).copied().unwrap_or_default(),
             p99: pct(99).copied().unwrap_or_default(),
@@ -275,29 +274,17 @@ impl Guest {
 
     /// Streams a compressed layer blob to the guest, which unpacks it.
     /// Returns the unpacked size.
-    pub fn send_layer(
-        &mut self,
-        digest: &str,
-        media_type: &str,
-        blob: &std::path::Path,
-    ) -> io::Result<u64> {
+    pub fn send_layer(&mut self, digest: &str, media_type: &str, blob: &std::path::Path) -> io::Result<u64> {
         let mut file = File::open(blob)?;
         let size = file.metadata()?.len();
-        self.send(Msg::LayerBegin(LayerBegin {
-            digest,
-            media_type,
-            size,
-        }))?;
+        self.send(Msg::LayerBegin(LayerBegin { digest, media_type, size }))?;
         let mut buf = vec![0u8; 256 * 1024];
         let mut left = size;
         while left > 0 {
             let want = left.min(buf.len() as u64) as usize;
             let n = file.read(&mut buf[..want])?;
             if n == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "layer blob shrank while sending",
-                ));
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "layer blob shrank while sending"));
             }
             self.conn.write_all(&buf[..n])?;
             left -= n as u64;
@@ -310,43 +297,25 @@ impl Guest {
     }
 
     /// Runs one container to completion, passing its output to `on_output`.
-    pub fn run(
-        &mut self,
-        req: &RunRequest<'_>,
-        mut on_output: impl FnMut(Stream, &[u8]),
-    ) -> io::Result<RunResult> {
+    pub fn run(&mut self, req: &RunRequest<'_>, mut on_output: impl FnMut(Stream, &[u8])) -> io::Result<RunResult> {
         self.out.clear();
         let none: &[String] = &[];
-        let net = kiri_proto::Net {
-            bridge: "",
-            ip: [0; 4],
-            prefix: 0,
-            gateway: [0; 4],
-            extra_hosts: none,
-            dns_names: none,
-            opts: none,
-        };
+        let net = kiri_proto::Net { bridge: "", ip: [0; 4], prefix: 0, gateway: [0; 4], extra_hosts: none, dns_names: none, opts: none };
         kiri_proto::encode_run(
-            &mut self.out,
-            req.id,
-            req.layers,
-            req.argv,
-            req.env,
-            req.cwd,
-            req.user,
-            req.hostname,
-            req.flags,
-            net,
-            none,
-            &kiri_proto::Limits::default(),
-            0,
-            none,
+            &mut self.out, req.id, req.layers, req.argv, req.env, req.cwd, req.user, req.hostname, req.flags, net, none, &kiri_proto::Limits::default(), 0, none, &[],
         );
         let t = Instant::now();
         self.conn.write_all(&self.out)?;
         loop {
             match self.read()? {
-                Msg::Started { .. } => {}
+                Msg::Started { starting: false, .. } => {}
+                // Its root is still being made (a new volume filled): ask
+                // again until it is, as the daemon's link does. A start that
+                // fails meanwhile answers with an error, and sends no exit.
+                Msg::Started { starting: true, .. } => {
+                    std::thread::sleep(Duration::from_millis(5));
+                    self.send(Msg::AwaitStart { id: req.id })?;
+                }
                 Msg::Output { stream, data, .. } => on_output(stream, data),
                 Msg::Exited(e) => {
                     return Ok(RunResult {
@@ -374,10 +343,7 @@ impl Guest {
                 Some(Event::GuestConnected(_)) => continue,
                 None => {
                     self.vm.force_stop();
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "guest did not power off; forced",
-                    ));
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, "guest did not power off; forced"));
                 }
             }
         }
@@ -402,8 +368,7 @@ impl Guest {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{e:?}")))?;
         self.frame.resize(len.max(HEADER), 0);
         self.conn.read_exact(&mut self.frame[4..])?;
-        kiri_proto::decode(&self.frame)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{e:?}")))
+        kiri_proto::decode(&self.frame).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{e:?}")))
     }
 }
 
@@ -417,10 +382,7 @@ fn agent_binary() -> PathBuf {
     if let Some(p) = std::env::var_os("KIRI_AGENT") {
         return PathBuf::from(p);
     }
-    std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(|d| d.join("kiri-init")))
-        .unwrap_or_else(|| PathBuf::from("kiri-init"))
+    std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("kiri-init"))).unwrap_or_else(|| PathBuf::from("kiri-init"))
 }
 
 #[cfg(target_os = "macos")]
@@ -433,17 +395,11 @@ fn data_disk(guest_dir: &std::path::Path) -> io::Result<PathBuf> {
     if !disk.exists() {
         // In a checkout the Intel guest (guest/out/x86_64) shares the one
         // template in guest/out.
-        let template = Some(guest_dir.join("data.img"))
-            .filter(|t| t.is_file())
-            .unwrap_or_else(|| guest_dir.join("../data.img"));
+        let template = Some(guest_dir.join("data.img")).filter(|t| t.is_file()).unwrap_or_else(|| guest_dir.join("../data.img"));
         let tmp = vm.join("data.img.tmp");
         if template.is_file() {
-            std::fs::copy(&template, &tmp).map_err(|e| {
-                io::Error::new(
-                    e.kind(),
-                    format!("copy data disk template {}: {e}", template.display()),
-                )
-            })?;
+            std::fs::copy(&template, &tmp)
+                .map_err(|e| io::Error::new(e.kind(), format!("copy data disk template {}: {e}", template.display())))?;
         } else {
             // The app ships the 64 GiB template as a sparse tarball (a few
             // hundred KB); tar recreates its holes, so it stays small on disk.
@@ -451,18 +407,9 @@ fn data_disk(guest_dir: &std::path::Path) -> io::Result<PathBuf> {
             let unpack = vm.join("unpack");
             let _ = std::fs::remove_dir_all(&unpack);
             std::fs::create_dir_all(&unpack)?;
-            let ok = std::process::Command::new("/usr/bin/tar")
-                .args(["-xzf"])
-                .arg(&packed)
-                .arg("-C")
-                .arg(&unpack)
-                .status()?
-                .success();
+            let ok = std::process::Command::new("/usr/bin/tar").args(["-xzf"]).arg(&packed).arg("-C").arg(&unpack).status()?.success();
             if !ok {
-                return Err(io::Error::other(format!(
-                    "could not unpack the data disk template {}",
-                    packed.display()
-                )));
+                return Err(io::Error::other(format!("could not unpack the data disk template {}", packed.display())));
             }
             std::fs::rename(unpack.join("data.img"), &tmp)?;
             let _ = std::fs::remove_dir_all(&unpack);
@@ -486,11 +433,7 @@ fn mac_address() -> io::Result<String> {
     let mut b = [0u8; 6];
     std::fs::File::open("/dev/urandom")?.read_exact(&mut b)?;
     b[0] = (b[0] | 0x02) & !0x01;
-    let mac = b
-        .iter()
-        .map(|x| format!("{x:02x}"))
-        .collect::<Vec<_>>()
-        .join(":");
+    let mac = b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().join(":");
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -513,15 +456,7 @@ fn translated() -> bool {
     let mut len = std::mem::size_of::<libc::c_int>();
     // SAFETY: sysctlbyname writes an int into `on`; on a Mac without
     // Rosetta the name does not exist and `on` stays 0.
-    unsafe {
-        libc::sysctlbyname(
-            c"sysctl.proc_translated".as_ptr(),
-            (&mut on as *mut libc::c_int).cast(),
-            &mut len,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
+    unsafe { libc::sysctlbyname(c"sysctl.proc_translated".as_ptr(), (&mut on as *mut libc::c_int).cast(), &mut len, std::ptr::null_mut(), 0) };
     on == 1
 }
 
@@ -530,14 +465,9 @@ fn translated() -> bool {
 #[cfg(target_os = "macos")]
 fn missing_kernel(kernel: &std::path::Path, exe: Option<&std::path::Path>) -> io::Error {
     let msg = match exe {
-        Some(exe) if !exe.exists() => format!(
-            "{} was deleted or moved while it ran: open Kiri again from where it is now",
-            crate::flavor::APP
-        ),
-        _ => format!(
-            "the guest kernel {} is missing: reinstall Kiri",
-            kernel.display()
-        ),
+        Some(exe) if !exe.exists() => format!("{} was deleted or moved while it ran: open Kiri again from where it is now", crate::flavor::APP),
+        // The whole path, so it shows where Kiri looked.
+        _ => format!("the guest kernel {} is missing: reinstall Kiri", std::path::absolute(kernel).unwrap_or_else(|_| kernel.to_owned()).display()),
     };
     io::Error::new(io::ErrorKind::NotFound, msg)
 }
@@ -550,26 +480,49 @@ pub fn guest_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("KIRI_GUEST_DIR") {
         return PathBuf::from(d);
     }
-    let exe = std::env::current_exe().ok();
-    let bundled = exe
-        .as_ref()
-        .and_then(|e| e.parent().map(|d| d.join("../Resources/guest")))
-        .filter(|d| d.join(KERNEL).is_file());
+    // Through its links: `kiri` on the PATH is one (~/.kiri/bin/kiri), and
+    // the guest is beside the binary it leads to, not beside the link.
+    let exe = std::env::current_exe().ok().map(|e| e.canonicalize().unwrap_or(e));
+    let bundled = exe.as_ref().and_then(|e| e.parent().map(|d| d.join("../Resources/guest"))).filter(|d| d.join(KERNEL).is_file());
     // From a checkout: what `cargo xtask guest`/`kernel` built, the Intel
     // guest under guest/out/x86_64. Found from the binary's place in
     // target/<profile>/, not a path compiled in, so no build machine's
     // folders end up in the binary.
-    let built = if cfg!(target_arch = "x86_64") {
-        "guest/out/x86_64"
-    } else {
-        "guest/out"
-    };
+    let built = if cfg!(target_arch = "x86_64") { "guest/out/x86_64" } else { "guest/out" };
     bundled.unwrap_or_else(|| {
-        let repo = exe.as_ref().and_then(|e| {
-            e.ancestors()
-                .find(|d| d.join("Cargo.lock").is_file() && d.join("guest").is_dir())
-        });
-        repo.map(|r| r.join(built))
-            .unwrap_or_else(|| PathBuf::from(built))
+        let repo = exe.as_ref().and_then(|e| e.ancestors().find(|d| d.join("Cargo.lock").is_file() && d.join("guest").is_dir()));
+        repo.map(|r| r.join(built)).unwrap_or_else(|| PathBuf::from(built))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the guest is given is the Mac's folders, never the disk they sit
+    /// on: a container that reaches the share gets only these.
+    #[test]
+    fn the_share_is_the_macs_folders_not_the_disk() {
+        let dirs = mac_share_dirs();
+        let names: Vec<&str> = dirs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["Users", "Volumes", "private"]);
+        for d in &dirs {
+            assert_eq!(d.dir, PathBuf::from("/").join(&d.name));
+            assert_ne!(d.dir, PathBuf::from("/"), "the disk itself is never shared");
+            assert!(!d.name.contains('/'), "a share name is one path component");
+            assert!(d.name != "." && d.name != "..");
+        }
+        assert_eq!(MAC_TAG, "kiri-mac");
+        let share = mac_share();
+        assert_eq!(share.tag, MAC_TAG);
+        assert_eq!(share.dirs.len(), 3);
+    }
+
+    // A console log that can't be written (a full disk, a read-only file)
+    // leaves the VM booting without one, not failing every request.
+    #[test]
+    fn an_unwritable_console_log_does_not_stop_the_boot() {
+        let opts = super::BootOptions { console_log: Some("/dev/null/guest-console.log".into()), ..Default::default() };
+        assert!(super::console_output(&opts).unwrap().is_none());
+    }
 }

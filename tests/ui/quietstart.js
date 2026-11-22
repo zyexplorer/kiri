@@ -1,9 +1,9 @@
-// The Engine card is the user's switch: a fresh Kiri reads Off with Start,
-// whatever the engine does inside (setup, BuildKit, sleeping); Start makes it
-// Running and it stays Running while the engine sleeps; Stop makes it Off. A
-// container of yours running turns it on. Kiri's builder (its BuildKit image
-// and cache volume) isn't listed in Images or Volumes, and an empty Images
-// list offers no download.
+// The Engine card shows the engine's real state (issue 188): Off with Start
+// until an engine is up, Starting… while it boots, Running once it answers
+// (setting up, BuildKit, asleep and waking included, since docker works then);
+// Stop makes it Off. Kiri's builder (its BuildKit image and cache volume)
+// isn't listed in Images or Volumes, and an empty Images list offers no
+// download.
 kiri.on({ type: "status", version: "0.1.14", dev: false, app: "Kiri", ours: "kiri", context: "kiri" });
 kiri.on({ type: "prefs", prefs: {} });
 const R = [];
@@ -18,23 +18,25 @@ const lists = (containers) => kiri.on({ type: "lists", containers, images: [], v
 const bk = { Id: "bk1", Names: ["/buildx_buildkit_kiri0"], Image: "moby/buildkit:buildx-stable-1", State: "running", Status: "Up 1 second", Labels: {} };
 const web = (State) => ({ Id: "web1", Names: ["/web"], Image: "nginx", State, Status: State === "running" ? "Up 1 second" : "Exited (0)", Labels: {} });
 
-// Fresh install: Kiri sets up inside (boots, pulls BuildKit, sleeps). The
-// fixture's running containers turned the switch on; a fresh Kiri has none.
+// Fresh install: no engine yet, then Kiri sets up inside (boots, pulls
+// BuildKit, sleeps). A fresh Kiri has no containers of its own.
 lists([]);
-delete prefs.engineOn;
+kiri.on({ type: "state", state: "stopped" });
+t("fresh Kiri with no engine yet reads Off with Start", () => eq(card(), OFF, "stopped"));
+t("status bar says off", () => eq(sbar().includes(VM + " off"), true, "status: " + sbar()));
 kiri.on({ type: "state", state: "booting" });
-t("fresh Kiri setting up reads Off with Start", () => eq(card(), OFF, "booting"));
+t("its engine booting reads Starting…", () => eq([label(), vbtn().disabled], ["Starting…", true], "booting"));
 kiri.on({ type: "state", state: "running" });
 lists([bk]);
-t("BuildKit running inside still reads Off", () => eq(card(), OFF, "builder"));
-t("status bar says off", () => eq(sbar().includes(VM + " off"), true, "status: " + sbar()));
+t("the engine up with BuildKit inside reads Running", () => eq(card(), ON, "builder"));
+t("status bar says running", () => eq(sbar().includes(VM + " running"), true, "status: " + sbar()));
 kiri.on({ type: "state", state: "asleep" });
-t("asleep without your Start reads Off", () => eq(card(), OFF, "asleep"));
+t("asleep without your Start reads Running: docker still works", () => eq(card(), ON, "asleep"));
+kiri.on({ type: "state", state: "stopped" });
 
-t("Start sends start, remembers it, and reads Starting… then Running", () => {
+t("Start sends start and reads Starting… then Running", () => {
   vbtn().click();
-  eq([sent.at(-1)?.type, prefs.engineOn], ["start", true], "sent");
-  eq(sent.some((m) => m.type === "setpref" && m.name === "engineOn" && m.value === true), true, "saved");
+  eq(sent.at(-1)?.type, "start", "sent");
   kiri.on({ type: "state", state: "booting" });
   eq([label(), vbtn().textContent, vbtn().disabled], ["Starting…", "Starting…", true], "starting");
   kiri.on({ type: "state", state: "running" });
@@ -57,20 +59,20 @@ t("Settings › Resources shows the same switch", () => {
 });
 t("Stop sends stop and reads Off", () => {
   vbtn().click();
-  eq([sent.at(-1)?.type, prefs.engineOn], ["stop", false], "sent");
+  eq(sent.at(-1)?.type, "stop", "sent");
   kiri.on({ type: "state", state: "stopping" });
   eq(label(), "Stopping…", "stopping");
   kiri.on({ type: "state", state: "stopped" });
   eq(card(), OFF, "stopped");
 });
 
-// A container you start yourself (docker run) turns it on.
-t("a container of yours running reads Running", () => {
+// An engine started without the card (menu bar, tray, docker run) reads so too.
+t("an engine started elsewhere reads Starting… then Running", () => {
   kiri.on({ type: "state", state: "booting" });
-  eq(card(), OFF, "booting by itself");
+  eq(label(), "Starting…", "booting by itself");
   kiri.on({ type: "state", state: "running" });
   lists([web("running")]);
-  eq([card(), prefs.engineOn], [ON, true], "yours");
+  eq(card(), ON, "yours");
   lists([web("exited")]);
   eq(card(), ON, "still on after it exits");
 });
@@ -80,12 +82,11 @@ t("Settings › Resources Start engine starts it", () => {
   const b = document.querySelector("[data-vmpower]");
   eq([b?.textContent, b?.dataset.vmpower], ["Start engine", "start"], "button");
   b.click();
-  eq([sent.at(-1)?.type, prefs.engineOn], ["start", true], "sent");
+  eq(sent.at(-1)?.type, "start", "sent");
   show("containers");
   kiri.on({ type: "state", state: "running" });
 });
-t("a Kiri from before the switch with containers reads Running", () => {
-  delete prefs.engineOn;
+t("a stopped container of yours doesn't change it", () => {
   lists([web("exited")]);
   eq(card(), ON, "upgrade");
 });

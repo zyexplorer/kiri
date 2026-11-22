@@ -70,6 +70,7 @@ pub fn handle(action: &str, id: &str, value: &Value, emit: fn(String)) {
         }
         "open" if termwire::valid_id(id) => {
             let (cols, rows) = termwire::size(value);
+            let cwd = termwire::cwd(value);
             let asked = value["shell"].as_str().unwrap_or("").to_owned();
             let id = id.to_owned();
             // Listing WSL's distros runs wsl.exe: not on the window's thread.
@@ -79,7 +80,7 @@ pub fn handle(action: &str, id: &str, value: &Value, emit: fn(String)) {
                 let Some(shell) = list.iter().find(|s| s.id == asked).or(list.first()) else {
                     return emit(termwire::exit(&id, None, Some("No shell found")));
                 };
-                if let Err(e) = open(&id, &command_line(&shell.id), cols, rows, emit) {
+                if let Err(e) = open(&id, &command_line(&shell.id), cols, rows, cwd, emit) {
                     emit(termwire::exit(&id, None, Some(&e.to_string())));
                 }
             });
@@ -115,6 +116,77 @@ fn end(s: Session) {
         // SAFETY: the process handle is open while s holds it.
         unsafe { TerminateProcess(s.process.as_raw_handle() as HANDLE, 1) };
     });
+}
+
+/// A program on its own pseudo console, for a sign-in that wants a terminal
+/// (weblogin.rs): what it prints, what to type to it, a way to stop it, and
+/// its exit code.
+#[allow(clippy::type_complexity)]
+pub fn captured(program: &std::path::Path, args: &[&str]) -> std::io::Result<(std::sync::mpsc::Receiver<Vec<u8>>, Sender<Vec<u8>>, Box<dyn Fn() + Send + Sync>, std::sync::mpsc::Receiver<Option<i32>>)> {
+    let quote = |s: &str| if s.is_empty() || s.contains([' ', '\t', '"']) { format!("\"{}\"", s.replace('"', "\\\"")) } else { s.to_owned() };
+    let command = std::iter::once(quote(&program.to_string_lossy())).chain(args.iter().map(|a| quote(a))).collect::<Vec<_>>().join(" ");
+    let (con_in, typed_w) = pipe()?;
+    let (screen_r, con_out) = pipe()?;
+    let mut hpc: HPCON = 0;
+    // Wide, so a long line (a code and its page) isn't wrapped.
+    // SAFETY: the console duplicates both handles; ours are closed after.
+    let hr = unsafe { CreatePseudoConsole(COORD { X: 240, Y: 40 }, con_in.as_raw_handle() as HANDLE, con_out.as_raw_handle() as HANDLE, 0, &mut hpc) };
+    drop((con_in, con_out));
+    if hr != S_OK {
+        return Err(std::io::Error::other(format!("CreatePseudoConsole failed ({hr:#x})")));
+    }
+    let console = Arc::new(Console(Mutex::new(Some(hpc))));
+    let process = match spawn(&command, hpc, None) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            console.close();
+            return Err(e);
+        }
+    };
+    let (input, typed) = channel::<Vec<u8>>();
+    let mut writer = File::from(typed_w);
+    std::thread::spawn(move || {
+        for bytes in typed {
+            if writer.write_all(&bytes).is_err() {
+                break;
+            }
+        }
+    });
+    let (exit_tx, exit) = channel();
+    {
+        let (console, process) = (console.clone(), process.clone());
+        std::thread::spawn(move || {
+            let h = process.as_raw_handle() as HANDLE;
+            let mut c = 0u32;
+            // SAFETY: the handle stays open while process is held.
+            unsafe {
+                WaitForSingleObject(h, INFINITE);
+                GetExitCodeProcess(h, &mut c);
+            }
+            console.close();
+            let _ = exit_tx.send(Some(c as i32));
+        });
+    }
+    let (out_tx, output) = channel();
+    let mut screen = File::from(screen_r);
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 16 * 1024];
+        loop {
+            match screen.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if out_tx.send(buf[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    let stop = Box::new(move || {
+        // SAFETY: the process handle is open while this closure holds it.
+        unsafe { TerminateProcess(process.as_raw_handle() as HANDLE, 1) };
+    });
+    Ok((output, input, stop, exit))
 }
 
 fn system32(exe: &str) -> PathBuf {
@@ -193,7 +265,7 @@ fn pipe() -> std::io::Result<(OwnedHandle, OwnedHandle)> {
     }
 }
 
-fn open(id: &str, command: &str, cols: u16, rows: u16, emit: fn(String)) -> std::io::Result<()> {
+fn open(id: &str, command: &str, cols: u16, rows: u16, cwd: Option<PathBuf>, emit: fn(String)) -> std::io::Result<()> {
     if let Some(old) = with(|s| s.remove(id)) {
         end(old);
     }
@@ -209,7 +281,7 @@ fn open(id: &str, command: &str, cols: u16, rows: u16, emit: fn(String)) -> std:
     }
     let console = Arc::new(Console(Mutex::new(Some(hpc))));
 
-    let process = match spawn(command, hpc) {
+    let process = match spawn(command, hpc, cwd.as_deref()) {
         Ok(p) => Arc::new(p),
         Err(e) => {
             console.close();
@@ -271,10 +343,13 @@ fn open(id: &str, command: &str, cols: u16, rows: u16, emit: fn(String)) -> std:
     Ok(())
 }
 
-/// Starts `command` attached to the pseudo console `hpc`, in the user's folder.
-fn spawn(command: &str, hpc: HPCON) -> std::io::Result<OwnedHandle> {
+/// Starts `command` attached to the pseudo console `hpc`, in `cwd` or the user's folder.
+fn spawn(command: &str, hpc: HPCON, cwd: Option<&std::path::Path>) -> std::io::Result<OwnedHandle> {
     let mut cmdline: Vec<u16> = command.encode_utf16().chain([0]).collect();
-    let cwd: Option<Vec<u16>> = std::env::var_os("USERPROFILE").map(|p| p.to_string_lossy().encode_utf16().chain([0]).collect());
+    let cwd: Option<Vec<u16>> = cwd
+        .map(|p| p.to_path_buf())
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
+        .map(|p| p.to_string_lossy().encode_utf16().chain([0]).collect());
     let env = environment();
     // SAFETY: the attribute list is sized by the first call and lives in
     // `list` until after CreateProcessW; every pointer passed outlives the
@@ -366,6 +441,54 @@ mod tests {
     use std::time::{Duration, Instant};
 
     static EVENTS: Mutex<Vec<Sender<String>>> = Mutex::new(Vec::new());
+
+    #[test]
+    fn a_captured_program_has_a_console_reads_what_is_typed_and_says_its_exit_code() {
+        let cmd = system32("cmd.exe");
+        let (output, input, _stop, exit) = captured(&cmd, &["/d", "/q", "/c", "echo code: ABCD-EFGH& set /p x=& call echo got:%x%& exit 3"]).unwrap();
+        input.send(b"yes\r".to_vec()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut seen = String::new();
+        while let Ok(b) = output.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            seen.push_str(&String::from_utf8_lossy(&b));
+            if seen.contains("got:yes") {
+                break;
+            }
+        }
+        assert!(seen.contains("code: ABCD-EFGH") && seen.contains("got:yes"), "{seen:?}");
+        assert_eq!(exit.recv_timeout(Duration::from_secs(10)).unwrap(), Some(3));
+    }
+
+    #[test]
+    fn a_captured_program_stops_when_asked() {
+        let (_output, _input, stop, exit) = captured(&system32("ping.exe"), &["-n", "30", "127.0.0.1"]).unwrap();
+        stop();
+        assert!(exit.recv_timeout(Duration::from_secs(5)).is_ok());
+    }
+
+    #[test]
+    #[ignore = "runs the real docker login (Kiri's docker.exe), which reaches Docker's sign-in service"]
+    fn live_docker_login_shows_its_device_code_on_a_captured_console() {
+        let docker = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap()).join(r"Kiri\bin\docker.exe");
+        let dir = std::env::temp_dir().join(format!("kiri-weblogin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), "{}").unwrap();
+        // SAFETY: an ignored test, run on its own.
+        unsafe { std::env::set_var("DOCKER_CONFIG", &dir) };
+        let (output, _input, stop, _exit) = captured(&docker, &["login"]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut seen = String::new();
+        while let Ok(b) = output.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            seen.push_str(&String::from_utf8_lossy(&b));
+            if seen.contains("login.docker.com/activate") || seen.contains("Login Succeeded") {
+                break;
+            }
+        }
+        stop();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(seen.contains("Login Succeeded") || (seen.contains("device confirmation code") && seen.contains("login.docker.com/activate")), "{seen:?}");
+    }
+
 
     fn record(json: String) {
         for tx in EVENTS.lock().unwrap().iter() {

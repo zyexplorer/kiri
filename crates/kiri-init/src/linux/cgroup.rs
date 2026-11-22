@@ -142,13 +142,19 @@ fn pids(dir: &Path, out: &mut Vec<libc::pid_t>) {
     }
 }
 
-/// `docker top`: one tab-separated line per process, ps -ef style.
+/// `docker top`: one tab-separated line per process. The first seven fields
+/// are `ps -ef`'s (user pid ppid c stime tty time); then what other `ps_args`
+/// columns need (comm stat rss-KiB vsz-KiB %cpu %mem elapsed-secs cpu-secs
+/// uid); the command line last. The host picks and formats the columns.
 pub fn top(dir: &Path) -> Vec<String> {
     let mut list = Vec::new();
     pids(dir, &mut list);
     list.sort_unstable();
     // SAFETY: sysconf has no preconditions.
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as u64;
+    // SAFETY: as above.
+    let page_kib = (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1024) as u64) / 1024;
+    let mem_kib = super::meminfo().0.max(1);
     let uptime_secs: f64 = fs::read_to_string("/proc/uptime").ok().and_then(|u| u.split_whitespace().next()?.parse().ok()).unwrap_or(0.0);
     let boot_unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) - uptime_secs;
     let mut out = Vec::with_capacity(list.len());
@@ -157,25 +163,28 @@ pub fn top(dir: &Path) -> Vec<String> {
         // The command name is in parentheses and may hold spaces.
         let Some(close) = stat.rfind(')') else { continue };
         let f: Vec<&str> = stat[close + 2..].split_whitespace().collect();
-        if f.len() < 20 {
+        if f.len() < 22 {
             continue;
         }
+        let num = |i: usize| f[i].parse::<i64>().unwrap_or(0);
         let ppid = f[1];
-        let tty_nr: u32 = f[4].parse().unwrap_or(0);
-        let ticks = f[11].parse::<u64>().unwrap_or(0) + f[12].parse::<u64>().unwrap_or(0);
-        let start_ticks: u64 = f[19].parse().unwrap_or(0);
+        let tty_nr = num(4) as u32;
+        let ticks = (num(11) + num(12)).max(0) as u64;
+        let start_ticks = num(19).max(0) as u64;
         let started = boot_unix + start_ticks as f64 / hz as f64;
         let elapsed = (uptime_secs - start_ticks as f64 / hz as f64).max(0.01);
-        let c = ((ticks as f64 / hz as f64) / elapsed * 100.0) as u64;
+        let cpu = (ticks as f64 / hz as f64) / elapsed * 100.0;
+        let c = cpu as u64;
         let uid = fs::read_to_string(format!("/proc/{pid}/status"))
             .ok()
             .and_then(|s| s.lines().find_map(|l| l.strip_prefix("Uid:").and_then(|v| v.split_whitespace().next().map(str::to_owned))))
             .unwrap_or_default();
-        let user = if uid == "0" { "root".to_owned() } else { uid };
+        let user = if uid == "0" { "root".to_owned() } else { uid.clone() };
+        let comm = stat[stat.find('(').map_or(0, |i| i + 1)..close].replace('\t', " ");
         let cmd = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-        let mut cmd = String::from_utf8_lossy(&cmd).replace('\0', " ").trim().to_owned();
+        let mut cmd = String::from_utf8_lossy(&cmd).replace(['\0', '\t'], " ").trim().to_owned();
         if cmd.is_empty() {
-            cmd = format!("[{}]", &stat[stat.find('(').map_or(0, |i| i + 1)..close]);
+            cmd = format!("[{comm}]");
         }
         let secs = ticks / hz;
         let time = format!("{:02}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60);
@@ -185,7 +194,28 @@ pub fn top(dir: &Path) -> Vec<String> {
             format!("{:02}:{:02}", day / 3600, day / 60 % 60)
         };
         let tty = if tty_nr == 0 { "?".to_owned() } else { format!("pts/{}", tty_nr & 0xff) };
-        out.push(format!("{user}\t{pid}\t{ppid}\t{c}\t{stime}\t{tty}\t{time}\t{cmd}"));
+        // ps's STAT: the state, then < or N (nice), s (session leader), l
+        // (threads), + (foreground).
+        let mut stat_col = f[0].to_owned();
+        let nice = num(16);
+        if nice < 0 {
+            stat_col.push('<');
+        } else if nice > 0 {
+            stat_col.push('N');
+        }
+        if num(3) == pid as i64 {
+            stat_col.push('s');
+        }
+        if num(17) > 1 {
+            stat_col.push('l');
+        }
+        if num(5) > 0 && num(5) == num(2) {
+            stat_col.push('+');
+        }
+        let rss = num(21).max(0) as u64 * page_kib;
+        let vsz = num(20).max(0) as u64 / 1024;
+        let mem = rss as f64 * 100.0 / mem_kib as f64;
+        out.push(format!("{user}\t{pid}\t{ppid}\t{c}\t{stime}\t{tty}\t{time}\t{comm}\t{stat_col}\t{rss}\t{vsz}\t{cpu:.1}\t{mem:.1}\t{}\t{secs}\t{uid}\t{cmd}", elapsed as u64));
     }
     out
 }

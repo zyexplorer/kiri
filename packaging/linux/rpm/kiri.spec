@@ -107,13 +107,12 @@ exit 0
 if [ -d /run/systemd/system ]; then
   systemctl daemon-reload >/dev/null 2>&1 || :
   # Not started or enabled: it starts when someone sets Kiri up (the window's
-  # Allow access, or `kiri host-access`). An upgrade ($1 >= 2) leaves a
-  # running engine alone: it keeps the old binary until it restarts, which
-  # stops its containers.
+  # Allow access, or `kiri host-access`). An upgrade ($1 >= 2) restarts a
+  # running engine on the new binary, as the Mac and Windows apps do after
+  # an update; its containers stop, and those with a restart policy start again.
   if [ "$1" -ge 2 ] && systemctl is-active -q kiri.service; then
-    echo "Kiri is upgraded. The engine keeps running the old version until it restarts:"
-    echo "  sudo systemctl restart kiri   (running containers stop; those with a restart policy start again)"
-    echo "or open Kiri and choose Restart engine. The next boot starts the new one either way."
+    echo "Kiri is upgraded: restarting the engine on the new version."
+    systemctl try-restart kiri.service || echo "  The engine didn't restart: sudo systemctl restart kiri"
   fi
 fi
 # A `kiri` before /usr/bin on PATH runs instead of this package's.

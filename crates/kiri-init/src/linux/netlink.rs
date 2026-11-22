@@ -368,10 +368,23 @@ const NFNL_SUBSYS_NFTABLES: u16 = 10;
 const NFNL_MSG_BATCH_BEGIN: u16 = 0x10;
 const NFNL_MSG_BATCH_END: u16 = 0x11;
 const NFT_MSG_NEWTABLE: u16 = 0;
-/// Like DELTABLE, but no error when there is no such table (Linux 6.3+).
-const NFT_MSG_DESTROYTABLE: u16 = 26;
+const NFT_MSG_DELTABLE: u16 = 2;
 const NFT_MSG_NEWCHAIN: u16 = 3;
 const NFT_MSG_NEWRULE: u16 = 6;
+
+/// The start of a batch that replaces Kiri's table of `family`: add it
+/// (nothing happens when it is there already), then delete it, so the rest
+/// of the batch makes it again from nothing. One batch keeps the old table
+/// if anything in it is refused. DESTROYTABLE would do it in one message,
+/// but only from Linux 6.3, and older kernels (WSL 2's 5.15, Ubuntu 22.04)
+/// refuse a whole batch with a message they don't know.
+fn clear_table(family: u8) -> [Msg; 2] {
+    let mut add = nft_in(family, NFT_MSG_NEWTABLE, NLM_F_ACK | NLM_F_CREATE);
+    add.attr_str(1, "kiri");
+    let mut delete = nft_in(family, NFT_MSG_DELTABLE, NLM_F_ACK);
+    delete.attr_str(1, "kiri");
+    [add, delete]
+}
 
 fn nfgen(family: u8, res_id: u16) -> [u8; 4] {
     let mut b = [0u8; 4];
@@ -770,11 +783,10 @@ pub fn install_nat6(subnets: &[([u8; 16], u8)], bridges: &[String]) -> io::Resul
     let mut nl = Netlink::open(libc::NETLINK_NETFILTER)?;
     let mut begin = Msg::new(NFNL_MSG_BATCH_BEGIN, 0);
     begin.raw(&nfgen(libc::AF_UNSPEC as u8, NFNL_SUBSYS_NFTABLES));
-    let mut destroy = nft_in(v6, NFT_MSG_DESTROYTABLE, NLM_F_ACK);
-    destroy.attr_str(1, "kiri");
+    let [add, delete] = clear_table(v6);
     let mut end = Msg::new(NFNL_MSG_BATCH_END, 0);
     end.raw(&nfgen(libc::AF_UNSPEC as u8, NFNL_SUBSYS_NFTABLES));
-    let mut msgs = vec![begin, destroy];
+    let mut msgs = vec![begin, add, delete];
     if !subnets.is_empty() {
         let mut table = nft_in(v6, NFT_MSG_NEWTABLE, NLM_F_ACK | NLM_F_CREATE);
         table.attr_str(1, "kiri");
@@ -796,11 +808,10 @@ pub fn remove_nat() -> io::Result<()> {
     let mut nl = Netlink::open(libc::NETLINK_NETFILTER)?;
     let mut begin = Msg::new(NFNL_MSG_BATCH_BEGIN, 0);
     begin.raw(&nfgen(libc::AF_UNSPEC as u8, NFNL_SUBSYS_NFTABLES));
-    let mut destroy = nft(NFT_MSG_DESTROYTABLE, NLM_F_ACK);
-    destroy.attr_str(1, "kiri");
+    let [add, delete] = clear_table(libc::NFPROTO_IPV4 as u8);
     let mut end = Msg::new(NFNL_MSG_BATCH_END, 0);
     end.raw(&nfgen(libc::AF_UNSPEC as u8, NFNL_SUBSYS_NFTABLES));
-    nl.request(&mut [begin, destroy, end])
+    nl.request(&mut [begin, add, delete, end])
 }
 
 /// Kiri's NAT table:
@@ -827,12 +838,11 @@ pub fn remove_nat() -> io::Result<()> {
 pub fn install_nat_from(uplink_index: i32, host_addr: [u8; 4], host_port: u16, redirect: bool, dnat: &[Dnat], gateway: [u8; 4], bridges: &[String], local: Option<&[[u8; 4]]>) -> io::Result<()> {
     let mut nl = Netlink::open(libc::NETLINK_NETFILTER)?;
     // The table is replaced, not appended to (on a Linux host it outlives
-    // the agent and changes with every published port). Destroying it in
-    // the same batch keeps the old one if anything below is refused.
+    // the agent and changes with every published port), in one batch:
+    // see clear_table.
     let mut begin = Msg::new(NFNL_MSG_BATCH_BEGIN, 0);
     begin.raw(&nfgen(libc::AF_UNSPEC as u8, NFNL_SUBSYS_NFTABLES));
-    let mut destroy = nft(NFT_MSG_DESTROYTABLE, NLM_F_ACK);
-    destroy.attr_str(1, "kiri");
+    let [add, delete] = clear_table(libc::NFPROTO_IPV4 as u8);
 
     let mut table = nft(NFT_MSG_NEWTABLE, NLM_F_ACK | NLM_F_CREATE);
     table.attr_str(1, "kiri"); // NFTA_TABLE_NAME
@@ -860,7 +870,7 @@ pub fn install_nat_from(uplink_index: i32, host_addr: [u8; 4], host_port: u16, r
         // A Linux host: no host.docker.internal redirect, but its published
         // ports are DNATed here (prerouting for the LAN, output for the host
         // itself), the whole table rebuilt on every change, atomically.
-        let mut msgs = vec![begin, destroy, table, chain, rule];
+        let mut msgs = vec![begin, add, delete, table, chain, rule];
         msgs.extend(forward_filter(bridges));
         msgs.extend(localnet_guard());
         msgs.push(nat_chain("prerouting", 0, -100));
@@ -878,7 +888,7 @@ pub fn install_nat_from(uplink_index: i32, host_addr: [u8; 4], host_port: u16, r
     let pre_rule = redirect_rule("prerouting", host_addr, host_port, true);
     // The host's own connections (and `--network host` containers).
     let out_rule = redirect_rule("output", host_addr, host_port, false);
-    let mut msgs = vec![begin, destroy, table, chain, rule, pre, out, dns_redirect_rule(host_addr), pre_rule, out_rule];
+    let mut msgs = vec![begin, add, delete, table, chain, rule, pre, out, dns_redirect_rule(host_addr), pre_rule, out_rule];
     msgs.extend(forward_filter(bridges));
     msgs.extend(localnet_guard());
     msgs.push(host_relay_guard(host_port));
@@ -914,6 +924,27 @@ mod tests {
 
     fn be32(d: &[u8]) -> u32 {
         u32::from_be_bytes(d.try_into().unwrap())
+    }
+
+    /// The table is replaced with messages every kernel since 3.13 knows:
+    /// add (no error when it is there), then delete, in the batch that
+    /// makes it again. Linux 6.3's DESTROYTABLE (26) made older kernels
+    /// refuse the whole batch, so containers had no NAT and no firewall.
+    #[test]
+    fn the_table_is_replaced_with_messages_older_kernels_know() {
+        for family in [libc::NFPROTO_IPV4 as u8, libc::NFPROTO_IPV6 as u8] {
+            let [add, delete] = clear_table(family);
+            let ty = |m: &Msg| u16::from_ne_bytes([m.buf[4], m.buf[5]]);
+            let flags = |m: &Msg| u16::from_ne_bytes([m.buf[6], m.buf[7]]);
+            assert_eq!(ty(&add), (NFNL_SUBSYS_NFTABLES << 8) | NFT_MSG_NEWTABLE);
+            assert_eq!(flags(&add) & (NLM_F_CREATE | NLM_F_EXCL), NLM_F_CREATE, "adding must not fail when the table exists");
+            assert_eq!(ty(&delete), (NFNL_SUBSYS_NFTABLES << 8) | NFT_MSG_DELTABLE);
+            for m in [&add, &delete] {
+                assert_eq!(m.buf[16], family);
+                assert_eq!(get(&attrs(&m.buf[20..]), 1), b"kiri\0");
+                assert_ne!(ty(m) & 0xff, 26, "DESTROYTABLE needs Linux 6.3");
+            }
+        }
     }
 
     #[test]

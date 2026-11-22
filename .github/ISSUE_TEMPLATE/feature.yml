@@ -1,0 +1,28 @@
+name: Feature request
+description: Something Kiri should do, or a change you'd like to make.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What you're trying to do
+      description: The task, not the solution. What are you working on, and where does Kiri get in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like Kiri to do
+      description: If Docker or another tool already does this, say how.
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Would you like to build it?
+      description: If so, wait until we've agreed on the approach here before opening a pull request.
+      options:
+        - "No, just suggesting it"
+        - "Yes, once we've agreed on the approach"
+    validations:
+      required: true

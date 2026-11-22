@@ -17,6 +17,8 @@ use std::time::Duration;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
+mod macsetup;
+#[cfg(target_os = "macos")]
 use mac as window;
 #[cfg(target_os = "linux")]
 mod gtk;
@@ -31,14 +33,19 @@ mod linux;
 use linux::{import, setup, update};
 
 mod assemble;
+mod lang;
 mod brands;
+mod compose;
+mod composetech;
 mod detail;
 mod hub;
 mod k8s;
 mod lastlogs;
 mod logins;
+mod weblogin;
 mod needs;
 mod notes;
+mod projects;
 mod recheck;
 mod sharing;
 #[cfg(unix)]
@@ -367,14 +374,8 @@ fn engine(rx: Receiver<Cmd>, tx: Sender<Cmd>) {
                         None,
                     ) {
                         Ok(r) if r.ok() || r.status == 404 => {}
-                        Ok(r) => {
-                            blocked = Some(format!(
-                                "Kept {name}: {} couldn't be removed ({})",
-                                container_name(id),
-                                r.error()
-                            ))
-                        }
-                        Err(e) => blocked = Some(format!("Kept {name}: {e}")),
+                        Ok(r) => blocked = Some(trf("Kept {name}: {container} couldn't be removed ({error})", &[("name", &name), ("container", &container_name(id)), ("error", &r.error())])),
+                        Err(e) => blocked = Some(trf("Kept {name}: {error}", &[("name", &name), ("error", &e)])),
                     }
                     if blocked.is_some() {
                         break;
@@ -410,7 +411,7 @@ fn engine(rx: Receiver<Cmd>, tx: Sender<Cmd>) {
                     }
                     _ => continue,
                 };
-                let result = expect_ok(client::request(method, &path, None));
+                let result = expect_done(client::request(method, &path, None));
                 // Refused to start (a port taken): the container's page says why.
                 if let (Err(e), "start") = (&result, action.as_str()) {
                     emit(serde_json::json!({"type": "startfailed", "id": id, "error": e.to_string()}).to_string());
@@ -436,14 +437,9 @@ fn engine(rx: Receiver<Cmd>, tx: Sender<Cmd>) {
                 };
                 // Cancelling macOS's password prompt is a choice, not an error.
                 match result {
-                    Err(e) if !e.to_string().contains("-128") => emit(notice(
-                        "error",
-                        &format!("Could not change container names: {e}"),
-                    )),
-                    _ if crate::daemon::dns::installed() => {
-                        emit(notice("ok", "Containers now answer at <name>.kiri.local"))
-                    }
-                    _ if !on => emit(notice("ok", "Containers answer at <name>.kiri.localhost")),
+                    Err(e) if !e.to_string().contains("-128") => emit(notice("error", &trf("Could not change container names: {error}", &[("error", &e)]))),
+                    _ if crate::daemon::dns::installed() => emit(notice("ok", &tr("Containers now answer at <name>.kiri.local"))),
+                    _ if !on => emit(notice("ok", &tr("Containers answer at <name>.kiri.localhost"))),
                     _ => {}
                 }
                 // /var/run/docker.sock was asked for with the same password.
@@ -495,6 +491,15 @@ fn expect_ok(r: io::Result<client::Response>) -> io::Result<()> {
     } else {
         Err(io::Error::other(r.error()))
     }
+}
+
+/// A container action's answer. Docker's 304 is "already so": Stop on a
+/// stopped container, or Start on a running one, as a second click while a
+/// stop waits its turn, or `docker` getting there first. That's what was
+/// asked for; it has no body, so it showed as an empty red toast.
+fn expect_done(r: io::Result<client::Response>) -> io::Result<()> {
+    let r = r?;
+    if r.ok() || r.status == 304 { Ok(()) } else { Err(io::Error::other(r.error())) }
 }
 
 /// An action's outcome: errors become a toast, and a log line saying what
@@ -579,6 +584,22 @@ pub(crate) fn state_dir() -> Option<std::path::PathBuf> {
         .map(std::path::Path::to_path_buf)
 }
 
+/// Kiri opening for the first time on this account: no settings were saved
+/// before this run. Worked out on the first read, before anything is saved.
+fn fresh() -> bool {
+    static FRESH: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FRESH.get_or_init(|| prefs_path().is_some_and(|p| !p.exists()))
+}
+
+/// The language step, once: on a first start, or after an update that
+/// brings this computer's language (lang::should_ask). The welcome waits behind it.
+fn ask_language() {
+    static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if lang::should_ask(fresh(), &prefs(), &lang::os_languages()) && !ASKED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        emit(r#"{"type":"langpick"}"#.to_owned());
+    }
+}
+
 /// The window's settings, kept in ~/.kiri/ui.json: font, mono, scale.
 fn prefs_path() -> Option<std::path::PathBuf> {
     let dir = state_dir()?;
@@ -589,10 +610,8 @@ fn prefs_path() -> Option<std::path::PathBuf> {
 /// The settings, with the defaults for what the person hasn't picked: Kiri
 /// starts dark until Settings → Appearance says otherwise.
 pub(crate) fn prefs() -> serde_json::Value {
-    let mut p: serde_json::Value = prefs_path()
-        .and_then(|p| std::fs::read(p).ok())
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    fresh();
+    let mut p: serde_json::Value = prefs_path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_else(|| serde_json::json!({}));
     if !p.is_object() {
         p = serde_json::json!({});
     }
@@ -600,6 +619,41 @@ pub(crate) fn prefs() -> serde_json::Value {
         p["theme"] = "dark".into();
     }
     p
+}
+
+/// The USB view's note under the list, in the window's language
+/// (crate::usb words it in English; these are its notes).
+fn usb_words(mut v: serde_json::Value) -> serde_json::Value {
+    let note = match v["note"].as_str() {
+        Some("A device in Kiri is gone from the Mac until you detach it. In a container: --device /dev/ttyUSB0 (serial), /dev/input (HID) or /dev/bus/usb (raw).") => {
+            tr("A device in Kiri is gone from the Mac until you detach it. In a container: --device /dev/ttyUSB0 (serial), /dev/input (HID) or /dev/bus/usb (raw).")
+        }
+        Some("Containers run on this computer's own kernel, so they see its USB devices as they are: docker run --device with the path shown.") => {
+            tr("Containers run on this computer's own kernel, so they see its USB devices as they are: docker run --device with the path shown.")
+        }
+        _ => return v,
+    };
+    v["note"] = note.into();
+    v
+}
+
+/// Attach's and Detach's word back, in the window's language.
+fn usb_text(text: &str) -> String {
+    match text.strip_suffix(" is in Kiri") {
+        Some(name) => trf("{name} is in Kiri", &[("name", &name)]),
+        None if text == "Given back to the Mac" => tr("Given back to the Mac"),
+        None => text.to_owned(),
+    }
+}
+
+/// `en` in the window's language, for words the app sends the page (notices).
+fn tr(en: &str) -> String {
+    lang::tr(lang::resolve(prefs()["lang"].as_str()), en)
+}
+
+/// [`tr`] with `{name}` placeholders filled.
+fn trf(en: &str, vars: &[(&str, &dyn std::fmt::Display)]) -> String {
+    lang::fill(tr(en), vars)
 }
 
 fn set_pref(name: &str, value: serde_json::Value) {
@@ -615,6 +669,7 @@ fn set_pref(name: &str, value: serde_json::Value) {
             | "theme"
             | "accent"
             | "lang"
+            | "langAsked"
             | "importSeen"
             | "updateAuto"
             | "updateSkip"
@@ -651,14 +706,11 @@ fn set_pref(name: &str, value: serde_json::Value) {
     }
     all[name] = value;
     let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, all.to_string())
-        .and_then(|()| std::fs::rename(&tmp, &path))
-        .is_err()
-    {
-        emit(notice(
-            "error",
-            "Could not save the setting to ~/.kiri/ui.json",
-        ));
+    if std::fs::write(&tmp, all.to_string()).and_then(|()| std::fs::rename(&tmp, &path)).is_err() {
+        emit(notice("error", &tr("Could not save the setting to ~/.kiri/ui.json")));
+    }
+    if name == "lang" {
+        window::relang();
     }
 }
 
@@ -666,7 +718,7 @@ fn set_pref(name: &str, value: serde_json::Value) {
 fn proxy(save: Option<serde_json::Value>) {
     if let Some(body) = save {
         match client::request("POST", "/kiri/proxy", Some(&body)) {
-            Ok(r) if r.ok() => emit(notice("ok", "Proxy settings saved")),
+            Ok(r) if r.ok() => emit(notice("ok", &tr("Proxy settings saved"))),
             Ok(r) => emit(notice("error", &r.error())),
             Err(e) => emit(notice("error", &e.to_string())),
         }
@@ -698,6 +750,20 @@ fn daemon(save: Option<serde_json::Value>) {
     }
 }
 
+/// Settings → Domains: reads (or moves, then reads) the routers' ports.
+fn router_ports(set: Option<serde_json::Value>) {
+    if let Some(body) = set {
+        match client::request("POST", "/kiri/domains", Some(&body)) {
+            Ok(r) if r.ok() => emit(notice("ok", &tr("Ports changed"))),
+            Ok(r) => emit(notice("error", &trf("Could not change the ports: {error}", &[("error", &r.error())]))),
+            Err(e) => emit(notice("error", &trf("Could not change the ports: {error}", &[("error", &e)]))),
+        }
+    }
+    let mut v = client::get("/kiri/domains").unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}));
+    v["type"] = "routerports".into();
+    emit(v.to_string());
+}
+
 /// Reads (or saves, then reads) the VM's CPUs and memory for Settings.
 fn resources(save: Option<serde_json::Value>) {
     let saved = save.map(|body| client::request("POST", "/kiri/resources", Some(&body)));
@@ -706,7 +772,7 @@ fn resources(save: Option<serde_json::Value>) {
         // While the VM runs, the toast offers to restart it now.
         Some(Ok(r)) if r.ok() => {
             let awake = now.as_ref().is_ok_and(|v| v["awake"] == true);
-            emit(serde_json::json!({"type": "notice", "kind": "ok", "text": "Saved. The VM uses these from its next start", "act": if awake { "restartvm" } else { "" }}).to_string());
+            emit(serde_json::json!({"type": "notice", "kind": "ok", "text": tr("Saved. The VM uses these from its next start"), "act": if awake { "restartvm" } else { "" }}).to_string());
         }
         Some(Ok(r)) => emit(notice("error", &r.error())),
         Some(Err(e)) => emit(notice("error", &e.to_string())),
@@ -790,23 +856,42 @@ fn update_check(manual: bool) {
         && !crate::flavor::dev()
         && let Some(p) = crate::stale::stale_kiri()
     {
-        emit(notice(
-            "error",
-            &format!(
-                "{} comes first on your PATH, so terminals run it instead of this Kiri. If it's an older Kiri, remove it: rm {0}",
-                p.display()
-            ),
-        ));
+        emit(notice("error", &trf("{path} comes first on your PATH, so terminals run it instead of this Kiri. If it's an older Kiri, remove it: rm {path}", &[("path", &p.display())])));
     }
-    if let Some(v) = crate::client::request("GET", "/version", None)
-        .ok()
-        .filter(|r| r.ok())
-        .and_then(|r| r.json()["Version"].as_str().map(str::to_owned))
+    if let Some(v) = crate::client::request("GET", "/version", None).ok().filter(|r| r.ok()).and_then(|r| crate::client::kiri_version(&r.json()).map(str::to_owned))
         && update::newer(env!("CARGO_PKG_VERSION"), &v)
     {
-        emit(serde_json::json!({"type": "enginestale", "version": v}).to_string());
+        // An update went in and the engine still runs the old build: move it
+        // over now, rather than asking. The card shows only if that fails.
+        if manual {
+            emit(serde_json::json!({"type": "enginestale", "version": v}).to_string());
+        } else {
+            diag::info!("the engine runs an older Kiri; restarting it", engine = v, app = env!("CARGO_PKG_VERSION"));
+            restart_engine_now();
+        }
     }
     feed_check(manual);
+}
+
+/// Restarts the engine on this build, and tells the page: the engine toast
+/// once it answers as this version, else the error and the card again.
+fn restart_engine_now() {
+    let began = std::time::Instant::now();
+    match update::restart_engine(env!("CARGO_PKG_VERSION")) {
+        Ok(v) => {
+            emit(r#"{"type":"enginestale","version":null}"#.to_owned());
+            emit(serde_json::json!({"type": "enginerestarted", "version": v, "ms": began.elapsed().as_millis() as u64}).to_string());
+        }
+        Err(e) => {
+            diag::error!("the engine did not restart", error = e);
+            emit(notice("error", &trf("Could not restart the engine: {error}", &[("error", &e)])));
+            if let Some(v) = client::request("GET", "/version", None).ok().filter(|r| r.ok()).and_then(|r| client::kiri_version(&r.json()).map(str::to_owned))
+                && update::newer(env!("CARGO_PKG_VERSION"), &v)
+            {
+                emit(serde_json::json!({"type": "enginestale", "version": v}).to_string());
+            }
+        }
+    }
 }
 
 /// Whether the feed has a newer release, and one already staged; the
@@ -816,13 +901,7 @@ fn feed_check(manual: bool) {
     // KIRI_UPDATE_URL names a test feed (to try the update card and What's new).
     if crate::flavor::dev() && std::env::var_os("KIRI_UPDATE_URL").is_none() {
         if manual {
-            emit(notice(
-                "ok",
-                &format!(
-                    "{} doesn't update itself: rebuild it with cargo xtask app-dev",
-                    crate::flavor::APP
-                ),
-            ));
+            emit(notice("ok", &trf("{app} doesn't update itself: rebuild it with cargo xtask app-dev", &[("app", &crate::flavor::APP)])));
         }
         update_state("dev", None, None);
         return;
@@ -831,13 +910,7 @@ fn feed_check(manual: bool) {
     // from the feed either: it would "update" back to the release it came from.
     if env!("CARGO_PKG_VERSION").contains("-dev") {
         if manual {
-            emit(notice(
-                "ok",
-                &format!(
-                    "Kiri {} is a test build: it doesn't update itself",
-                    env!("CARGO_PKG_VERSION")
-                ),
-            ));
+            emit(notice("ok", &trf("Kiri {version} is a test build: it doesn't update itself", &[("version", &env!("CARGO_PKG_VERSION"))])));
         }
         update_state("test", None, None);
         return;
@@ -871,16 +944,13 @@ fn feed_check(manual: bool) {
         Ok(_) => {
             update_state("uptodate", None, None);
             if manual {
-                emit(notice(
-                    "ok",
-                    &format!("Kiri {} is the newest version", env!("CARGO_PKG_VERSION")),
-                ));
+                emit(notice("ok", &trf("Kiri {version} is the newest version", &[("version", &env!("CARGO_PKG_VERSION"))])));
             }
         }
         Err(e) => {
             update_state("error", None, Some(e.to_string()));
             if manual {
-                emit(notice("error", &format!("Couldn't check for updates: {e}")));
+                emit(notice("error", &trf("Couldn't check for updates: {error}", &[("error", &e)])));
             }
         }
     }
@@ -921,8 +991,11 @@ fn update_download() {
 /// new window opens once this one has quit.
 fn update_restart() {
     match update::install_staged() {
-        Ok(_) => {
-            update::restart_engine();
+        Ok(version) => {
+            // The new window restarts it too if this doesn't work out.
+            if let Err(e) = update::restart_engine(&version) {
+                diag::error!("the engine did not restart on the update", version = version, error = e);
+            }
             reopen_after_exit();
             window::quit();
         }
@@ -996,7 +1069,7 @@ fn about() {
             "type": "about",
             "app": env!("CARGO_PKG_VERSION"),
             "running": !info.is_null(),
-            "engine": version["Version"],
+            "engine": crate::client::kiri_version(&version),
             "api": version["ApiVersion"],
             "kernel": info["KernelVersion"],
             "cpus": info["NCPU"],
@@ -1037,11 +1110,7 @@ fn set_ports(id: &str, ports: serde_json::Value) -> io::Result<()> {
             }
         }
     }
-    let text = if now.is_empty() {
-        "Ports removed".to_owned()
-    } else {
-        format!("Ports saved: {}", now.join(", "))
-    };
+    let text = if now.is_empty() { tr("Ports removed") } else { trf("Ports saved: {ports}", &[("ports", &now.join(", "))]) };
     emit(notice("ok", &text));
     Ok(())
 }
@@ -1061,16 +1130,9 @@ fn set_env(id: &str, env: Vec<String>) -> io::Result<()> {
     }
     expect_ok(Ok(r))?;
     let info = client::get(&format!("/containers/{id}/json"))?;
-    let name = info["Name"]
-        .as_str()
-        .unwrap_or_default()
-        .trim_start_matches('/');
-    let how = if info["State"]["Running"].as_bool() == Some(true) {
-        "restarted with"
-    } else {
-        "has"
-    };
-    emit(notice("ok", &format!("{name} {how} the new environment")));
+    let name = info["Name"].as_str().unwrap_or_default().trim_start_matches('/');
+    let text = if info["State"]["Running"].as_bool() == Some(true) { trf("{name} restarted with the new environment", &[("name", &name)]) } else { trf("{name} has the new environment", &[("name", &name)]) };
+    emit(notice("ok", &text));
     emit(serde_json::json!({"type": "inspect", "id": id, "info": info}).to_string());
     Ok(())
 }
@@ -1104,13 +1166,8 @@ fn run_image(a: &RunArgs) -> io::Result<()> {
         .trim_start_matches('/')
         .to_owned();
     // Just the name: the container's page says where it answers.
-    let published = info["NetworkSettings"]["Ports"]
-        .as_object()
-        .is_some_and(|m| {
-            m.values()
-                .any(|l| l.as_array().is_some_and(|l| !l.is_empty()))
-        });
-    let text = format!("Started {name}");
+    let published = info["NetworkSettings"]["Ports"].as_object().is_some_and(|m| m.values().any(|l| l.as_array().is_some_and(|l| !l.is_empty())));
+    let text = trf("Started {name}", &[("name", &name)]);
     // View on the toast opens the container's page; `image` puts it beside
     // that image's Run button when the list shows it; `ms` is create and start.
     let ms = began.elapsed().as_millis() as u64;
@@ -1439,8 +1496,10 @@ fn free_on_mac(port: u16, proto: &str) -> bool {
     }
 }
 
-/// Starts `kiri daemon` in the background if it is not running. It outlives
-/// the window: closing the window leaves containers running.
+/// Starts the engine if it is not running. It outlives the window: closing
+/// the window leaves containers running. On the Mac it goes through the
+/// LaunchAgent when there is one, so a later restart stops the one engine
+/// there is.
 #[cfg_attr(target_os = "linux", allow(unreachable_code))]
 fn ensure_daemon() -> io::Result<()> {
     if client::alive() {
@@ -1449,42 +1508,7 @@ fn ensure_daemon() -> io::Result<()> {
     // Linux: the engine is a system service, started by systemd, not by the window.
     #[cfg(target_os = "linux")]
     return Err(linux::engine_down());
-    diag::info!("starting the engine");
-    let exe = std::env::current_exe()?;
-    let log_dir = client::socket()?
-        .parent()
-        .and_then(|p| p.parent())
-        .map(std::path::Path::to_path_buf)
-        .ok_or_else(|| io::Error::other("no ~/.kiri"))?;
-    std::fs::create_dir_all(&log_dir)?;
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_dir.join("daemon.log"))?;
-    let mut cmd = std::process::Command::new(exe);
-    cmd.arg("daemon")
-        .stdin(std::process::Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log);
-    // Its own session, so quitting the window does not take it down.
-    // SAFETY: setsid is async-signal-safe and runs in the child before exec.
-    unsafe {
-        std::os::unix::process::CommandExt::pre_exec(&mut cmd, || {
-            libc::setsid();
-            Ok(())
-        });
-    }
-    cmd.spawn()?;
-    for _ in 0..100 {
-        std::thread::sleep(Duration::from_millis(50));
-        if client::alive() {
-            return Ok(());
-        }
-    }
-    Err(io::Error::other(format!(
-        "kiri daemon did not start; see {}",
-        log_dir.join("daemon.log").display()
-    )))
+    update::start_engine()
 }
 
 /// Sends the page every list, from the daemon.
@@ -1636,16 +1660,8 @@ fn container_name(id: &str) -> String {
 /// Docker's "unable to remove repository reference … (must force) - container
 /// X is using its referenced image", in plain words with the container's name.
 fn image_refusal(name: &str, error: &str) -> String {
-    match error
-        .split("container ")
-        .nth(1)
-        .and_then(|r| r.split_whitespace().next())
-        .filter(|_| error.contains("is using"))
-    {
-        Some(id) => format!(
-            "{name} is still used by the container {}. Remove the container first.",
-            container_name(id)
-        ),
+    match error.split("container ").nth(1).and_then(|r| r.split_whitespace().next()).filter(|_| error.contains("is using")) {
+        Some(id) => trf("{name} is still used by the container {container}. Remove the container first.", &[("name", &name), ("container", &container_name(id))]),
         None => error.to_owned(),
     }
 }
@@ -1670,6 +1686,20 @@ fn toast(kind: &str, text: &str) -> String {
     }
     s.push('}');
     s
+}
+
+/// The docker CLI, pointed at Kiri's engine whatever context is chosen, for
+/// Compose in the window.
+fn compose_cli() -> io::Result<std::process::Command> {
+    let docker = client::docker_cli().ok_or_else(|| io::Error::other("no docker CLI found"))?;
+    let mut cmd = std::process::Command::new(docker);
+    cmd.env("DOCKER_HOST", format!("unix://{}", client::socket()?.display())).env_remove("DOCKER_CONTEXT");
+    Ok(cmd)
+}
+
+/// The compose files opened in the window: ~/.kiri/compose.json.
+fn compose_store() -> Option<std::path::PathBuf> {
+    state_dir().map(|d| d.join("compose.json"))
 }
 
 /// Looks up the brand logo for an image name like `bitnami/redis:7`: first by
@@ -1897,8 +1927,30 @@ fn pull_error(e: &str, from: &str, tag: &str) -> String {
     }
 }
 
+/// The page's "fonts" event, made once: CoreText or fontconfig take a second
+/// or two to list 400+ families the first time (about 1.1 s and 1 s for the
+/// fixed-pitch ones on a Mac). Fonts installed later show after a restart.
+fn fonts_event() -> &'static str {
+    static EVENT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    EVENT.get_or_init(|| serde_json::json!({"type": "fonts", "families": window::font_families(false), "mono": window::font_families(true)}).to_string())
+}
+
 #[cfg(test)]
 mod tests {
+    /// Stop on a stopped container, or Start on a running one (a second
+    /// click while a stop is queued, or `docker` getting there first): the
+    /// engine answers 304 with no body. That's done, not an empty red toast.
+    #[test]
+    fn a_container_already_so_is_done_not_an_empty_error() {
+        use super::{client::Response, expect_done};
+        let answer = |status: u16, body: &str| Ok(Response { status, body: body.as_bytes().to_vec() });
+        assert!(expect_done(answer(304, "")).is_ok(), "already stopped, or already running");
+        assert!(expect_done(answer(204, "")).is_ok());
+        let refused = expect_done(answer(409, r#"{"message":"cannot start a paused container, try unpause instead"}"#));
+        assert_eq!(refused.unwrap_err().to_string(), "cannot start a paused container, try unpause instead");
+        assert!(expect_done(Err(std::io::Error::other("no engine"))).is_err());
+    }
+
     #[test]
     fn a_name_that_isnt_there_says_so() {
         use super::pull_error;
@@ -2072,6 +2124,32 @@ mod tests {
     }
 
     #[test]
+    fn fonts_are_listed_once() {
+        let first = super::fonts_event();
+        let t = std::time::Instant::now();
+        let again = super::fonts_event();
+        assert!(std::ptr::eq(first, again) && t.elapsed() < std::time::Duration::from_millis(5));
+        let v: serde_json::Value = serde_json::from_str(first).unwrap();
+        assert_eq!(v["type"], "fonts");
+        assert!(v["families"].as_array().is_some_and(|a| !a.is_empty()) && v["mono"].is_array());
+    }
+
+    /// Run with `--ignored --nocapture` to see how long listing takes; Settings
+    /// asks once, off the main thread, and the page keeps the answer.
+    #[test]
+    #[ignore]
+    fn font_listing_time() {
+        for _ in 0..3 {
+            let t = std::time::Instant::now();
+            let all = super::window::font_families(false);
+            let a = t.elapsed();
+            let t = std::time::Instant::now();
+            let mono = super::window::font_families(true);
+            eprintln!("font_families: {} in {a:?}, mono {} in {:?}", all.len(), mono.len(), t.elapsed());
+        }
+    }
+
+    #[test]
     fn catalog_is_sorted_for_binary_search() {
         assert!(super::brands::IMAGES.windows(2).all(|w| w[0].0 < w[1].0));
         assert!(super::brands::BRANDS.windows(2).all(|w| w[0].0 < w[1].0));
@@ -2179,9 +2257,7 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         }
         // Settings: font lists, read off the main thread so the window keeps drawing.
         "fonts" => {
-            std::thread::spawn(|| {
-                emit(serde_json::json!({"type": "fonts", "families": window::font_families(false), "mono": window::font_families(true)}).to_string())
-            });
+            std::thread::spawn(|| emit(fonts_event().to_owned()));
             Ok(())
         }
         // About's Check now.
@@ -2217,13 +2293,7 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
             Ok(())
         }
         "restartengine" => {
-            std::thread::spawn(|| {
-                let began = std::time::Instant::now();
-                update::restart_engine();
-                emit(r#"{"type":"enginestale","version":null}"#.to_owned());
-                // The page's engine toast (as Windows sends after its restart).
-                emit(serde_json::json!({"type": "enginerestarted", "version": env!("CARGO_PKG_VERSION"), "ms": began.elapsed().as_millis() as u64}).to_string());
-            });
+            std::thread::spawn(restart_engine_now);
             Ok(())
         }
         "setpref" => {
@@ -2231,6 +2301,14 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
                 window::set_appearance(msg.value.as_str().unwrap_or("system"));
             }
             set_pref(&msg.name, msg.value);
+            Ok(())
+        }
+        // A language the page doesn't carry yet (it opens with one): its words,
+        // which the page adds and shows if it's the one picked.
+        "langwords" => {
+            if let Some(js) = lang::words_js(&msg.name) {
+                window::eval(js);
+            }
             Ok(())
         }
         "about" => tx.send(Cmd::About),
@@ -2245,20 +2323,31 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
                     crate::daemon::tls::untrust()
                 };
                 match result {
-                    Ok(()) if on => emit(notice(
-                        "ok",
-                        "Kiri's certificate is trusted: containers open over HTTPS",
-                    )),
-                    Ok(()) => emit(notice("ok", "Kiri's certificate is no longer trusted")),
-                    Err(e)
-                        if e.to_string().contains("canceled")
-                            || e.to_string().contains("cancelled") => {}
-                    Err(e) => emit(notice(
-                        "error",
-                        &format!("Could not change the certificate's trust: {e}"),
-                    )),
+                    Ok(()) if on => emit(notice("ok", &tr("Kiri's certificate is trusted: containers open over HTTPS"))),
+                    Ok(()) => emit(notice("ok", &tr("Kiri's certificate is no longer trusted"))),
+                    Err(e) if e.to_string().contains("canceled") || e.to_string().contains("cancelled") => {}
+                    Err(e) => emit(notice("error", &trf("Could not change the certificate's trust: {error}", &[("error", &e)]))),
                 }
                 emit(domains_event());
+            });
+            Ok(())
+        }
+        // The USB view: the computer's devices, and which are in Kiri.
+        "usb" => {
+            std::thread::spawn(|| emit(usb_words(crate::usb::ui_list()).to_string()));
+            Ok(())
+        }
+        // Attach asks for the password the first time (the USB helper).
+        "usbattach" | "usbdetach" => {
+            let (attach, key) = (msg.cmd == "usbattach", msg.name);
+            std::thread::spawn(move || {
+                let r = if attach { crate::usb::ui_attach(&key) } else { crate::usb::ui_detach(&key) };
+                match r {
+                    Ok(text) => emit(serde_json::json!({"type": "usbdone", "key": key, "text": usb_text(&text)}).to_string()),
+                    Err(e) if e.to_string().contains("canceled") || e.to_string().contains("cancelled") => emit(serde_json::json!({"type": "usbdone", "key": key}).to_string()),
+                    Err(e) => emit(serde_json::json!({"type": "usbdone", "key": key, "error": e.to_string()}).to_string()),
+                }
+                emit(usb_words(crate::usb::ui_list()).to_string());
             });
             Ok(())
         }
@@ -2330,16 +2419,10 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         "savesbom" => {
             match crate::scan::save_sbom(&msg.name, msg.id.parse().unwrap_or(0), &msg.path) {
                 Ok(to) => {
-                    emit(notice(
-                        "ok",
-                        &format!(
-                            "Saved the SBOM to Downloads as {}",
-                            to.file_name().unwrap_or_default().to_string_lossy()
-                        ),
-                    ));
+                    emit(notice("ok", &trf("Saved the SBOM to Downloads as {file}", &[("file", &to.file_name().unwrap_or_default().to_string_lossy())])));
                     reveal(&to);
                 }
-                Err(e) => emit(notice("error", &format!("Could not save the SBOM: {e}"))),
+                Err(e) => emit(notice("error", &trf("Could not save the SBOM: {error}", &[("error", &e)]))),
             }
             Ok(())
         }
@@ -2484,7 +2567,7 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
             let (builder, id) = (msg.name, msg.id);
             std::thread::spawn(move || {
                 if let Err(e) = crate::builds::remove(&builder, &id) {
-                    emit(notice("error", &format!("Couldn't remove the build: {e}")));
+                    emit(notice("error", &trf("Couldn't remove the build: {error}", &[("error", &e)])));
                 }
                 emit(
                     match crate::builds::list() {
@@ -2529,10 +2612,7 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
                     match crate::buildwith::choose(with) {
                         // Kiri's builder made now if it wasn't yet; it takes the choice.
                         Ok(()) => setup::ensure_builder(),
-                        Err(e) => emit(notice(
-                            "error",
-                            &format!("Couldn't change which builder docker build uses: {e}"),
-                        )),
+                        Err(e) => emit(notice("error", &trf("Couldn't change which builder docker build uses: {error}", &[("error", &e)]))),
                     }
                 }
                 emit(crate::buildwith::event());
@@ -2621,6 +2701,16 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
             std::thread::spawn(move || daemon(Some(body)));
             Ok(())
         }
+        // Settings → Domains: the routers' ports.
+        "routerports" => {
+            std::thread::spawn(|| router_ports(None));
+            Ok(())
+        }
+        "setrouterports" => {
+            let body = msg.value;
+            std::thread::spawn(move || router_ports(Some(body)));
+            Ok(())
+        }
         // Settings → Resources.
         "resources" => {
             std::thread::spawn(|| resources(None));
@@ -2637,11 +2727,8 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
                 let result = expect_ok(client::request("POST", "/kiri/sleep", None))
                     .and_then(|()| expect_ok(client::request("POST", "/kiri/wake", None)));
                 match result {
-                    Ok(()) => emit(notice(
-                        "ok",
-                        "The Linux VM restarted with the new resources",
-                    )),
-                    Err(e) => emit(notice("error", &format!("Could not restart the VM: {e}"))),
+                    Ok(()) => emit(notice("ok", &tr("The Linux VM restarted with the new resources"))),
+                    Err(e) => emit(notice("error", &trf("Could not restart the VM: {error}", &[("error", &e)]))),
                 }
                 resources(None);
             });
@@ -2673,6 +2760,110 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         // first) and out.
         "logins" | "login" | "logout" => {
             logins::handle(&msg.cmd, msg.name, &msg.value, emit, ensure_daemon);
+            Ok(())
+        }
+        // Signing in through the registry's own page (Pull from's Sign in).
+        "weblogin" | "webloginopen" | "webloginmfa" | "webloginsso" | "weblogincancel" | "awsprofiles" => {
+            weblogin::handle(&msg.cmd, msg.name, &msg.value, emit, ensure_daemon, term::captured);
+            Ok(())
+        }
+        // Compose: projects, a project's file, what Apply would do, Apply, logs.
+        "composeprojects" | "composefile" | "composeplan" | "composeapply" | "composelogs" | "composeforget" | "composecancel" | "composerestore" | "composeaction" => {
+            compose::handle(&msg.cmd, msg.name, &msg.value, compose_cli, compose_store, emit);
+            Ok(())
+        }
+        // Open a compose file…: the system's own dialog, on the window's
+        // thread; the path it gives stays here, the page gets the project.
+        "composeopen" => {
+            window::pick_compose_file(&tr("Open a compose file"), &[tr("Compose files"), tr("YAML files")], |path| compose::picked(path, compose_cli, compose_store, emit));
+            Ok(())
+        }
+        // Projects: linked local folders and importable .kirikit packs.
+        "projects" | "projectremove" | "projectscan" | "projectpin" | "projectmeta" | "projectrun"
+        | "projectbuild" | "projectcompose" | "projectreveal" | "projecttree" | "projectexport"
+        | "projectimport" | "projectadd" | "projectcancel"
+        | "projectmkdir" | "projectrmpath" | "projectwrite" | "projectcopyin"
+        | "projectread" | "projectsave" | "projectrename" | "projectexec" | "projectnewfile" => {
+            let (cmd, id, value) = (msg.cmd.clone(), msg.name.clone(), msg.value);
+            std::thread::spawn(move || {
+                let open_compose = {
+                    let emit = emit;
+                    move |path: std::path::PathBuf| {
+                        compose::picked(Some(path), compose_cli, compose_store, emit);
+                    }
+                };
+                projects::handle(&cmd, &id, &value, state_dir(), emit, open_compose);
+            });
+            Ok(())
+        }
+        // Create dialog chose "link a local folder": pick dir, then create with name/summary.
+        "projectlinkopen" => {
+            let name = msg.value.get("name").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let summary = msg.value.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let icon = msg.value.get("icon").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let color = msg.value.get("color").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            window::pick_project_dir(&tr("Link a project folder"), move |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = state_dir() {
+                        projects::add_linked_path(&state, path, name, summary, icon, color, emit);
+                    }
+                });
+            });
+            Ok(())
+        }
+        // Upload materials into an open project: pick files or a folder.
+        "projectuploadfiles" => {
+            let id = msg.name.clone();
+            let into = msg.value.get("into").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            window::pick_project_files(&tr("Upload files"), move |paths| {
+                if paths.is_empty() {
+                    return;
+                }
+                std::thread::spawn(move || {
+                    if let Some(state) = state_dir() {
+                        projects::copy_picked_into(&state, &id, paths, &into, emit);
+                    }
+                });
+            });
+            Ok(())
+        }
+        "projectuploaddir" => {
+            let id = msg.name.clone();
+            let into = msg.value.get("into").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            window::pick_project_dir(&tr("Upload a folder"), move |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = state_dir() {
+                        projects::copy_picked_into(&state, &id, vec![path], &into, emit);
+                    }
+                });
+            });
+            Ok(())
+        }
+        "projectimportopen" => {
+            window::pick_kit_file(&tr("Import a project kit"), |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = state_dir() {
+                        projects::import_kit_path(&state, path, emit);
+                    }
+                });
+            });
+            Ok(())
+        }
+        "projectexportopen" => {
+            let id = msg.name.clone();
+            let name = msg.value.get("name").and_then(|v| v.as_str()).unwrap_or("project");
+            let suggested = format!("{}.kirikit", name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>());
+            window::pick_kit_save(&tr("Export project kit"), &suggested, move |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = state_dir() {
+                        projects::export_kit_to(&state, &id, path, emit);
+                    }
+                });
+            });
             Ok(())
         }
         // Before Run: what the image's start script won't start without.
@@ -2717,7 +2908,7 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         }
         "terminal" => {
             if let Err(e) = detail::terminal(&msg.name) {
-                emit(notice("error", &format!("Could not open Terminal: {e}")));
+                emit(notice("error", &trf("Could not open Terminal: {error}", &[("error", &e)])));
             }
             Ok(())
         }
@@ -2732,16 +2923,10 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         "download" => {
             match detail::download(&msg.name, &msg.path) {
                 Ok(to) => {
-                    emit(notice(
-                        "ok",
-                        &format!(
-                            "Saved to Downloads as {}",
-                            to.file_name().unwrap_or_default().to_string_lossy()
-                        ),
-                    ));
+                    emit(notice("ok", &trf("Saved to Downloads as {file}", &[("file", &to.file_name().unwrap_or_default().to_string_lossy())])));
                     reveal(&to);
                 }
-                Err(e) => emit(notice("error", &format!("Could not save the file: {e}"))),
+                Err(e) => emit(notice("error", &trf("Could not save the file: {error}", &[("error", &e)]))),
             }
             Ok(())
         }
@@ -2772,22 +2957,8 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
                     h == "localhost" || h.ends_with(".kiri.localhost") || h.ends_with(".kiri.local")
                 });
             // A build warning's rule page (docs.docker.com/go/dockerfile/rule/…).
-            let docs = msg
-                .name
-                .strip_prefix("https://docs.docker.com/go/")
-                .is_some_and(|rest| {
-                    rest.bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"-/".contains(&b))
-                });
-            if local
-                || docs
-                || msg.name == "https://runkiri.com"
-                || msg.name == "https://runkiri.com/share/notice"
-                || msg.name == "https://canestack.com"
-                || msg.name == "https://github.com/libracoder/kiri/issues/new"
-                || msg.name == "https://github.com/libracoder/kiri"
-                || msg.name == "https://github.com/anchore/grype"
-            {
+            let docs = msg.name.strip_prefix("https://docs.docker.com/go/").is_some_and(|rest| rest.bytes().all(|b| b.is_ascii_alphanumeric() || b"-/".contains(&b)));
+            if local || docs || msg.name == "https://runkiri.com" || msg.name == "https://runkiri.com/share/notice" || msg.name == "https://canestack.com" || msg.name == "https://github.com/libracoder/kiri/issues/new" || msg.name == "https://github.com/libracoder/kiri" || msg.name == "https://github.com/anchore/grype" || msg.name == "https://login.docker.com/activate" || msg.name == "https://github.com/login/device" {
                 open(&msg.name);
             }
             Ok(())
@@ -2900,6 +3071,12 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         }
         // The page is loaded, so events sent from now on will land.
         "ready" => {
+            // Listing the fonts takes a second or two the first time: done
+            // now, off the main thread, so Settings has them at once.
+            std::thread::spawn(|| {
+                std::thread::sleep(Duration::from_secs(3));
+                fonts_event();
+            });
             if let Some(v) = view {
                 let mut ev = String::from(r#"{"type":"view","view":"#);
                 json_str(&mut ev, v);
@@ -2931,6 +3108,7 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
             // engine still on an older build.
             std::thread::spawn(|| update_check(false));
             recheck::start(|| feed_check(false));
+            ask_language();
             // The first time the app opens: ask, once, whether to use *.kiri.local (the Mac only, so far).
             if cfg!(target_os = "macos")
                 && !crate::flavor::dev()
@@ -2957,6 +3135,15 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
                 if linux::onboarding::needed(&checks) {
                     emit(checks.to_string());
                     return;
+                }
+            }
+            // The Mac: the first launch's steps that failed wait in the same
+            // checklist, over a window that works (the engine starts anyway).
+            #[cfg(target_os = "macos")]
+            {
+                let checks = macsetup::checks();
+                if macsetup::needed(&checks) {
+                    emit(checks.to_string());
                 }
             }
             let _ = tx.send(Cmd::Refresh);
@@ -3004,6 +3191,39 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
             emit(linux::onboarding::checks().to_string());
             Ok(())
         }
+        // The Mac's checklist: Try again for one step, Skip for an optional
+        // one; Open Kiri only closes it, the engine is already reached.
+        #[cfg(target_os = "macos")]
+        "onbcheck" => {
+            emit(macsetup::checks().to_string());
+            Ok(())
+        }
+        #[cfg(target_os = "macos")]
+        "onbfix" => {
+            let what = msg.name;
+            std::thread::spawn(move || {
+                // Fix all: every step still undone, in order.
+                let steps: Vec<String> = if what == "all" { crate::setup::undone().into_iter().map(|(s, _)| s.to_owned()).collect() } else { vec![what.clone()] };
+                // Every step is tried, even after one fails (not try_fold).
+                #[allow(clippy::manual_try_fold)]
+                let result = steps.iter().map(|s| crate::setup::retry(s)).fold(Ok(()), |acc, r| acc.and(r));
+                let mut checks = macsetup::checks();
+                if let Err(e) = result {
+                    diag::warn!("action failed", action = "setup step", target = what, error = e);
+                    checks["error"] = e.to_string().into();
+                }
+                emit(checks.to_string());
+            });
+            Ok(())
+        }
+        #[cfg(target_os = "macos")]
+        "onbskip" => {
+            macsetup::skip(&msg.name, msg.value.as_bool() == Some(false));
+            emit(macsetup::checks().to_string());
+            Ok(())
+        }
+        #[cfg(target_os = "macos")]
+        "onbopen" => tx.send(Cmd::Refresh),
         #[cfg(target_os = "linux")]
         "onbopen" => {
             let _ = tx.send(Cmd::Refresh);

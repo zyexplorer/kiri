@@ -6,10 +6,11 @@
 use std::io;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// The same fields as on macOS, so callers build one `Config`. On Linux,
@@ -25,7 +26,7 @@ pub struct Config {
     pub console: Option<OwnedFd>,
     pub agent_port: u32,
     pub disk: Option<PathBuf>,
-    pub share: Option<(PathBuf, String)>,
+    pub share: Option<crate::Share>,
     pub rosetta_tag: Option<String>,
     pub nat_mac: Option<String>,
 }
@@ -43,6 +44,13 @@ pub struct Vm {
     dir: PathBuf,
     child: Arc<Mutex<Child>>,
     events: Receiver<Event>,
+    closing: Arc<AtomicBool>,
+    retired: bool,
+}
+
+fn runtime_directory(root: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    root.join(format!("kiri-agent-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)))
 }
 
 /// A connection to one of the agent's ports.
@@ -70,8 +78,7 @@ impl Vm {
         // The agent's sockets take root commands, so their folder must be
         // root's alone: /run, not an inherited XDG_RUNTIME_DIR (`sudo -E`
         // keeps the user's, where they could have put the folder first).
-        let dir = PathBuf::from("/run").join(format!("kiri-agent-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = runtime_directory(Path::new("/run"));
         // Made private in one step; an existing entry (a planted folder or
         // link) fails it rather than being used.
         std::os::unix::fs::DirBuilderExt::mode(&mut std::fs::DirBuilder::new(), 0o700).create(&dir)?;
@@ -86,7 +93,9 @@ impl Vm {
         })?;
         let mut cmd = Command::new(&cfg.initrd);
         cmd.env("KIRI_AGENT_DIR", &dir).env_remove("KIRI_SOCKET");
-        if cfg.console.is_none() {
+        if let Some(fd) = cfg.console {
+            cmd.stderr(std::process::Stdio::from(fd.try_clone()?)).stdout(std::process::Stdio::from(fd));
+        } else {
             cmd.stdout(std::process::Stdio::null());
         }
         let child = Arc::new(Mutex::new(cmd.spawn().map_err(|e| io::Error::new(e.kind(), format!("starting {}: {e}", cfg.initrd.display())))?));
@@ -106,7 +115,7 @@ impl Vm {
                 }
             }
         })?;
-        Ok(Vm { dir, child, events })
+        Ok(Vm { dir, child, events, closing: Arc::new(AtomicBool::new(false)), retired: false })
     }
 
     pub fn next_event(&self, timeout: Duration) -> Option<Event> {
@@ -121,6 +130,28 @@ impl Vm {
         matches!(self.child.lock().unwrap_or_else(|e| e.into_inner()).try_wait(), Ok(None))
     }
 
+    /// Confirms process exit and completes cleanup before a successor starts.
+    pub fn retire(&mut self, graceful: Duration, forced: Duration) -> io::Result<()> {
+        if self.retired {
+            return Ok(());
+        }
+        self.closing.store(true, Ordering::Release);
+        let child = &self.child;
+        super::stop::retire(
+            || child.lock().unwrap_or_else(|e| e.into_inner()).try_wait().map(|s| s.is_some()),
+            |_| child.lock().unwrap_or_else(|e| e.into_inner()).kill(),
+            graceful,
+            forced,
+        )?;
+        match std::fs::remove_dir_all(&self.dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+        self.retired = true;
+        Ok(())
+    }
+
     /// No balloon: the agent shares the host's memory as it is.
     pub fn set_memory_target(&self, _bytes: u64) -> Option<u64> {
         None
@@ -128,6 +159,9 @@ impl Vm {
 
     /// Accepts the agent's connections to `port`.
     pub fn listen(&self, port: u32, handler: Handler) -> io::Result<()> {
+        if self.closing.load(Ordering::Acquire) {
+            return Err(io::Error::new(io::ErrorKind::NotConnected, "the VM is retiring"));
+        }
         let path = self.dir.join(format!("h{port}.sock"));
         let _ = std::fs::remove_file(&path);
         let l = UnixListener::bind(&path)?;
@@ -147,7 +181,7 @@ impl Vm {
     /// What opens streams to the agent's ports from any thread, while the
     /// `Vm` itself is kept elsewhere.
     pub fn connector(&self) -> Connector {
-        Connector { dir: self.dir.clone() }
+        Connector { dir: self.dir.clone(), closing: self.closing.clone() }
     }
 }
 
@@ -155,6 +189,7 @@ impl Vm {
 #[derive(Debug)]
 pub struct Connector {
     dir: PathBuf,
+    closing: Arc<AtomicBool>,
 }
 
 impl Connector {
@@ -164,6 +199,9 @@ impl Connector {
         let path = self.dir.join(format!("g{port}.sock"));
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
+            if self.closing.load(Ordering::Acquire) {
+                return Err(io::Error::new(io::ErrorKind::NotConnected, "the VM is retiring"));
+            }
             match UnixStream::connect(&path) {
                 Ok(s) => return Ok(VsockStream { fd: OwnedFd::from(s) }),
                 Err(e) if Instant::now() < deadline && matches!(e.kind(), io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused) => {
@@ -177,8 +215,93 @@ impl Connector {
 
 impl Drop for Vm {
     fn drop(&mut self) {
+        if self.retired {
+            return;
+        }
+        self.closing.store(true, Ordering::Release);
         self.force_stop();
         let _ = self.child.lock().unwrap_or_else(|e| e.into_inner()).wait();
         let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let root = runtime_directory(&std::env::temp_dir());
+            std::fs::create_dir(&root).unwrap();
+            Self(root)
+        }
+
+        fn vm(&self, name: &str, child: Child) -> Vm {
+            let dir = self.0.join(name);
+            std::fs::create_dir(&dir).unwrap();
+            let (_, events) = mpsc::channel();
+            Vm { dir, child: Arc::new(Mutex::new(child)), events, closing: Arc::new(AtomicBool::new(false)), retired: false }
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn retirement_waits_for_a_natural_exit_and_finishes_cleanup() {
+        let fixture = Fixture::new();
+        let marker = fixture.0.join("flushed");
+        let child = Command::new("/bin/sh").args(["-c", "printf flushed > \"$1\"", "sh"]).arg(&marker).spawn().unwrap();
+        let mut vm = fixture.vm("natural", child);
+        let dir = vm.dir.clone();
+        vm.retire(Duration::from_secs(2), Duration::from_secs(1)).unwrap();
+        assert!(vm.child.lock().unwrap().try_wait().unwrap().unwrap().success(), "retirement must allow the graceful flush to finish");
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "flushed");
+        assert!(!dir.exists());
+        vm.retire(Duration::ZERO, Duration::ZERO).unwrap();
+    }
+
+    #[test]
+    fn retained_old_handles_cannot_reach_or_delete_the_successor() {
+        let fixture = Fixture::new();
+        let child = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+        let mut old = fixture.vm("generation", child);
+        let connector = old.connector();
+        let dir = old.dir.clone();
+        old.retire(Duration::ZERO, Duration::from_secs(2)).unwrap();
+        assert!(old.child.lock().unwrap().try_wait().unwrap().is_some(), "force-stop success must mean the child was reaped");
+        assert!(!dir.exists());
+        std::fs::create_dir(&dir).unwrap();
+        let listener = UnixListener::bind(dir.join("g123.sock")).unwrap();
+        assert_eq!(connector.connect(123).unwrap_err().kind(), io::ErrorKind::NotConnected);
+        drop(old);
+        assert!(dir.exists(), "late destruction of a retired VM must not remove successor resources");
+        assert!(dir.join("g123.sock").exists());
+        drop(listener);
+    }
+
+    #[test]
+    fn cleanup_failure_retains_ownership_and_can_be_retried() {
+        let fixture = Fixture::new();
+        let child = Command::new("/bin/sleep").arg("60").spawn().unwrap();
+        let mut vm = fixture.vm("cleanup", child);
+        std::fs::remove_dir(&vm.dir).unwrap();
+        std::fs::write(&vm.dir, b"not a directory").unwrap();
+        assert!(vm.retire(Duration::ZERO, Duration::from_secs(2)).is_err());
+        assert!(!vm.retired, "cleanup failure must not authorize a successor");
+        assert!(vm.dir.is_file());
+        std::fs::remove_file(&vm.dir).unwrap();
+        std::fs::create_dir(&vm.dir).unwrap();
+        vm.retire(Duration::ZERO, Duration::from_secs(2)).unwrap();
+        assert!(vm.retired);
+    }
+
+    #[test]
+    fn runtime_directories_belong_to_one_generation() {
+        let root = Path::new("/run");
+        assert_ne!(runtime_directory(root), runtime_directory(root));
     }
 }
