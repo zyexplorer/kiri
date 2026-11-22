@@ -1322,7 +1322,11 @@ tr.warnrow .name > div:last-child { min-width: 0; } tr.warnrow :is(.wtitle, .sub
 .ed pre { color: var(--text); pointer-events: none; }
 .ed textarea { background: transparent; color: transparent; caret-color: var(--text); resize: none; outline: none; }
 .ed textarea::selection { background: color-mix(in srgb, var(--blue) 28%, transparent); color: transparent; }
-.ed .k { color: var(--blue-light); } .ed .s { color: var(--moss); } .ed .c { color: var(--faint); font-style: italic; } .ed .top { color: var(--blue-light); font-weight: 600; }
+/* Scrollbars: hand cursor on the thumb / track (WebView2 / Chromium). */
+.ed textarea::-webkit-scrollbar,
+.ed textarea::-webkit-scrollbar-thumb,
+.ed textarea::-webkit-scrollbar-track,
+.ed textarea::-webkit-scrollbar-corner { cursor: pointer; }
 .ed .chl { background: color-mix(in srgb, var(--sun) 9%, transparent); box-shadow: inset 2px 0 0 var(--sun); display: inline-block; width: 100%; }
 .ed .chl.bad { background: color-mix(in srgb, var(--red) 12%, transparent); box-shadow: inset 2px 0 0 var(--red); }
 .plan { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
@@ -2397,7 +2401,13 @@ body.sway .is-art .load { animation: sway 1.2s ease-in-out; }
 .notes-row .tree-toggle { width: 22px; height: 22px; margin-left: auto; flex: none; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; padding: 0; }
 .notes-row .tree-toggle:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
 .notes-row .tree-toggle svg { width: 13px; height: 13px; fill: currentColor; }
-.notes-row.drop { background: color-mix(in srgb, var(--blue) 18%, transparent); outline: 1px dashed color-mix(in srgb, var(--blue) 55%, var(--line)); outline-offset: -1px; }
+.notes-row.drop-into { background: color-mix(in srgb, var(--blue) 18%, transparent); outline: 1px dashed color-mix(in srgb, var(--blue) 55%, var(--line)); outline-offset: -1px; }
+.notes-row.drop-before::before, .notes-row.drop-after::after {
+  content: ""; position: absolute; left: 6px; right: 6px; height: 2px; border-radius: 1px;
+  background: color-mix(in srgb, var(--blue) 85%, var(--line)); pointer-events: none; z-index: 2;
+}
+.notes-row.drop-before::before { top: 0; }
+.notes-row.drop-after::after { bottom: 0; }
 .notes-row.dragging { opacity: .45; }
 .notes-row .twist { width: 20px; height: 26px; display: grid; place-items: center; flex: none; border: 0; background: transparent; color: var(--faint); border-radius: 6px; cursor: pointer; padding: 0; }
 .notes-row .twist:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
@@ -8699,13 +8709,10 @@ function cmpLines(text) {
   return out;
 }
 function cmpHl(text, saved, bad) {
+  // Same YAML colouring as the Projects editor (keys, strings, $VAR / ${…}).
   const was = new Set(saved.split("\n"));
   return text.split("\n").map((l, i) => {
-    let h = esc(l);
-    if (/^\s*#/.test(l)) h = `<span class="c">${h}</span>`;
-    else h = h.replace(/^(\s*)(- )?([\w.-]+)(:)(\s|$)/, (m, sp, dash, k, c, after) => `${sp}${dash || ""}<span class="${sp.length ? "k" : "top"}">${k}</span>${c}${after}`)
-      .replace(/(&quot;[^&]*&quot;|&#39;[^&]*&#39;)/g, '<span class="s">$1</span>');
-    const line = h || " ";
+    const line = projHlYaml(l) || " ";
     return bad === i + 1 ? `<span class="chl bad">${line}</span>` : !was.has(l) ? `<span class="chl">${line}</span>` : line;
   }).join("\n");
 }
@@ -9373,9 +9380,10 @@ function projHlYaml(src) {
   return src.split(/(\n)/).map((line) => {
     if (line === "\n") return "\n";
     const cm = line.match(/^(\s*)(#.*)$/);
-    if (cm) return esc(cm[1]) + PROJ_HL.tok("c", cm[2]);
+    // Comments stay muted, but $VAR / ${…} inside still get the placeholder colour.
+    if (cm) return esc(cm[1]) + projHlWithPh(cm[2], "c");
     let m = line.match(/^(\s*)(- )(\s*)(.*)$/);
-    let lead = "", mark = "", rest = line;
+    let lead = "", rest = line;
     if (m) { lead = esc(m[1]) + PROJ_HL.tok("o", m[2]) + esc(m[3]); rest = m[4]; }
     else {
       m = line.match(/^(\s*)(.*)$/);
@@ -17311,7 +17319,7 @@ function notesTreeHtml(nodes, depth) {
         ? `<svg class="ic star" viewBox="0 0 256 256" aria-hidden="true" title="${tr("Collected note")}"><path d="${PH.starfill}"/></svg>`
         : "";
       const drag = renaming ? "" : ` draggable="true" data-notedrag="${esc(n.id)}"`;
-      html += `<div class="notes-row" role="button" tabindex="0" data-noteid="${esc(n.id)}"${drag} data-notekind="note" aria-current="${n.id === N.id}" ${pad}${n.collected ? ` data-collected="1"` : ""}>
+      html += `<div class="notes-row" role="button" tabindex="0" data-noteid="${esc(n.id)}" data-notedrop="${esc(n.id)}"${drag} data-notekind="note" aria-current="${n.id === N.id}" ${pad}${n.collected ? ` data-collected="1"` : ""}>
         ${star}
         <span class="twist leaf"></span>
         <svg class="ic" viewBox="0 0 256 256" aria-hidden="true"><path d="${PH.notepad}"/></svg>
@@ -17407,15 +17415,81 @@ function notesOpenCtx(ev, kind, id, name) {
   menu.style.left = `${Math.max(8, x)}px`;
   menu.style.top = `${Math.max(8, y)}px`;
 }
-function notesCanDrop(parent, dragId, dragKind) {
+function notesParentOf(id) {
+  if (!id) return "";
+  const i = id.lastIndexOf("/");
+  return i < 0 ? "" : id.slice(0, i);
+}
+function notesChildrenIds(parent) {
+  const root = ui.notes.tree || [];
+  if (!parent) return root.map((n) => n.id);
+  const find = (nodes) => {
+    for (const n of nodes || []) {
+      if (n.kind === "folder" && n.id === parent) return (n.children || []).map((c) => c.id);
+      if (n.kind === "folder") {
+        const hit = find(n.children || []);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  };
+  return find(root) || [];
+}
+function notesNextSibling(parent, id) {
+  const kids = notesChildrenIds(parent);
+  const i = kids.indexOf(id);
+  return i >= 0 && i + 1 < kids.length ? kids[i + 1] : "";
+}
+/** Resolve drop: into a folder/root, or before/after a sibling row. */
+function notesDropResolve(row, clientY) {
+  if (!row) return null;
+  const kind = row.dataset.notekind || "";
+  const id = row.dataset.notedrop ?? "";
+  if (kind === "root") return { parent: "", before: "", mode: "into" };
+  const rect = row.getBoundingClientRect();
+  const y = (clientY - rect.top) / Math.max(rect.height, 1);
+  if (kind === "folder") {
+    if (y < 0.28) {
+      const parent = notesParentOf(id);
+      return { parent, before: id, mode: "before" };
+    }
+    if (y > 0.72) {
+      const parent = notesParentOf(id);
+      return { parent, before: notesNextSibling(parent, id), mode: "after" };
+    }
+    return { parent: id, before: "", mode: "into" };
+  }
+  // Note row: top → before, bottom → after (same parent).
+  const parent = notesParentOf(id);
+  if (y < 0.5) return { parent, before: id, mode: "before" };
+  return { parent, before: notesNextSibling(parent, id), mode: "after" };
+}
+function notesCanDrop(parent, dragId, dragKind, before) {
   if (!dragId) return false;
   if (parent === dragId) return false;
   if (dragKind === "folder" && parent && (parent === dragId || parent.startsWith(dragId + "/"))) return false;
-  const cur = dragId.includes("/") ? dragId.slice(0, dragId.lastIndexOf("/")) : "";
-  return parent !== cur;
+  if (before && (before === dragId || before.startsWith(dragId + "/"))) return false;
+  // Same-parent reorder and cross-folder moves are both allowed.
+  return true;
 }
-function notesMoveTo(id, parent) {
-  send("notemove", { id, value: { parent: parent || "" } });
+function notesMoveTo(id, parent, before) {
+  const value = { parent: parent || "" };
+  // Always send `before` so same-parent append still reorders (empty = end).
+  if (before !== undefined) value.before = before || "";
+  send("notemove", { id, value });
+}
+function notesClearDropMarks() {
+  $("content").querySelectorAll(".notes-row.drop-into, .notes-row.drop-before, .notes-row.drop-after, .notes-row.dragging")
+    .forEach((el) => el.classList.remove("drop-into", "drop-before", "drop-after", "dragging"));
+}
+function notesDropIsNoop(dragId, target) {
+  if (!target || !dragId) return true;
+  if (target.before === dragId) return true;
+  const curParent = notesParentOf(dragId);
+  if (target.parent !== curParent) return false;
+  // Same parent: before the next sibling (or append while already last) is a no-op.
+  const next = notesNextSibling(curParent, dragId);
+  return (target.before || "") === (next || "");
 }
 function renderNotes() {
   if (held(renderNotes)) return;
@@ -17913,30 +17987,37 @@ $("content").addEventListener("dragstart", (ev) => {
 });
 $("content").addEventListener("dragend", () => {
   ui.notes.drag = null;
-  $("content").querySelectorAll(".notes-row.drop, .notes-row.dragging").forEach((el) => el.classList.remove("drop", "dragging"));
+  notesClearDropMarks();
 });
 $("content").addEventListener("dragover", (ev) => {
   if (ui.view !== "notes" || !ui.notes.drag) return;
-  const drop = ev.target.closest("[data-notedrop]");
-  $("content").querySelectorAll(".notes-row.drop").forEach((el) => el.classList.remove("drop"));
-  if (!drop) return;
-  const parent = drop.dataset.notedrop || "";
-  if (!notesCanDrop(parent, ui.notes.drag.id, ui.notes.drag.kind)) return;
+  const row = ev.target.closest(".notes-row[data-notedrop]");
+  $("content").querySelectorAll(".notes-row.drop-into, .notes-row.drop-before, .notes-row.drop-after")
+    .forEach((el) => el.classList.remove("drop-into", "drop-before", "drop-after"));
+  if (!row) return;
+  const target = notesDropResolve(row, ev.clientY);
+  if (!target) return;
+  const { id, kind } = ui.notes.drag;
+  if (!notesCanDrop(target.parent, id, kind, target.before)) return;
+  if (notesDropIsNoop(id, target)) return;
   ev.preventDefault();
-  drop.classList.add("drop");
+  row.classList.add(target.mode === "into" ? "drop-into" : target.mode === "before" ? "drop-before" : "drop-after");
   try { ev.dataTransfer.dropEffect = "move"; } catch {}
 });
 $("content").addEventListener("drop", (ev) => {
   if (ui.view !== "notes" || !ui.notes.drag) return;
-  const drop = ev.target.closest("[data-notedrop]");
-  if (!drop) return;
-  const parent = drop.dataset.notedrop || "";
+  const row = ev.target.closest(".notes-row[data-notedrop]");
+  if (!row) return;
+  const target = notesDropResolve(row, ev.clientY);
+  if (!target) return;
   const { id, kind } = ui.notes.drag;
-  if (!notesCanDrop(parent, id, kind)) return;
+  if (!notesCanDrop(target.parent, id, kind, target.before)) return;
+  if (notesDropIsNoop(id, target)) return;
   ev.preventDefault();
-  if (parent) ui.notes.open[parent] = true;
-  notesMoveTo(id, parent);
+  if (target.mode === "into" && target.parent) ui.notes.open[target.parent] = true;
+  notesMoveTo(id, target.parent, target.before);
   ui.notes.drag = null;
+  notesClearDropMarks();
 });
 document.addEventListener("keydown", (ev) => {
   if (ui.view !== "notes") return;
