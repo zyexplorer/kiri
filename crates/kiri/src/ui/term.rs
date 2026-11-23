@@ -355,7 +355,20 @@ fn open(id: &str, shell: &Path, cols: u16, rows: u16, cwd: Option<PathBuf>, emit
     }
     let path = std::env::var_os("PATH").unwrap_or_default();
     let path = std::env::join_paths(tool_dirs().into_iter().chain(std::env::split_paths(&path))).unwrap_or(path);
-    cmd.env("PATH", path).env("TERM", "xterm-256color").env("COLORTERM", "truecolor").env("TERM_PROGRAM", "Kiri").env_remove("TERM_PROGRAM_VERSION");
+    cmd.env("PATH", path)
+        .env("TERM", "xterm-256color")
+        .env("COLORTERM", "truecolor")
+        .env("TERM_PROGRAM", "Kiri")
+        .env("FORCE_COLOR", "3")
+        .env("CLICOLOR", "1")
+        .env("CLICOLOR_FORCE", "1")
+        .env("COMPOSE_ANSI", "auto")
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "color.ui")
+        .env("GIT_CONFIG_VALUE_0", "always")
+        .env("npm_config_color", "always")
+        .env_remove("TERM_PROGRAM_VERSION")
+        .env_remove("NO_COLOR");
     if std::env::var_os("LANG").is_none() {
         cmd.env("LANG", "en_US.UTF-8");
     }
