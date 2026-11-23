@@ -191,17 +191,47 @@ fn quiet(program: &str) -> Command {
     let mut c = crate::win::tool(program);
     std::os::windows::process::CommandExt::creation_flags(&mut c, CREATE_NO_WINDOW);
     c.stdin(Stdio::null());
+    // wsl.exe defaults to UTF-16; Chinese error text then mojibakes if we only
+    // sniff "ASCII UTF-16". Prefer UTF-8 when the installed WSL honours it.
+    if program.eq_ignore_ascii_case("wsl.exe") {
+        c.env("WSL_UTF8", "1");
+    }
     c
 }
 
-/// WSL's own output is UTF-16.
+/// Decode WSL stdout/stderr. Listing is historically UTF-16LE; with
+/// `WSL_UTF8=1` (and some newer builds) it is UTF-8. Chinese messages in
+/// UTF-16 have non-zero high bytes, so an ASCII-only UTF-16 sniff is not
+/// enough — otherwise CJK becomes the garbage shown on the setup error row.
 fn wsl_text(bytes: &[u8]) -> String {
-    if bytes.len() >= 2 && bytes.iter().skip(1).step_by(2).take(8).all(|&b| b == 0) {
-        let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-        String::from_utf16_lossy(&units).replace('\0', "")
-    } else {
-        String::from_utf8_lossy(bytes).into_owned()
+    let bytes = match bytes {
+        [0xFF, 0xFE, rest @ ..] => rest,
+        b => b,
+    };
+    if bytes.is_empty() {
+        return String::new();
     }
+    if is_utf16_le(bytes) {
+        return utf16_le(bytes);
+    }
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn is_utf16_le(bytes: &[u8]) -> bool {
+    if bytes.len() < 2 || bytes.len() % 2 != 0 {
+        return false;
+    }
+    // ASCII UTF-16LE: high bytes are 0 for the first code units.
+    if bytes.iter().skip(1).step_by(2).take(8).all(|&b| b == 0) {
+        return true;
+    }
+    // CJK UTF-16LE is almost never valid UTF-8 — take UTF-16 then.
+    std::str::from_utf8(bytes).is_err()
+}
+
+fn utf16_le(bytes: &[u8]) -> String {
+    let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    String::from_utf16_lossy(&units).replace('\0', "")
 }
 
 fn wsl_installed() -> bool {
@@ -1098,5 +1128,21 @@ mod tests {
         assert_eq!(super::test_failure(run), "the test container did not run: no space left on device");
         assert_eq!(super::test_failure("something odd\n"), "the test container did not run: something odd");
         assert_eq!(super::test_failure(""), "the test container did not run");
+    }
+
+    #[test]
+    fn wsl_text_reads_utf16_ascii_and_cjk_and_utf8() {
+        // English UTF-16LE (high bytes 0) — the old sniff path.
+        let en: Vec<u8> = "Error code: 0x80070005\0".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert!(super::wsl_text(&en).contains("Error code: 0x80070005"));
+        // Chinese UTF-16LE — high bytes non-zero; old sniff fell through to UTF-8 lossy → mojibake.
+        let zh: Vec<u8> = "由于虚拟磁盘系统的限制，无法完成请求的操作。\0".encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(super::wsl_text(&zh).trim_end_matches('\0').trim(), "由于虚拟磁盘系统的限制，无法完成请求的操作。");
+        // UTF-8 (WSL_UTF8=1).
+        assert_eq!(super::wsl_text("导入失败".as_bytes()), "导入失败");
+        // BOM UTF-16LE.
+        let mut bom = vec![0xFF, 0xFE];
+        bom.extend("WSL\0".encode_utf16().flat_map(u16::to_le_bytes));
+        assert!(super::wsl_text(&bom).starts_with("WSL"));
     }
 }
