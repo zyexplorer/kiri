@@ -8,7 +8,8 @@
 //! directory; else the home folder); `input` with the bytes typed (base64);
 //! `resize` with `{cols, rows}`; `close`; `closeall` when the page starts;
 //! `paste`; and `copy` with the text. The app answers with events of type
-//! `term`: `shells`, `data` (output, base64), `exit`, `paste`.
+//! `term`: `shells`, `data`
+//! (output, base64), `exit`, `paste`.
 //!
 //! Output and input go as base64: a read can end in the middle of a UTF-8
 //! character, and programs send bytes that aren't text at all.
@@ -39,13 +40,31 @@ pub fn size(v: &Value) -> (u16, u16) {
 
 /// Optional working directory from `{cwd}`: must already exist as a directory.
 /// Canonicalized so the page can't point at a missing or non-dir path.
+/// On Windows, strips the `\\?\` verbatim prefix — otherwise PowerShell's
+/// prompt becomes `Microsoft.PowerShell.Core\FileSystem::\\?\D:\…`.
 pub fn cwd(v: &Value) -> Option<PathBuf> {
     let s = v.get("cwd").and_then(|x| x.as_str())?.trim();
     if s.is_empty() || s.len() > 4096 {
         return None;
     }
     let p = PathBuf::from(s);
-    std::fs::canonicalize(&p).ok().filter(|c| c.is_dir())
+    std::fs::canonicalize(&p).ok().filter(|c| c.is_dir()).map(plain_path)
+}
+
+/// Windows' canonical form `\\?\C:\x` → `C:\x`, `\\?\UNC\server\share\x` →
+/// `\\server\share\x`. Other platforms leave the path as-is.
+fn plain_path(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        let b = rest.as_bytes();
+        if b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {
+            return PathBuf::from(rest);
+        }
+    }
+    p
 }
 
 pub fn shells(list: &[Shell], default: &str) -> String {
@@ -182,7 +201,20 @@ mod tests {
         let dir = std::env::temp_dir();
         let got = cwd(&json!({"cwd": dir.to_string_lossy()}));
         assert!(got.as_ref().is_some_and(|p| p.is_dir()));
+        // Windows canonicalize yields \\?\… — the shell must not see that.
+        if let Some(p) = &got {
+            let s = p.to_string_lossy();
+            assert!(!s.starts_with(r"\\?\"), "{s}");
+        }
         assert!(cwd(&json!({"cwd": "/no/such/kiri/dir/ever"})).is_none());
         assert!(cwd(&json!({})).is_none());
+    }
+
+    #[test]
+    fn plain_path_strips_windows_verbatim_prefix() {
+        assert_eq!(plain_path(PathBuf::from(r"\\?\C:\Users\a")), PathBuf::from(r"C:\Users\a"));
+        assert_eq!(plain_path(PathBuf::from(r"\\?\UNC\server\share\x")), PathBuf::from(r"\\server\share\x"));
+        assert_eq!(plain_path(PathBuf::from(r"C:\Users\a")), PathBuf::from(r"C:\Users\a"));
+        assert_eq!(plain_path(PathBuf::from("/tmp/x")), PathBuf::from("/tmp/x"));
     }
 }
