@@ -300,7 +300,11 @@ fn copy_in(conn: &mut fs::File, spec: &CopySpec<'_>) -> io::Result<()> {
                     }
                 }
             }
-            entry.unpack_in(dest)?;
+            let path = entry.path()?.into_owned();
+            // `docker cp` and the classic build's context keep a time of 0.
+            if entry.unpack_in(dest)? {
+                super::layers::keep_zero_time(dest, &path, entry.header())?;
+            }
         }
     }
     // The archive's trailing padding: read it so the host's writes complete.

@@ -31,10 +31,10 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::mem::ManuallyDrop;
 use std::os::fd::FromRawFd;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, FileExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod console;
@@ -105,6 +105,12 @@ impl Level {
 static PART: OnceLock<Part> = OnceLock::new();
 /// The original stderr once [`capture_stderr`] has taken fd 2; -1 before.
 static ECHO: AtomicI32 = AtomicI32::new(-1);
+/// The original stderr's size as last counted, when it's a file [`echo`]
+/// keeps under [`MAX_LOG`]; -1 when it isn't (a terminal, journald).
+static ECHO_SIZE: AtomicI64 = AtomicI64::new(-1);
+/// The same file as the original stderr, open for reading: launchd opens
+/// `~/.kiri/daemon.log` write-only.
+static ECHO_READ: OnceLock<File> = OnceLock::new();
 
 /// This process's part; `cli` until [`init`] says otherwise.
 pub fn part() -> Part {
@@ -377,7 +383,81 @@ fn echo(text: &str) {
     // SAFETY: `fd` is the dup of stderr this module owns and never closes;
     // ManuallyDrop keeps the File from closing it.
     let mut f = ManuallyDrop::new(unsafe { File::from_raw_fd(fd) });
-    let _ = f.write_all(format!("{text}\n").as_bytes());
+    let line = format!("{text}\n");
+    let _ = f.write_all(line.as_bytes());
+    // Nothing rotates the engine's ~/.kiri/daemon.log (launchd only appends),
+    // and logs/daemon.log already has these lines: keep it bounded here.
+    // Counted, not stat'ed per line; what else writes to it (stdout) is
+    // caught up when it's trimmed.
+    if ECHO_SIZE.load(Ordering::Relaxed) < 0 {
+        return;
+    }
+    let size = ECHO_SIZE.fetch_add(line.len() as i64, Ordering::Relaxed) + line.len() as i64;
+    if size as u64 <= MAX_LOG {
+        return;
+    }
+    static TRIM: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let Ok(_held) = TRIM.try_lock() else { return };
+    let kept = ECHO_READ.get().ok_or_else(|| io::Error::other("no reader")).and_then(|r| keep_tail(&f, r, MAX_LOG, ECHO_KEEP));
+    // A file that can't be trimmed isn't tried again on every line.
+    ECHO_SIZE.store(kept.map_or(-1, |n| n as i64), Ordering::Relaxed);
+}
+
+/// What's left of the original stderr once it passes [`MAX_LOG`]: the
+/// output just before a crash stays for `kiri diag report`.
+const ECHO_KEEP: u64 = 1 << 20;
+
+/// Cuts a file opened for append (`file`, with `read` on the same file) to
+/// its last `keep` bytes, from a line start, once it's past `max`. Returns
+/// its size.
+fn keep_tail(file: &File, read: &File, max: u64, keep: u64) -> io::Result<u64> {
+    let len = file.metadata()?.len();
+    if len <= max {
+        return Ok(len);
+    }
+    // One byte more: a tail that starts right after a newline keeps its
+    // first line.
+    let mut tail = vec![0; (keep + 1).min(len) as usize];
+    let from = len - tail.len() as u64;
+    read.read_exact_at(&mut tail, from)?;
+    let start = tail.iter().position(|&b| b == b'\n').map_or(0, |i| i + 1);
+    file.set_len(0)?;
+    // Opened for append, so this lands at the new end, as later lines do.
+    let mut w = file;
+    w.write_all(&tail[start..])?;
+    Ok((tail.len() - start) as u64)
+}
+
+/// The original stderr, when it's a regular file opened for append: its
+/// size, and the same file opened for reading.
+fn appended_file(fd: i32, f: &File) -> Option<(u64, File)> {
+    let meta = f.metadata().ok()?;
+    // SAFETY: F_GETFL on a descriptor this module owns.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if !meta.is_file() || flags < 0 || flags & libc::O_APPEND == 0 {
+        return None;
+    }
+    let read = File::open(fd_path(fd)?).ok()?;
+    let same = read.metadata().ok().is_some_and(|m| m.dev() == meta.dev() && m.ino() == meta.ino());
+    same.then_some((meta.len(), read))
+}
+
+#[cfg(target_os = "macos")]
+fn fd_path(fd: i32) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut buf = [0u8; libc::PATH_MAX as usize];
+    // SAFETY: F_GETPATH writes at most PATH_MAX bytes, NUL included, into buf.
+    if unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } < 0 {
+        return None;
+    }
+    let end = buf.iter().position(|&b| b == 0)?;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..end])))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn fd_path(fd: i32) -> Option<PathBuf> {
+    // Opening this opens the file anew, with its own access mode.
+    Some(PathBuf::from(format!("/proc/self/fd/{fd}")))
 }
 
 /// Sends fd 2 through a pipe: every line written to stderr (an
@@ -409,6 +489,12 @@ pub fn capture_stderr() {
         libc::fcntl(orig, libc::F_SETFD, libc::FD_CLOEXEC);
         (fds[0], orig)
     };
+    // SAFETY: `orig` is this module's; ManuallyDrop keeps it open.
+    let file = ManuallyDrop::new(unsafe { File::from_raw_fd(orig) });
+    if let Some((size, read)) = appended_file(orig, &file) {
+        let _ = ECHO_READ.set(read);
+        ECHO_SIZE.store(size as i64, Ordering::Relaxed);
+    }
     ECHO.store(orig, Ordering::Relaxed);
     // SAFETY: the pipe's read end, owned from here by the thread.
     let reader = unsafe { File::from_raw_fd(read) };
@@ -460,6 +546,7 @@ pub fn capture_stderr() {
     if spawned.is_err() {
         // Nobody would drain the pipe: put stderr back.
         ECHO.store(-1, Ordering::Relaxed);
+        ECHO_SIZE.store(-1, Ordering::Relaxed);
         // SAFETY: `orig` is still the copy of stderr.
         unsafe { libc::dup2(orig, 2) };
     }
@@ -830,6 +917,51 @@ mod tests {
         assert_eq!(read(&rotated(&path, 1)), "67");
         assert_eq!(read(&rotated(&path, 2)), "45");
         assert!(!rotated(&path, 3).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_original_stderr_keeps_its_last_lines() {
+        let dir = temp("echo");
+        let path = dir.join("daemon.log");
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(&path).unwrap();
+        let read = File::open(&path).unwrap();
+        // 10 bytes a line, 100 lines.
+        let mut w = &file;
+        for i in 0..100 {
+            writeln!(w, "line {i:04}").unwrap();
+        }
+        assert_eq!(keep_tail(&file, &read, 1000, 25).unwrap(), 1000, "at the limit, left alone");
+        writeln!(w, "line 0100").unwrap();
+        // 25 bytes back is mid-line: it starts at the next whole one.
+        assert_eq!(keep_tail(&file, &read, 1000, 25).unwrap(), 20);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "line 0099\nline 0100\n");
+        // Later lines go on at the end.
+        writeln!(w, "line 0101").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "line 0099\nline 0100\nline 0101\n");
+        // 20 bytes back is a line start: that line stays.
+        assert_eq!(keep_tail(&file, &read, 25, 20).unwrap(), 20);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "line 0100\nline 0101\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_file_opened_for_append_is_trimmed() {
+        use std::os::fd::AsRawFd;
+        let dir = temp("appended");
+        let path = dir.join("daemon.log");
+        std::fs::write(&path, "early\n").unwrap();
+        let file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let (size, read) = appended_file(file.as_raw_fd(), &file).expect("a file opened for append");
+        assert_eq!(size, 6);
+        let mut text = String::new();
+        io::Read::read_to_string(&mut &read, &mut text).unwrap();
+        assert_eq!(text, "early\n");
+        let plain = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        assert!(appended_file(plain.as_raw_fd(), &plain).is_none(), "written in place");
+        let (r, _w) = std::io::pipe().unwrap();
+        let pipe: File = std::os::fd::OwnedFd::from(r).into();
+        assert!(appended_file(pipe.as_raw_fd(), &pipe).is_none(), "a pipe, as journald's stream");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

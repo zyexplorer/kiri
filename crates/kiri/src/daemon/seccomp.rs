@@ -1529,12 +1529,52 @@ mod tests {
         assert_eq!(answer(P00_S1279, [15, 2, 8]), RET_KILL_PROCESS);
     }
 
+    /// This thread's CPU time: what compiling costs, which other work on a
+    /// busy machine does not add to as it adds to wall time.
+    fn thread_cpu() -> std::time::Duration {
+        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: `ts` is a valid timespec for the call to fill.
+        assert_eq!(unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) }, 0);
+        std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+    }
+
+    /// The least CPU time `f` takes in five runs: a run slowed by something
+    /// else (a cache flushed by another process, a page fault) does not decide.
+    fn least_cpu(mut f: impl FnMut()) -> std::time::Duration {
+        (0..5)
+            .map(|_| {
+                let t = thread_cpu();
+                f();
+                thread_cpu() - t
+            })
+            .min()
+            .unwrap()
+    }
+
+    /// The loop is noticed as soon as the walk comes back to a test, not
+    /// after the profile's whole budget of tree steps (`TREE_STEPS`), which
+    /// would cost thousands of times more. Measured against a profile of
+    /// the same size whose tree does not loop, in CPU time, so neither a
+    /// busy machine nor a debug build moves the bound.
     #[test]
     fn a_profile_whose_libseccomp_tree_loops_compiles_quickly() {
-        let t = std::time::Instant::now();
-        let p = compiled(P_CYCLE, 0);
-        assert!(t.elapsed() < std::time::Duration::from_millis(50), "{:?}", t.elapsed());
+        // A walk that is not bounded at all would never end: that fails here.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(compile_for(Arch::X86_64, P_CYCLE, 0)));
+        let p = rx.recv_timeout(std::time::Duration::from_secs(60)).expect("the looping profile's compile never ended").unwrap();
         assert!(p.len() < MAX_INSNS * 8);
+        let cost = |json: &str| {
+            least_cpu(|| {
+                for _ in 0..5 {
+                    let _ = compile_for(Arch::X86_64, json, 0);
+                }
+            })
+        };
+        let (looping, plain) = (cost(P_CYCLE), cost(P00_S1279));
+        eprintln!("5 compiles: looping {looping:?}, not looping {plain:?}");
+        // The walk spends its whole step budget; measured at 70 to 100 times
+        // the plain profile. A budget a few times larger goes past the bound.
+        assert!(looping < plain * 300, "the looping profile took {looping:?} of CPU time, one of the same size that does not loop {plain:?}");
     }
 
     /// The looping profile with its rules copied across `n` calls.
@@ -1653,13 +1693,30 @@ mod tests {
         }
     }
 
+    /// More rules for one call than the filter has tests for are refused
+    /// before libseccomp's tree is built, whose cost grows with the square
+    /// of the rules. Measured as growth: twice the rules may cost about
+    /// twice the CPU time (reading the profile), not four times.
     #[test]
     fn a_call_with_many_rules_compiles_in_linear_time_or_is_refused() {
-        let rules: Vec<String> = (0..3000).map(|i| arg_rule("SCMP_ACT_ERRNO", 1 + i % 50, i % 3, ["SCMP_CMP_GT", "SCMP_CMP_NE", "SCMP_CMP_LT"][i as usize % 3], i as u64 * 7, 0)).collect();
-        let t = std::time::Instant::now();
-        let r = compile_for(Arch::X86_64, &format!(r#"{{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{}]}}"#, rules.join(",")), 0);
-        assert!(t.elapsed() < std::time::Duration::from_millis(50), "{:?}", t.elapsed());
-        assert!(r.unwrap_err().contains("too large"));
+        let profile = |n: u32| {
+            let rules: Vec<String> = (0..n).map(|i| arg_rule("SCMP_ACT_ERRNO", 1 + i % 50, i % 3, ["SCMP_CMP_GT", "SCMP_CMP_NE", "SCMP_CMP_LT"][i as usize % 3], i as u64 * 7, 0)).collect();
+            format!(r#"{{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{}]}}"#, rules.join(","))
+        };
+        let (small, large) = (profile(3000), profile(6000));
+        for json in [&small, &large] {
+            assert!(compile_for(Arch::X86_64, json, 0).unwrap_err().contains("too large"));
+        }
+        let cost = |json: &str| {
+            least_cpu(|| {
+                let _ = compile_for(Arch::X86_64, json, 0);
+            })
+        };
+        let (a, b) = (cost(&small), cost(&large));
+        eprintln!("3000 rules: {a:?}, 6000 rules: {b:?}");
+        // Linear is 2, quadratic 4: the bound sits between, with room for
+        // measurement on either side.
+        assert!(b < a * 3, "3000 rules took {a:?} of CPU time, 6000 took {b:?}: more than linear growth");
     }
 
     #[test]

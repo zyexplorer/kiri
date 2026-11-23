@@ -145,6 +145,26 @@ t cj-run-after-restart "ran" "docker run --rm alpine true && echo ran"
 cj cj-next-start-deletes-nothing "kept 2" "$CJ_KEPT"
 t cj-cleanup "done" "docker rm -f cj1 cj2 >/dev/null 2>&1; docker volume rm -f cjv1 cjv2 >/dev/null 2>&1; echo done"
 in_wsl "for id in $CJ_IDS; do rm -rf $ST/containers/\$id /var/lib/kiri/containers/\$id; done; rm -f $ST/containers.json.corrupt-*" >/dev/null
+# Docker's insecure-registries and registry-mirrors in the engine's own
+# ~/.kiri/daemon.json (#329, #611, #118), set through `kiri registry` in the
+# distro, where kiri-win.exe runs the CLI: a plain-HTTP registry at this
+# distro's address (not loopback) is refused until listed, then pulled from
+# and pushed to; a Docker Hub image only a plain-HTTP mirror has pulls
+# through the mirror.
+RIP=$(in_wsl "hostname -I | cut -d' ' -f1" | tr -d '\r ')
+KR="HOME=/var/lib/kiri-daemon /usr/local/bin/kiri registry"
+t insecure-setup "ok" "docker rm -f kiri-reg >/dev/null 2>&1; docker run -d --name kiri-reg -p 5055:5000 registry:2 >/dev/null; for i in \$(seq 60); do curl -s -o /dev/null localhost:5055/v2/ && break; sleep 0.25; done; for r in team/alp:1 library/kiri-mirror-only:1; do docker tag alpine localhost:5055/\$r && docker push -q localhost:5055/\$r >/dev/null && docker rmi localhost:5055/\$r >/dev/null || exit; done; echo ok"
+t insecure-http-unlisted-refused "refused" "docker pull $RIP:5055/team/alp:1 >/dev/null 2>&1 && echo pulled || echo refused"
+cj insecure-cli-add "$RIP:5055" "$KR insecure add $RIP:5055"
+t insecure-http-pull "Downloaded newer image" "docker pull $RIP:5055/team/alp:1 2>&1"
+t insecure-http-push "pushed" "docker tag alpine $RIP:5055/team/pushed:1 && docker push $RIP:5055/team/pushed:1 >/dev/null 2>&1 && curl -s localhost:5055/v2/team/pushed/tags/list | grep -q '\"1\"' && echo pushed"
+cj insecure-cli-remove "no insecure registries" "$KR insecure remove $RIP:5055"
+t insecure-removed-refused "refused" "docker rmi $RIP:5055/team/alp:1 >/dev/null 2>&1; docker pull $RIP:5055/team/alp:1 >/dev/null 2>&1 && echo pulled || echo refused"
+cj mirror-cli-add "http://$RIP:5055" "$KR insecure add $RIP:5055 >/dev/null; $KR mirror add http://$RIP:5055"
+t mirror-http-pull "Downloaded newer image" "docker pull kiri-mirror-only:1 2>&1"
+t mirror-docker-info "http://$RIP:5055/" "docker info 2>/dev/null | sed -n '/Registry Mirrors/,/^ [A-Z]/p'"
+cj insecure-cleanup "no registry mirrors" "$KR mirror remove http://$RIP:5055; rm -f /var/lib/kiri-daemon/.kiri/daemon.json"
+t insecure-cleanup-reg "done" "docker rm -f kiri-reg >/dev/null 2>&1; echo done"
 $D rm -f $W $W-cli >/dev/null
 $D volume rm $W-run $W-lib $W-store >/dev/null 2>&1
 echo "$PASS passed, $FAIL failed"

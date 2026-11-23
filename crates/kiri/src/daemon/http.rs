@@ -25,6 +25,12 @@ const MAX_HEAD: u64 = 64 << 10;
 /// connection can serve the next request; past this it closes. Go's
 /// net/http server, so Docker's, reads out as much.
 const MAX_UNREAD: u64 = 256 << 10;
+/// How long, and how much, a connection that ends while its client may still
+/// be sending reads out and drops before it closes ([`close`]). Enough for a
+/// client to take in the answer and stop; one that sends on past it gets the
+/// reset it would have got without the wait.
+const LINGER_TIME: std::time::Duration = std::time::Duration::from_secs(1);
+const LINGER_BYTES: u64 = 16 << 20;
 
 #[derive(Debug)]
 pub struct Request {
@@ -53,6 +59,9 @@ enum Streamed {
     Unread,
     Started,
     Done,
+    /// Larger than [`MAX_BODY`] for a request whose body is read whole: not
+    /// read (or read only up to the limit), and never routed ([`too_large`]).
+    TooLarge,
 }
 
 impl Request {
@@ -89,6 +98,12 @@ impl Request {
     pub fn internal(method: &str, path: &str, query: &[(&str, &str)], body: Vec<u8>) -> Request {
         let query = query.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
         Request { method: method.to_owned(), path: path.to_owned(), api_version: None, query, headers: Vec::new(), body, http10: false, streamed: Cell::new(Streamed::No) }
+    }
+
+    #[cfg(test)]
+    pub fn with_header(mut self, key: &str, value: &str) -> Request {
+        self.headers.push((key.to_owned(), value.to_owned()));
+        self
     }
 }
 
@@ -157,7 +172,7 @@ pub fn read_request(r: &mut BufReader<UnixStream>, stream: impl Fn(&str, &str) -
             let n = usize::from_str_radix(size, 16)
                 .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad chunk size"))?;
             if n > MAX_BODY || req.body.len().checked_add(n).is_none_or(|t| t > MAX_BODY) {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "request body too large"));
+                return Ok(Some(too_large(req)));
             }
             let start = req.body.len();
             req.body.resize(start + n, 0);
@@ -170,12 +185,34 @@ pub fn read_request(r: &mut BufReader<UnixStream>, stream: impl Fn(&str, &str) -
         }
     } else if let Some(len) = req.header("content-length").and_then(|v| v.parse::<usize>().ok()) {
         if len > MAX_BODY {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "request body too large"));
+            return Ok(Some(too_large(req)));
         }
         req.body.resize(len, 0);
         r.read_exact(&mut req.body)?;
     }
     Ok(Some(req))
+}
+
+/// A request whose body is past [`MAX_BODY`]: what was read of it is dropped
+/// and the rest stays unread, for the connection's [`close`] to read out.
+fn too_large(mut req: Request) -> Request {
+    req.body = Vec::new();
+    req.streamed.set(Streamed::TooLarge);
+    req
+}
+
+/// Answers a request whose body is too large to read ([`Request::too_large`])
+/// and ends the connection. Docker sets no limit (its handlers decode the
+/// body whatever its size, and a route that does not read it answers as
+/// usual); holding all of it is not safe here, and routing the request
+/// without it would run a handler on a body it never saw (a create with an
+/// empty config). So it is refused, in Docker's error shape, and the client,
+/// which may still be sending, gets the whole answer and a clean end.
+pub fn refuse_too_large(req: &Request, w: &mut UnixStream, r: &mut BufReader<UnixStream>) -> io::Result<()> {
+    serving(req);
+    let sent = error_closing(w, 413, &format!("request body too large: more than the {} MiB a request may send", MAX_BODY >> 20));
+    close(w, r);
+    sent
 }
 
 /// After a streamed request's response: whether the connection can serve
@@ -187,11 +224,52 @@ pub fn read_request(r: &mut BufReader<UnixStream>, stream: impl Fn(&str, &str) -
 pub fn finish_body(req: &Request, r: &mut BufReader<UnixStream>) -> bool {
     match req.streamed.get() {
         Streamed::No | Streamed::Done => true,
-        Streamed::Started => false,
+        Streamed::Started | Streamed::TooLarge => false,
         Streamed::Unread if req.header("expect").is_some_and(|v| v.eq_ignore_ascii_case("100-continue")) => false,
         Streamed::Unread => {
             let mut body = Body::new(req, r);
             io::copy(&mut (&mut body).take(MAX_UNREAD), &mut io::sink()).is_ok() && body.read(&mut [0; 1]).is_ok_and(|n| n == 0)
+        }
+    }
+}
+
+impl Request {
+    /// A streamed body its handler did not read to its end: the client may
+    /// still be sending it.
+    pub fn body_left(&self) -> bool {
+        matches!(self.streamed.get(), Streamed::Unread | Streamed::Started | Streamed::TooLarge)
+    }
+
+    /// A body past [`MAX_BODY`] on a route that reads it whole: the request
+    /// is answered by [`refuse_too_large`], never routed.
+    pub fn too_large(&self) -> bool {
+        self.streamed.get() == Streamed::TooLarge
+    }
+}
+
+/// Ends a connection after a whole response, as Go's net/http server (so
+/// Docker's) does: the write side is shut first, so the client sees the end
+/// of the stream at once, even while anything else still holds a copy of the
+/// socket; then whatever the client is still sending (a body the handler left
+/// unread, a pipelined request) is read and dropped, up to [`LINGER_BYTES`]
+/// and [`LINGER_TIME`], until the client closes its side. Closing a socket
+/// with unread data in it resets the connection on Linux: the client's read
+/// fails with "connection reset" after the answer instead of ending cleanly.
+pub fn close(w: &UnixStream, r: &mut BufReader<UnixStream>) {
+    let _ = w.shutdown(std::net::Shutdown::Write);
+    let deadline = std::time::Instant::now() + LINGER_TIME;
+    let mut left = LINGER_BYTES;
+    r.consume(r.buffer().len());
+    let s = r.get_mut();
+    let mut buf = vec![0u8; 64 << 10];
+    while left > 0 {
+        let Some(wait) = deadline.checked_duration_since(std::time::Instant::now()).filter(|d| !d.is_zero()) else { break };
+        if s.set_read_timeout(Some(wait)).is_err() {
+            break;
+        }
+        match s.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => left = left.saturating_sub(n as u64),
         }
     }
 }
@@ -318,6 +396,7 @@ fn reason(status: u16) -> &'static str {
         400 => "Bad Request",
         404 => "Not Found",
         409 => "Conflict",
+        413 => "Request Entity Too Large",
         500 => "Internal Server Error",
         501 => "Not Implemented",
         _ => "",

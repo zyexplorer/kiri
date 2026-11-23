@@ -49,6 +49,13 @@ pub(crate) fn connector_with(stall: Duration) -> impl Connector<(), Out = impl T
     ().chain(ConnectProxyConnector::default()).chain(HappyConnector { stall }).chain(RustlsConnector::default())
 }
 
+/// TLS without checking the server's certificate: only for the hosts
+/// daemon.json lists in `insecure-registries` (a self-signed registry), as
+/// Docker reaches them. Nothing else is built on it.
+pub(crate) fn unverified_tls_config() -> ureq::tls::TlsConfig {
+    ureq::tls::TlsConfig::builder().disable_verification(true).build()
+}
+
 /// The addresses in the order to try them: the family the resolver put
 /// first leads (it sorts by RFC 6724, so that is IPv6 where IPv6 looks
 /// usable), then the families take turns, each keeping its own order.

@@ -38,15 +38,23 @@ fn load() -> Value {
         .unwrap_or(Value::Null)
 }
 
+fn mirror_url(raw: &str) -> Option<String> {
+    kiri_image::Mirror::parse(raw).ok().map(|m| m.as_url())
+}
+
+fn insecure_entry(raw: &str) -> Option<String> {
+    kiri_image::Insecure::parse(raw).ok().map(|e| e.as_string())
+}
+
 fn default_mirrors() -> Vec<String> {
-    DEFAULT_HUB_MIRRORS.iter().filter_map(|u| kiri_image::normalize_mirror(u)).collect()
+    DEFAULT_HUB_MIRRORS.iter().filter_map(|u| mirror_url(u)).collect()
 }
 
 /// The configured Hub mirrors, normalized the way `docker pull` expects.
 /// Missing key → built-in defaults; explicit array (including empty) wins.
 pub fn mirrors() -> Vec<String> {
     match load().get("registry-mirrors") {
-        Some(Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str()).filter_map(kiri_image::normalize_mirror).collect(),
+        Some(Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str()).filter_map(mirror_url).collect(),
         _ => default_mirrors(),
     }
 }
@@ -75,7 +83,7 @@ pub fn insecure() -> Vec<String> {
         .into_iter()
         .flatten()
         .filter_map(|v| v.as_str())
-        .filter_map(kiri_image::normalize_insecure)
+        .filter_map(insecure_entry)
         .collect()
 }
 
@@ -123,7 +131,7 @@ pub fn save(v: &Value) -> std::io::Result<()> {
         .into_iter()
         .flatten()
         .filter_map(|x| x.as_str())
-        .filter_map(kiri_image::normalize_mirror)
+        .filter_map(mirror_url)
         .collect();
     out["registry-mirrors"] = json!(mirrors);
     let insecure: Vec<String> = out["insecure-registries"]
@@ -131,7 +139,7 @@ pub fn save(v: &Value) -> std::io::Result<()> {
         .into_iter()
         .flatten()
         .filter_map(|x| x.as_str())
-        .filter_map(kiri_image::normalize_insecure)
+        .filter_map(insecure_entry)
         .collect();
     if out.get("insecure-registries").is_some() || !insecure.is_empty() {
         out["insecure-registries"] = json!(insecure);

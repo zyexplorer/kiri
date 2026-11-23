@@ -240,6 +240,24 @@ fn same_namespace(a: &fs::File, b: &fs::File) -> io::Result<bool> {
     Ok((a.dev(), a.ino()) == (b.dev(), b.ino()))
 }
 
+/// The limits the engine's agent sets on itself as it starts, before it
+/// starts anything, so that every container and build step inherits them
+/// (a run's own `--ulimit` still replaces them in the child). In the VM the
+/// agent is PID 1 and has the kernel's defaults; in a WSL distro or a
+/// container it has whatever started it.
+///
+/// No process and no core-size limit, soft or hard: dockerd and containerd
+/// run with `LimitNPROC=infinity` and `LimitCORE=infinity`, so a container
+/// or a BuildKit RUN says unlimited to `ulimit -u` and `ulimit -c`. The
+/// kernel gives PID 1 a process limit from the memory (32142 in an 8 GiB
+/// VM) and a soft core size of 0. The process limit counts a user's
+/// processes in the whole VM, never root's; what holds a fork bomb back is
+/// a container's pids limit (`--pids-limit`), unset by default as with
+/// Docker.
+pub fn agent_rlimits() -> Vec<(u32, u64, u64)> {
+    vec![(libc::RLIMIT_NPROC as u32, u64::MAX, u64::MAX), (libc::RLIMIT_CORE as u32, u64::MAX, u64::MAX)]
+}
+
 /// Sets the resource limits in the child, before it drops capabilities
 /// (raising a hard limit needs CAP_SYS_RESOURCE). runc's error on failure.
 pub fn set_rlimits(rlimits: &[(u32, u64, u64)]) -> io::Result<()> {
@@ -322,6 +340,17 @@ fn user_name(uid: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn steps_and_containers_get_no_process_or_core_size_limit_as_with_docker() {
+        // dockerd and containerd run with LimitNPROC=infinity and
+        // LimitCORE=infinity, and a container or a BuildKit RUN inherits
+        // them: `ulimit -u` and `ulimit -c` say unlimited. The kernel gives
+        // PID 1 a process limit from the memory (32142 in an 8 GiB VM) and a
+        // soft core size of 0.
+        const INF: u64 = u64::MAX;
+        assert_eq!(agent_rlimits(), [(libc::RLIMIT_NPROC as u32, INF, INF), (libc::RLIMIT_CORE as u32, INF, INF)]);
+    }
 
     #[test]
     fn the_users_own_group_is_a_supplementary_group_as_with_docker() {

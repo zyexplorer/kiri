@@ -5,18 +5,21 @@
 pub mod archive;
 pub mod b64;
 pub mod cancel;
+pub mod config;
 mod connect;
 pub mod jsonfile;
+pub mod mirror;
 pub mod reference;
 pub mod registry;
 pub mod store;
 pub mod tags;
 
 pub use cancel::Cancel;
+pub use config::{Insecure, RegistryConfig};
+pub use mirror::Mirror;
 pub use reference::Reference;
-pub use reference::{normalize_insecure, set_insecure_source};
 pub use registry::{
-    Client, Credentials, Platform, Progress, PushProgress, normalize_mirror, set_downloads_source, set_mirrors_source, set_proxy_source,
-    set_uploads_source,
+    Client, ConfigSource, Credentials, LooseCredentials, Platform, Progress, PushProgress, set_config_source,
+    set_proxy_source,
 };
 pub use store::{Image, Layer, RunConfig, Store};

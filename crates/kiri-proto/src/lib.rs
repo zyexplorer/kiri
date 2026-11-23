@@ -41,8 +41,14 @@ pub const INPUT_WINDOW: usize = 4 << 20;
 /// run the container under the default filter instead of its profile. 6
 /// added `Started::starting` and `AwaitStart`: an older host would read a
 /// start still filling a new volume as started, and let an exec in before
-/// the container's root is in place.
-pub const PROTOCOL: u16 = 6;
+/// the container's root is in place. 7 added `CancelStart`, which has no
+/// reply: an older agent's "unexpected" error would be taken as the reply
+/// to the next request. 8 added `DnsRename`, another no-reply message, for
+/// the same reason.
+pub const PROTOCOL: u16 = 8;
+
+/// Most names a `DnsRename` may carry: a name, its aliases and a hostname.
+pub const MAX_DNS_NAMES: usize = 256;
 
 // `Run` is the one big message and is built and read once per container.
 #[allow(clippy::large_enum_variant)]
@@ -79,6 +85,12 @@ pub enum Msg<'a> {
     /// place now? Answered by `Started` for that container (`starting`
     /// false once it is), or `Error` when it is not running.
     AwaitStart { id: &'a str },
+    /// Host → guest: the container is being stopped or removed while its
+    /// start has not finished. A child still making its root (one that has
+    /// not begun filling a volume) is killed at once, and its start fails;
+    /// one filling a volume is killed as soon as the fill is done. No reply;
+    /// nothing happens to a container whose root is in place.
+    CancelStart { id: &'a str },
     Output { id: &'a str, stream: Stream, data: &'a [u8] },
     Exited(Exited<'a>),
     /// Host → guest: send `signal` to the container's process. No reply;
@@ -156,8 +168,8 @@ pub enum Msg<'a> {
     /// Host → guest: the container's processes. Answered by `Top` or `Error`.
     TopQuery { id: &'a str },
     /// Tab-separated `user pid ppid c stime tty time comm stat rss vsz %cpu
-    /// %mem etime-secs time-secs uid cmd`, one process each (cmd last; an
-    /// older agent sent only the first seven and cmd).
+    /// %mem etime-secs time-secs uid f priority nice sz cmd`, one process
+    /// each (cmd last; an older agent sent fewer fields before cmd).
     Top(StrList<'a>),
     /// Host → guest: plug a running container into another bridge network
     /// as `ifname`. Answered by `Ack` or `Error`.
@@ -188,6 +200,14 @@ pub enum Msg<'a> {
     /// or `Error` with no lease yet; an older agent answers `Error`.
     UplinkQuery,
     Uplink { ip: [u8; 4], gateway: [u8; 4] },
+    /// Host → guest: container `id` on `bridge` was renamed. Its old DNS
+    /// names are dropped and `names` registered to the same address (A
+    /// records only when `v4`: a network without IPv4 addresses keeps the
+    /// address only as the container's key). `ip6` is either empty or 16
+    /// bytes, and `names` has at most `MAX_DNS_NAMES`. No reply, hence the
+    /// protocol bump to 8: an older agent answers an unknown frame with an
+    /// error, which would be read as the next request's reply.
+    DnsRename { id: &'a str, bridge: &'a str, ip: [u8; 4], ip6: &'a [u8], v4: bool, names: StrList<'a> },
     /// Host → guest: a network was removed; delete its bridge, and with it
     /// the bridge's addresses and routes, its DNS server and, with the last
     /// IPv6 network, the IPv6 NAT table. No reply; an older agent ignores it.
@@ -344,6 +364,9 @@ pub struct Stats {
     pub mem_stall: u64,
     /// Processes the kernel has killed for memory since boot (/proc/vmstat oom_kill).
     pub oom_kills: u64,
+    /// Pages held by the memory balloon, in KiB. None from an agent or
+    /// kernel that does not report it.
+    pub mem_balloon_kib: Option<u64>,
 }
 
 /// What the guest knows about its own boot, in nanoseconds of CLOCK_BOOTTIME.
@@ -717,6 +740,8 @@ mod kind {
     pub const USB_NODES: u16 = 77;
     pub const FS_EVENTS: u16 = 78;
     pub const AWAIT_START: u16 = 79;
+    pub const CANCEL_START: u16 = 80;
+    pub const DNS_RENAME: u16 = 81;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -782,6 +807,25 @@ pub fn encode_net_attach<S: AsRef<str>>(out: &mut Vec<u8>, id: &str, ifname: &st
         StrList::put::<&str>(o, &[]);
         StrList::put(o, dns_names);
         StrList::put(o, opts);
+    });
+}
+
+/// Whether `frame` is of a kind the guest answers with no reply
+/// (`DnsRename`): one that doesn't decode is then dropped, not answered
+/// with an `Error` the host would read as the next request's reply.
+pub fn takes_no_reply(frame: &[u8]) -> bool {
+    frame.len() >= HEADER && u16::from_le_bytes([frame[4], frame[5]]) == kind::DNS_RENAME
+}
+
+/// Encodes a `DnsRename` frame from the sender's slices.
+pub fn encode_dns_rename<S: AsRef<str>>(out: &mut Vec<u8>, id: &str, bridge: &str, ip: [u8; 4], ip6: Option<[u8; 16]>, v4: bool, names: &[S]) {
+    frame(out, kind::DNS_RENAME, |o| {
+        put_str(o, id);
+        put_str(o, bridge);
+        o.extend_from_slice(&ip);
+        put_bytes(o, ip6.as_ref().map_or(&[][..], |a| &a[..]));
+        o.push(v4 as u8);
+        StrList::put(o, names);
     });
 }
 
@@ -909,6 +953,9 @@ impl Msg<'_> {
                 for v in [st.uptime_ns, st.mem_total_kib, st.mem_available_kib, st.agent_rss_kib, st.mem_used_kib, st.mem_stall, st.oom_kills] {
                     put_u64(o, v);
                 }
+                // Always emit the 8th word (u64::MAX for None) so any future
+                // trailing fields stay at fixed offsets.
+                put_u64(o, st.mem_balloon_kib.unwrap_or(u64::MAX));
             }),
             Msg::LayerQuery(d) => frame(out, kind::LAYER_QUERY, |o| put_str(o, d)),
             Msg::LayerStatus(have) => frame(out, kind::LAYER_STATUS, |o| o.push(have as u8)),
@@ -954,6 +1001,7 @@ impl Msg<'_> {
                 }
             }),
             Msg::AwaitStart { id } => frame(out, kind::AWAIT_START, |o| put_str(o, id)),
+            Msg::CancelStart { id } => frame(out, kind::CANCEL_START, |o| put_str(o, id)),
             Msg::Output { id, stream, data } => frame(out, kind::OUTPUT, |o| {
                 put_str(o, id);
                 o.push(stream as u8);
@@ -1025,6 +1073,15 @@ impl Msg<'_> {
             Msg::MemoryPressure => frame(out, kind::MEMORY_PRESSURE, |_| {}),
             Msg::RemoveVolume { name } => frame(out, kind::REMOVE_VOLUME, |o| put_str(o, name)),
             Msg::RemoveBridge { bridge } => frame(out, kind::REMOVE_BRIDGE, |o| put_str(o, bridge)),
+            Msg::DnsRename { id, bridge, ip, ip6, v4, names } => frame(out, kind::DNS_RENAME, |o| {
+                put_str(o, id);
+                put_str(o, bridge);
+                o.extend_from_slice(&ip);
+                put_bytes(o, ip6);
+                o.push(v4 as u8);
+                put_u32(o, names.count);
+                o.extend_from_slice(names.raw);
+            }),
             Msg::Copy(c) => frame(out, kind::COPY, |o| {
                 o.push(c.op);
                 put_str(o, c.id);
@@ -1217,6 +1274,12 @@ pub fn decode(frame: &[u8]) -> Result<Msg<'_>, DecodeError> {
             mem_used_kib: if r.remaining() >= 8 { r.u64()? } else { 0 },
             mem_stall: if r.remaining() >= 8 { r.u64()? } else { 0 },
             oom_kills: if r.remaining() >= 8 { r.u64()? } else { 0 },
+            mem_balloon_kib: if r.remaining() >= 8 {
+                let v = r.u64()?;
+                (v != u64::MAX).then_some(v)
+            } else {
+                None
+            },
         }),
         kind::LAYER_QUERY => Msg::LayerQuery(r.str()?),
         kind::LAYER_STATUS => Msg::LayerStatus(r.u8()? != 0),
@@ -1266,6 +1329,7 @@ pub fn decode(frame: &[u8]) -> Result<Msg<'_>, DecodeError> {
             starting: r.remaining() >= 1 && r.u8()? != 0,
         },
         kind::AWAIT_START => Msg::AwaitStart { id: r.str()? },
+        kind::CANCEL_START => Msg::CancelStart { id: r.str()? },
         kind::OUTPUT => {
             let id = r.str()?;
             let stream = match r.u8()? {
@@ -1319,6 +1383,21 @@ pub fn decode(frame: &[u8]) -> Result<Msg<'_>, DecodeError> {
         kind::MEMORY_PRESSURE => Msg::MemoryPressure,
         kind::REMOVE_VOLUME => Msg::RemoveVolume { name: r.str()? },
         kind::REMOVE_BRIDGE => Msg::RemoveBridge { bridge: r.str()? },
+        kind::DNS_RENAME => {
+            let id = r.str()?;
+            let bridge = r.str()?;
+            let ip = r.take(4)?.try_into().map_err(|_| DecodeError::Truncated)?;
+            let ip6 = r.bytes()?;
+            let v4 = r.u8()? != 0;
+            let names = r.list()?;
+            // The address is empty or a whole IPv6 address, and the list is
+            // bounded, so the guest never reads a half address or a frame of
+            // endless names.
+            if !(ip6.is_empty() || ip6.len() == 16) || names.len() > MAX_DNS_NAMES {
+                return Err(DecodeError::Truncated);
+            }
+            Msg::DnsRename { id, bridge, ip, ip6, v4, names }
+        }
         kind::COPY => Msg::Copy(CopySpec { op: r.u8()?, id: r.str()?, path: r.str()?, flags: r.u32()?, layers: r.list()? }),
         kind::COPY_STAT => Msg::CopyStat { entry: read_entry(&mut r)?, link: r.str()? },
         kind::COPY_DONE => Msg::CopyDone,
@@ -1389,14 +1468,18 @@ mod tests {
         round(Msg::Shutdown);
         round(Msg::Error("boom"));
         round(Msg::StatsRequest);
-        let full = Stats { uptime_ns: 5, mem_total_kib: 6, mem_available_kib: 7, agent_rss_kib: 8, mem_used_kib: 9, mem_stall: 9173, oom_kills: 2 };
+        let full = Stats { uptime_ns: 5, mem_total_kib: 6, mem_available_kib: 7, agent_rss_kib: 8, mem_used_kib: 9, mem_stall: 9173, oom_kills: 2, mem_balloon_kib: Some(4096) };
         round(Msg::Stats(full));
+        round(Msg::Stats(Stats { mem_balloon_kib: Some(0), ..full }));
+        round(Msg::Stats(Stats { mem_balloon_kib: None, ..full }));
         // Older agents' Stats, without the later words, still decode.
         let mut buf = Vec::new();
         Msg::Stats(full).encode(&mut buf);
-        let no_memory_words = Stats { mem_stall: 0, oom_kills: 0, ..full };
-        assert_eq!(decode(&buf[..buf.len() - 16]).unwrap(), Msg::Stats(no_memory_words));
-        assert_eq!(decode(&buf[..buf.len() - 24]).unwrap(), Msg::Stats(Stats { mem_used_kib: 0, ..no_memory_words }));
+        let no_balloon = Stats { mem_balloon_kib: None, ..full };
+        assert_eq!(decode(&buf[..buf.len() - 8]).unwrap(), Msg::Stats(no_balloon));
+        let no_memory_words = Stats { mem_stall: 0, oom_kills: 0, ..no_balloon };
+        assert_eq!(decode(&buf[..buf.len() - 24]).unwrap(), Msg::Stats(no_memory_words));
+        assert_eq!(decode(&buf[..buf.len() - 32]).unwrap(), Msg::Stats(Stats { mem_used_kib: 0, ..no_memory_words }));
         round(Msg::LayerQuery("sha256:ab"));
         round(Msg::LayerStatus(true));
         round(Msg::LayerBegin(LayerBegin { digest: "sha256:ab", media_type: "x+gzip", size: 9 }));
@@ -1415,6 +1498,7 @@ mod tests {
         Msg::Started { id: "c1", pid: 42, starting: false }.encode(&mut normal);
         assert_eq!(normal, old, "a normal start's frame is unchanged");
         round(Msg::AwaitStart { id: "c1" });
+        round(Msg::CancelStart { id: "c1" });
         round(Msg::Output { id: "c1", stream: Stream::Stderr, data: b"hi\n" });
         round(Msg::Exited(Exited { id: "c1", code: -1, setup_ns: 3, run_ns: 4, oom_killed: false }));
         round(Msg::Exited(Exited { id: "c1", code: 137, setup_ns: 3, run_ns: 4, oom_killed: true }));
@@ -1431,6 +1515,28 @@ mod tests {
         round(Msg::InputConsumed { id: "c1", bytes: 65_536 });
         round(Msg::Publish(Publish { id: "c1", udp: true, host_ip: [0, 0, 0, 0], host_port: 8080, to_ip: [172, 17, 0, 2], to_port: 80 }));
         round(Msg::Unpublish { id: "c1" });
+    }
+
+    #[test]
+    fn stats_none_balloon_keeps_wire_offset() {
+        let base = Stats { uptime_ns: 5, mem_total_kib: 6, mem_available_kib: 7, agent_rss_kib: 8, mem_used_kib: 9, mem_stall: 10, oom_kills: 1, mem_balloon_kib: Some(4096) };
+        let absent = Stats { mem_balloon_kib: None, ..base };
+        let mut with_balloon = Vec::new();
+        let mut without_balloon = Vec::new();
+        Msg::Stats(base).encode(&mut with_balloon);
+        Msg::Stats(absent).encode(&mut without_balloon);
+        assert_eq!(without_balloon.len(), with_balloon.len());
+        // Appending a future 9th word must not be decoded into mem_balloon_kib.
+        let mut extended = without_balloon.clone();
+        extended.extend_from_slice(&42u64.to_le_bytes());
+        let len = (extended.len() - 4) as u32;
+        extended[..4].copy_from_slice(&len.to_le_bytes());
+        assert_eq!(decode(&extended).unwrap(), Msg::Stats(absent));
+        // An older 7-word agent omitting the 8th word still decodes as None.
+        let mut old = without_balloon[..without_balloon.len() - 8].to_vec();
+        let len = (old.len() - 4) as u32;
+        old[..4].copy_from_slice(&len.to_le_bytes());
+        assert_eq!(decode(&old).unwrap(), Msg::Stats(absent));
     }
 
     #[test]
@@ -1459,6 +1565,13 @@ mod tests {
     }
 
     #[test]
+    fn the_protocol_version_covers_cancel_start() {
+        // An agent from before `CancelStart` answers it with an error that
+        // the host would take as the reply to its next request.
+        const { assert!(PROTOCOL >= 7) };
+    }
+
+    #[test]
     fn the_protocol_version_covers_starting() {
         // A host from before `Started::starting` would take a start still
         // filling a new volume for started and never ask `AwaitStart`; it
@@ -1468,7 +1581,7 @@ mod tests {
         let mut buf = Vec::new();
         Msg::Hello(Hello { protocol: PROTOCOL, init_start_ns: 1, ready_ns: 2, mem_total_kib: 3, mem_available_kib: 4 }).encode(&mut buf);
         let Msg::Hello(h) = decode(&buf).unwrap() else { panic!() };
-        assert_eq!(h.protocol, 6);
+        assert_eq!(h.protocol, PROTOCOL);
     }
 
     #[test]
@@ -1528,6 +1641,62 @@ mod tests {
         let mut again = Vec::new();
         Msg::RetainLayers(ids).encode(&mut again);
         assert_eq!(buf, again);
+    }
+
+    #[test]
+    fn dns_rename_survives_encoding() {
+        let mut buf = Vec::new();
+        encode_dns_rename(&mut buf, "c1", "br0", [10, 5, 0, 2], Some([0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]), false, &["web", "alias"]);
+        let Msg::DnsRename { id, bridge, ip, ip6, v4, names } = decode(&buf).unwrap() else { panic!("not a dns rename") };
+        assert_eq!((id, bridge, ip, v4), ("c1", "br0", [10, 5, 0, 2], false));
+        assert_eq!(ip6.len(), 16);
+        assert_eq!(names.iter().collect::<Vec<_>>(), ["web", "alias"]);
+        let mut again = Vec::new();
+        Msg::DnsRename { id, bridge, ip, ip6, v4, names }.encode(&mut again);
+        assert_eq!(buf, again);
+    }
+
+    #[test]
+    fn dns_rename_with_a_bad_address_or_too_many_names_is_refused() {
+        let mut buf = Vec::new();
+        frame(&mut buf, kind::DNS_RENAME, |o| {
+            put_str(o, "c1");
+            put_str(o, "kiri1");
+            o.extend_from_slice(&[10, 5, 0, 2]);
+            put_bytes(o, &[1, 2, 3]); // neither none nor a whole address
+            o.push(1);
+            StrList::put(o, &["web"]);
+        });
+        assert!(decode(&buf).is_err());
+        let names: Vec<String> = (0..=MAX_DNS_NAMES).map(|i| format!("n{i}")).collect();
+        let mut buf = Vec::new();
+        encode_dns_rename(&mut buf, "c1", "kiri1", [10, 5, 0, 2], None, true, &names);
+        assert!(decode(&buf).is_err());
+        let mut buf = Vec::new();
+        encode_dns_rename(&mut buf, "c1", "kiri1", [10, 5, 0, 2], None, true, &names[..MAX_DNS_NAMES]);
+        assert!(decode(&buf).is_ok());
+    }
+
+    /// A `DnsRename` the guest can't decode is still one it answers with
+    /// nothing; frames that get replies are answered as before.
+    #[test]
+    fn a_bad_dns_rename_is_known_to_take_no_reply() {
+        let names: Vec<String> = (0..=MAX_DNS_NAMES).map(|i| format!("n{i}")).collect();
+        let mut buf = Vec::new();
+        encode_dns_rename(&mut buf, "c1", "kiri1", [10, 5, 0, 2], None, true, &names);
+        assert!(decode(&buf).is_err());
+        assert!(takes_no_reply(&buf));
+        let mut ping = Vec::new();
+        Msg::Ping(1).encode(&mut ping);
+        assert!(!takes_no_reply(&ping));
+        assert!(!takes_no_reply(&buf[..3]));
+    }
+
+    #[test]
+    fn the_protocol_version_covers_dns_rename() {
+        // An agent from before `DnsRename` answers it with an error that the
+        // host would take as the reply to its next request.
+        const { assert!(PROTOCOL >= 8) };
     }
 
     #[test]

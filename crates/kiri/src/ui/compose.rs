@@ -6281,8 +6281,11 @@ mod tests {
             },
             "shop",
             &touched,
-            std::time::Duration::from_millis(60),
-            std::time::Duration::from_millis(20),
+            // A window that holds all four polls on a slow, shared machine
+            // (60 ms at 20 ms a poll held only one there); polls after the
+            // fourth list nothing.
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_millis(5),
         );
         assert_eq!(f.iter().map(|f| f["svc"].as_str().unwrap()).collect::<Vec<_>>(), ["a", "db", "b", "job"], "{f:?}");
         assert!(i >= 3, "watched past the first failure");

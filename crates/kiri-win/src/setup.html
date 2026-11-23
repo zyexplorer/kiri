@@ -2455,7 +2455,11 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
   /* ---------- render ---------- */
   var S = null, hadState = false, builtKey = null, choice = 'kiri', main = document.getElementById('main');
   function render() {
-    var s = Object.assign({ step: 'welcome' }, S || {});
+    // Until the host says where this PC is (its first state needs wsl.exe,
+    // which takes a moment), the window is the frame only: Welcome asks to
+    // install WSL, which must not flash by on a PC that has it.
+    if (!S) return;
+    var s = Object.assign({ step: 'welcome' }, S);
     if (STEPS.indexOf(s.step) < 0) s.step = 'welcome';
     var asking = !!s.askLang && !langDone;
     // The language step stays as it is built; a new language redraws it in place.
@@ -2551,7 +2555,6 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
     }
   });
 
-  render();
   send('setup-ready');
 })();
 </script>
@@ -2573,7 +2576,7 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
     existingUbuntu: false, otherDocker: false, otherEngine: null,
     makeDefault: true, buildKiri: true, autostart: true, progress: null, tasks: [], log: [], error: null };
   var wsl = { step: 'wsl', progress: { pct: 58, done: 224395264, total: 367575040, rate: 19084083, eta: 9, label: 'Downloading WSL 3.0.3 from Microsoft' },
-    tasks: [T('Administrator approved', 'done', 'done'), T('Download WSL', 'active', '224 / 368 MB'), T('Turn on Virtual Machine Platform', 'todo', 'next'), T('Install WSL', 'todo', 'then a restart')] };
+    tasks: [T('Administrator approved', 'done', 'done'), T('Download WSL', 'active', '224 / 368 MB'), T("Turn on WSL's Windows components", 'todo', 'next'), T('Install WSL', 'todo', 'then a restart')] };
   var X = {
     welcome: { step: 'welcome' },
     wsl: wsl,

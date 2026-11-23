@@ -34,8 +34,7 @@ pub const IMAGE: &str = "moby/buildkit:buildx-stable-1";
 /// What a fresh pull fetches: that tag's index on 2026-10-30 (BuildKit
 /// 0.2x), pinned so every Kiri builds with the same BuildKit. Stored under
 /// [`IMAGE`]. Moving the pin changes nothing for an image already pulled.
-const PINNED: &str =
-    "moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea";
+const PINNED: &str = "moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea";
 /// Marks the container as Kiri's builder. It stays in `docker ps`, as
 /// buildx's does on any engine.
 const LABEL: &str = "dev.kiri.builder";
@@ -69,19 +68,13 @@ fn volume_name() -> String {
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 /// The builder container, if there is one: (id, status).
 fn find(engine: &Engine) -> Option<(String, Status)> {
     let name = container_name();
-    engine
-        .each(|c| (c.name == name).then(|| (c.id.clone(), c.status)))
-        .into_iter()
-        .next()
+    engine.each(|c| (c.name == name).then(|| (c.id.clone(), c.status))).into_iter().next()
 }
 
 // --- Settings ----------------------------------------------------------
@@ -91,20 +84,12 @@ fn settings_path() -> Option<std::path::PathBuf> {
 }
 
 fn settings() -> Value {
-    settings_path()
-        .and_then(|p| std::fs::read(p).ok())
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or(Value::Null)
+    settings_path().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null)
 }
 
 /// The disk the daemon's state is on, in bytes (0 if unknown).
 fn disk_total() -> u64 {
-    let Some(dir) = super::state_dir()
-        .ok()
-        .and_then(|d| std::ffi::CString::new(d.as_os_str().as_encoded_bytes()).ok())
-    else {
-        return 0;
-    };
+    let Some(dir) = super::state_dir().ok().and_then(|d| std::ffi::CString::new(d.as_os_str().as_encoded_bytes()).ok()) else { return 0 };
     // SAFETY: statvfs fills the zeroed struct for a valid C path.
     unsafe {
         let mut s: libc::statvfs = std::mem::zeroed();
@@ -117,32 +102,20 @@ fn disk_total() -> u64 {
 
 /// The build cache's default cap: a tenth of the disk, at most 20 GB.
 fn default_cache(disk: u64) -> u64 {
-    if disk == 0 {
-        20 * GB
-    } else {
-        (disk / 10).clamp(GB, 20 * GB)
-    }
+    if disk == 0 { 20 * GB } else { (disk / 10).clamp(GB, 20 * GB) }
 }
 
 /// The build cache's cap in bytes: `KIRI_BUILD_CACHE_GB`, else Settings,
 /// else [`default_cache`]. BuildKit's garbage collector keeps the cache under it.
 pub fn cache_limit() -> u64 {
-    let gb = std::env::var("KIRI_BUILD_CACHE_GB")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .or_else(|| settings()["cache_gb"].as_u64());
-    gb.filter(|g| *g > 0)
-        .map_or_else(|| default_cache(disk_total()), |g| g * GB)
+    let gb = std::env::var("KIRI_BUILD_CACHE_GB").ok().and_then(|v| v.parse::<u64>().ok()).or_else(|| settings()["cache_gb"].as_u64());
+    gb.filter(|g| *g > 0).map_or_else(|| default_cache(disk_total()), |g| g * GB)
 }
 
 /// Seconds without a build before the builder stops: `KIRI_BUILDER_IDLE_SECS`,
 /// else Settings, else five minutes. 0 keeps it running.
 pub fn idle_secs() -> u64 {
-    std::env::var("KIRI_BUILDER_IDLE_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .or_else(|| settings()["idle_secs"].as_u64())
-        .unwrap_or(300)
+    std::env::var("KIRI_BUILDER_IDLE_SECS").ok().and_then(|v| v.parse().ok()).or_else(|| settings()["idle_secs"].as_u64()).unwrap_or(300)
 }
 
 /// buildkitd.toml, written at each start: the garbage collector's limits.
@@ -170,8 +143,7 @@ pub fn settings_report(engine: &Engine) -> Value {
 /// `POST /kiri/builder` `{"cache_gb": 20 | null, "idle_secs": 300}`: null or
 /// 0 is the default cap. Used from the builder's next start.
 pub fn set_settings(req: &Request) -> Result<(), Error> {
-    let body: Value = serde_json::from_slice(&req.body)
-        .map_err(|e| Error::BadRequest(format!("invalid JSON: {e}")))?;
+    let body: Value = serde_json::from_slice(&req.body).map_err(|e| Error::BadRequest(format!("invalid JSON: {e}")))?;
     let mut s = settings();
     if !s.is_object() {
         s = json!({});
@@ -180,25 +152,16 @@ pub fn set_settings(req: &Request) -> Result<(), Error> {
         Value::Null if body.get("cache_gb").is_some() => s["cache_gb"] = Value::Null,
         Value::Null => {}
         v => {
-            let gb = v
-                .as_u64()
-                .filter(|g| *g <= 100_000)
-                .ok_or_else(|| Error::BadRequest("cache_gb must be a whole number of GB".into()))?;
+            let gb = v.as_u64().filter(|g| *g <= 100_000).ok_or_else(|| Error::BadRequest("cache_gb must be a whole number of GB".into()))?;
             s["cache_gb"] = if gb == 0 { Value::Null } else { gb.into() };
         }
     }
     if !body["idle_secs"].is_null() {
-        s["idle_secs"] = body["idle_secs"]
-            .as_u64()
-            .filter(|v| *v <= 7 * 86400)
-            .ok_or_else(|| Error::BadRequest("idle_secs must be 0 to 604800".into()))?
-            .into();
+        s["idle_secs"] = body["idle_secs"].as_u64().filter(|v| *v <= 7 * 86400).ok_or_else(|| Error::BadRequest("idle_secs must be 0 to 604800".into()))?.into();
     }
     let path = settings_path().ok_or_else(|| Error::Io(io::Error::other("HOME is not set")))?;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, s.to_string())
-        .and_then(|()| std::fs::rename(&tmp, &path))
-        .map_err(Error::Io)
+    std::fs::write(&tmp, s.to_string()).and_then(|()| std::fs::rename(&tmp, &path)).map_err(Error::Io)
 }
 
 // --- The container -------------------------------------------------------
@@ -214,26 +177,18 @@ fn ensure_image(engine: &Engine, say: &mut dyn FnMut(&str)) -> Result<kiri_image
         return Ok(i);
     }
     say(&format!("Pulling {IMAGE} for Kiri's builder"));
-    let reference =
-        Reference::parse(PINNED).map_err(|e| Error::Io(io::Error::other(e.to_string())))?;
+    let reference = Reference::parse(PINNED).map_err(|e| Error::Io(io::Error::other(e.to_string())))?;
     let pulled = Client::new()
         .pull(&engine.store, &reference, &Platform::host_linux(), &|_| {})
         .map_err(|e| Error::Io(io::Error::other(format!("pulling {IMAGE}: {e}"))))?;
-    let name = Reference::parse(IMAGE)
-        .map(|r| r.short())
-        .unwrap_or_else(|_| IMAGE.to_owned());
-    engine.store.put_image(kiri_image::Image {
-        name: name.clone(),
-        ..pulled.clone()
-    })?;
+    let name = Reference::parse(IMAGE).map(|r| r.short()).unwrap_or_else(|_| IMAGE.to_owned());
+    engine.store.put_image(kiri_image::Image { name: name.clone(), ..pulled.clone() })?;
     // Known by its tag only: the blobs stay, the tagged record uses them.
     if pulled.name != name {
         let _ = engine.store.remove_image(&pulled.name);
     }
     engine.emit_image("pull", &pulled.config_digest, &name);
-    engine
-        .image(IMAGE)?
-        .ok_or_else(|| Error::Io(io::Error::other(format!("{IMAGE} vanished after its pull"))))
+    engine.image(IMAGE)?.ok_or_else(|| Error::Io(io::Error::other(format!("{IMAGE} vanished after its pull"))))
 }
 
 /// The body of the builder's create: what buildx's docker-container driver
@@ -255,54 +210,286 @@ fn create_body() -> Value {
 fn create(engine: &Engine, say: &mut dyn FnMut(&str)) -> Result<String, Error> {
     ensure_image(engine, say)?;
     let name = container_name();
-    let req = Request::internal(
-        "POST",
-        "/containers/create",
-        &[("name", &name)],
-        create_body().to_string().into_bytes(),
-    );
+    let req = Request::internal("POST", "/containers/create", &[("name", &name)], create_body().to_string().into_bytes());
     let made = api::create(&req, engine)?;
     crate::diag::info!("builder created", name = name);
     let id = made["Id"].as_str().unwrap_or_default().to_owned();
     // Before its first start, whoever starts it (buildx, for one).
-    write_config(engine, &id);
+    let _ = write_config(engine, &id);
     Ok(id)
 }
 
 /// `POST /containers/<builder>/start` from buildx (its docker-container
-/// driver starts the container itself): the config is written first, as
-/// for the daemon's own starts, so the mirror address and the cache limit
-/// are today's, not whatever the container was made with (an older Kiri's
-/// mirror address, a bridge gateway that has since moved).
-pub fn before_start(engine: &Engine, key: &str) {
-    let Some((id, status)) = find(engine) else {
-        return;
-    };
-    let key = key.trim_start_matches('/');
-    if status == Status::Running
-        || !(key == container_name() || (key.len() >= 6 && id.starts_with(key)))
-    {
-        return;
-    }
-    let _g = ENSURE.lock().unwrap_or_else(|e| e.into_inner());
-    write_config(engine, &id);
+/// driver starts the container itself), and the start half of `/restart`:
+/// for Kiri's builder, writes today's config (when not already running) and
+/// starts it under [`ENSURE`], so the mirror address, cache limit and
+/// registries are today's and nothing comes between writing the config and
+/// starting the container. `None` for any other container.
+pub fn start(engine: &Engine, key: &str) -> Option<Result<(), Error>> {
+    // One lookup for a start of any other container.
+    let Ok(true) = engine.with(key, |c| c.name == container_name()) else { return None };
+    start_with(
+        &ENSURE,
+        || find(engine).map(|(id, st)| (id, st == Status::Running)),
+        |id| write_config(engine, id),
+        |id| {
+            let started = engine.start(id);
+            if started.is_ok() {
+                LAST_USE.store(now_secs(), Ordering::Relaxed);
+            }
+            started
+        },
+    )
 }
 
-/// The garbage collector's limits, for buildkitd's next start.
-fn write_config(engine: &Engine, id: &str) {
-    let archive = tar(&[
-        ("buildkit/", None),
-        (
-            "buildkit/buildkitd.toml",
-            Some(config_toml(cache_limit(), &super::mirror::config(engine)).as_bytes()),
-        ),
-    ]);
-    if let Err(e) = copy_in(engine, id, "/etc", &mut io::Cursor::new(archive)) {
+fn start_with(
+    lock: &Mutex<()>,
+    find: impl FnOnce() -> Option<(String, bool)>,
+    write: impl FnOnce(&str) -> Result<(), Error>,
+    start: impl FnOnce(&str) -> Result<(), Error>,
+) -> Option<Result<(), Error>> {
+    let _g = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let (id, running) = find()?;
+    if !running && let Err(e) = write(&id) {
+        return Some(Err(e));
+    }
+    Some(start(&id))
+}
+
+/// What the builder's registry tables come from: daemon.json's settings,
+/// and the registries the store's images came from that those settings
+/// reach without verified TLS (a network entry covers a registry only once
+/// an image from it is pulled).
+#[derive(Debug, PartialEq)]
+struct Registries {
+    config: std::sync::Arc<kiri_image::RegistryConfig>,
+    unverified: Vec<String>,
+}
+
+impl Registries {
+    fn now(names: &[String]) -> Registries {
+        let config = super::daemon_json::current();
+        let unverified = super::mirror::unverified(&config, names);
+        Registries { config, unverified }
+    }
+}
+
+/// [`Registries`] as the builder's config last had them, so a hand edit, or
+/// an image pulled from a registry inside a listed network, reaches a
+/// running builder at the next build. `None` until this daemon has written
+/// the file: a builder found running then (left from before the daemon
+/// started) may have anything, and is treated as stale.
+static WRITTEN: std::sync::Mutex<Option<std::sync::Arc<Registries>>> = std::sync::Mutex::new(None);
+
+/// Whether a running builder's registry settings are not today's.
+fn is_stale(written: Option<&Registries>, current: &Registries) -> bool {
+    written.is_none_or(|w| w != current)
+}
+
+/// The garbage collector's limits and the registries, for buildkitd's next
+/// start. [`WRITTEN`] says so only once the file is in place.
+fn write_config(engine: &Engine, id: &str) -> Result<(), Error> {
+    let names = super::mirror::registry_names(engine);
+    let current = Registries::now(&names);
+    let toml = config_toml(cache_limit(), &super::mirror::config(engine, &current.config, &names));
+    let archive = tar(&[("buildkit/", None), ("buildkit/buildkitd.toml", Some(toml.as_bytes()))]);
+    let written = copy_in(engine, id, "/etc", &mut io::Cursor::new(archive));
+    *WRITTEN.lock().unwrap_or_else(|e| e.into_inner()) = written.is_ok().then(|| std::sync::Arc::new(current));
+    if let Err(e) = written {
         crate::diag::warn!("builder config not written", error = format!("{e:?}"));
+        return Err(e);
     }
     if kiri_vmm::rosetta_installed() {
         hide_amd64_qemu(engine, id);
     }
+    Ok(())
+}
+
+/// Applies a changed registry setting to a stopped stale builder right
+/// away (when nothing holds [`ENSURE`] and the VM is awake), so its next
+/// start reads today's file. Never blocks on [`ENSURE`] and never stops a
+/// running builder: a running one is left stale for the next build
+/// ([`ensure_running`], [`before_exec`]) or the idle watch ([`watch`]).
+pub fn refresh(engine: &Engine) {
+    refresh_with(
+        &ENSURE,
+        || find(engine).map(|(id, st)| (id, st == Status::Running)),
+        || stale_now(engine),
+        || engine.is_awake(),
+        |id| {
+            let _ = write_config(engine, id);
+        },
+    );
+}
+
+fn refresh_with(
+    lock: &Mutex<()>,
+    find: impl FnOnce() -> Option<(String, bool)>,
+    stale: impl FnOnce() -> bool,
+    awake: impl FnOnce() -> bool,
+    write: impl FnOnce(&str),
+) {
+    let _g = match lock.try_lock() {
+        Ok(g) => g,
+        Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return,
+    };
+    let Some((id, running)) = find() else { return };
+    if refresh_action(running, stale()) == Refresh::WriteOnly && awake() {
+        write(&id);
+    }
+}
+
+/// Stops a running builder (resumed first, if Kiri paused it), and only
+/// then writes today's config, into a container nothing runs in: a builder
+/// that would not stop keeps running with what [`WRITTEN`] says it has.
+/// Returns `true` only once the builder has stopped and its config is written.
+fn stop_then_write(engine: &Engine, id: &str) -> bool {
+    stop_then_write_with(
+        engine.is_paused(id),
+        || engine.pause(id, false),
+        || engine.stop(id, Duration::from_secs(10)).map(|_| ()),
+        || write_config(engine, id).is_ok(),
+    )
+}
+
+fn stop_then_write_with(
+    paused: bool,
+    resume: impl FnOnce() -> Result<(), Error>,
+    stop: impl FnOnce() -> Result<(), Error>,
+    write: impl FnOnce() -> bool,
+) -> bool {
+    let (mut resume, mut stop, mut write) = (Some(resume), Some(stop), Some(write));
+    for step in STOP_THEN_WRITE {
+        match step {
+            Step::Resume if paused => {
+                if let Err(e) = resume.take().unwrap()() {
+                    crate::diag::warn!("builder not stopped after a settings change", error = format!("{e:?}"));
+                    return false;
+                }
+            }
+            Step::Resume => {}
+            Step::Stop => {
+                if let Err(e) = stop.take().unwrap()() {
+                    crate::diag::warn!("builder not stopped after a settings change", error = format!("{e:?}"));
+                    return false;
+                }
+            }
+            Step::Write => return write.take().unwrap()(),
+        }
+    }
+    true
+}
+
+/// The steps of [`stop_then_write`], in order.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Step {
+    Resume,
+    Stop,
+    Write,
+}
+const STOP_THEN_WRITE: [Step; 3] = [Step::Resume, Step::Stop, Step::Write];
+
+/// Whether the config the builder runs with is not today's: daemon.json
+/// edited by hand, or a registry in a listed network pulled from, since it
+/// was written.
+fn stale_now(engine: &Engine) -> bool {
+    is_stale(WRITTEN.lock().unwrap_or_else(|e| e.into_inner()).as_deref(), &Registries::now(&super::mirror::registry_names(engine)))
+}
+
+/// Whether a builder is restarted with today's config now: only one that is
+/// running (or paused idle), with nothing using it, and a config not today's.
+fn restart_now(up: bool, busy: bool, stale: bool) -> bool {
+    up && !busy && stale
+}
+
+/// From the idle watch: a builder whose config is not today's, and that
+/// nothing uses, is stopped with today's config in place, so the next
+/// build, buildx's own included, starts it with that. Skipped while the
+/// builder is being made or started.
+fn refresh_if_stale(engine: &Engine) {
+    let _g = match ENSURE.try_lock() {
+        Ok(g) => g,
+        Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return,
+    };
+    let Some((id, status)) = find(engine) else { return };
+    if restart_now(status == Status::Running, builder_busy(engine, &id), stale_now(engine)) {
+        stop_then_write(engine, &id);
+    }
+}
+
+struct BuilderState {
+    id: String,
+    up: bool,
+    busy: bool,
+    stale: bool,
+}
+
+fn builder_state(engine: &Engine) -> Option<BuilderState> {
+    let (id, status) = find(engine)?;
+    Some(BuilderState { up: status == Status::Running, busy: builder_busy(engine, &id), stale: stale_now(engine), id })
+}
+
+/// `POST /containers/<builder>/exec` from buildx (its docker-container
+/// driver talks to buildkitd through an exec): a builder whose config is not
+/// today's, with nothing else using it, is restarted with today's first, so
+/// a build buildx starts reaches each registry as a pull does. Enters
+/// [`ENSURE`] for every builder exec so concurrent execs wait for an
+/// in-progress restart or start to finish before `exec_create` runs.
+pub fn before_exec(engine: &Engine, key: &str) {
+    // One lookup for an exec anywhere else.
+    let Ok(true) = engine.with(key, |c| c.name == container_name()) else { return };
+    before_exec_with(
+        &ENSURE,
+        || builder_state(engine),
+        |id| stop_then_write(engine, id),
+        |id| {
+            let restarted = engine.start(id).map_err(|e| format!("{e:?}")).and_then(|()| wait_ready(engine, id).map_err(|e| format!("{e:?}")));
+            match restarted {
+                Ok(()) => LAST_USE.store(now_secs(), Ordering::Relaxed),
+                Err(e) => crate::diag::warn!("builder not restarted with today's registries", error = e),
+            }
+        },
+    );
+}
+
+fn before_exec_with(
+    lock: &Mutex<()>,
+    recheck: impl FnOnce() -> Option<BuilderState>,
+    stop_write: impl FnOnce(&str) -> bool,
+    start: impl FnOnce(&str),
+) {
+    let _g = lock.lock().unwrap_or_else(|e| e.into_inner());
+    // Re-checked under ENSURE: another exec, a build or the idle watch may
+    // have refreshed, stopped, removed or started using the builder meanwhile.
+    let Some(state) = recheck() else { return };
+    if !restart_now(state.up, state.busy, state.stale) {
+        return;
+    }
+    if !stop_write(&state.id) {
+        return;
+    }
+    start(&state.id);
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Refresh {
+    /// Not running and stale: the next start reads the new file.
+    WriteOnly,
+    /// Already fresh, or running (restarted on the next build or idle watch):
+    /// nothing is written and nothing stopped from a settings save.
+    Leave,
+}
+
+fn refresh_action(running: bool, stale: bool) -> Refresh {
+    if !running && stale { Refresh::WriteOnly } else { Refresh::Leave }
+}
+
+/// A build through the daemon, or a `buildx` session executing in the
+/// builder, is under way: stopping it now would cut that off.
+fn builder_busy(engine: &Engine, id: &str) -> bool {
+    BUILDS.load(Ordering::Relaxed) > 0 || engine.running_execs(id) > 0
 }
 
 /// BuildKit's x86-64 emulator, which it runs amd64 build steps under when it
@@ -358,32 +545,42 @@ fn ensure_running(engine: &Engine, say: &mut dyn FnMut(&str)) -> Result<String, 
         Some(found) => found,
         None => (create(engine, say)?, Status::Created),
     };
-    if status != Status::Running {
-        write_config(engine, &id);
+    // daemon.json edited by hand since the builder started (Settings and
+    // `kiri registry` refresh it at once): restarted with the new file
+    // while no build uses it, as buildkitd reads it only when it starts.
+    let stale = status == Status::Running
+        && !builder_busy(engine, &id)
+        && is_stale(WRITTEN.lock().unwrap_or_else(|e| e.into_inner()).as_deref(), &Registries::now(&super::mirror::registry_names(engine)));
+    if stale {
+        if engine.is_paused(&id) {
+            engine.pause(&id, false)?;
+        }
+        engine.stop(&id, Duration::from_secs(10))?;
+    }
+    if status != Status::Running || stale {
+        write_config(engine, &id)?;
         say("Starting Kiri's builder (BuildKit)");
         engine.start(&id)?;
     } else if engine.is_paused(&id) {
         engine.pause(&id, false)?;
     }
     LAST_USE.store(now_secs(), Ordering::Relaxed);
+    wait_ready(engine, &id)?;
+    Ok(id)
+}
+
+/// Waits for a started builder's buildkitd to answer.
+fn wait_ready(engine: &Engine, id: &str) -> Result<(), Error> {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        if let Ok((0, _)) = engine.exec_capture(&id, &["buildctl", "debug", "workers"]) {
-            return Ok(id);
+        if let Ok((0, _)) = engine.exec_capture(id, &["buildctl", "debug", "workers"]) {
+            return Ok(());
         }
         if find(engine).is_none_or(|(_, s)| s != Status::Running) || Instant::now() > deadline {
-            let text: Vec<u8> = engine
-                .logs(&id, false)
-                .ok()
-                .flatten()
-                .map(|l| l.past.tail(Some(5)).flat_map(|r| r.data).collect())
-                .unwrap_or_default();
+            let text: Vec<u8> = engine.logs(id, false).ok().flatten().map(|l| l.past.tail(Some(5)).flat_map(|r| r.data).collect()).unwrap_or_default();
             let text = String::from_utf8_lossy(&text);
             let tail: Vec<&str> = text.lines().collect();
-            return Err(Error::Io(io::Error::other(format!(
-                "Kiri's builder (BuildKit) did not start: {}",
-                tail.join(" / ")
-            ))));
+            return Err(Error::Io(io::Error::other(format!("Kiri's builder (BuildKit) did not start: {}", tail.join(" / ")))));
         }
         std::thread::sleep(Duration::from_millis(200));
     }
@@ -395,43 +592,52 @@ pub fn watch(engine: Arc<Engine>) {
     super::mirror::start(&engine);
     let me = Arc::downgrade(&engine);
     drop(engine);
-    let _ = std::thread::Builder::new()
-        .name("kiri-builder-idle".into())
-        .spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_secs(15));
-                let Some(engine) = me.upgrade() else { return };
-                let idle = idle_secs();
-                let Some((id, Status::Running)) = find(&engine) else {
-                    LAST_USE.store(0, Ordering::Relaxed);
-                    continue;
-                };
-                // Paused already: once something resumes it, it gets a full idle
-                // time again (counted from the first look at it running).
-                if engine.is_paused(&id) {
-                    LAST_USE.store(0, Ordering::Relaxed);
-                    continue;
-                }
-                let now = now_secs();
-                let busy = || BUILDS.load(Ordering::Relaxed) > 0 || engine.running_execs(&id) > 0;
-                if idle == 0 || busy() || LAST_USE.load(Ordering::Relaxed) == 0 {
-                    LAST_USE.store(now, Ordering::Relaxed);
-                    continue;
-                }
-                if now.saturating_sub(LAST_USE.load(Ordering::Relaxed)) < idle {
-                    continue;
-                }
-                let _g = ENSURE.lock().unwrap_or_else(|e| e.into_inner());
-                if busy() {
-                    continue;
-                }
-                crate::diag::info!("builder idle, pausing it", secs = idle);
-                if let Err(e) = engine.pause_idle_builder(&id) {
-                    crate::diag::warn!("builder did not pause", error = format!("{e:?}"));
-                }
-                LAST_USE.store(0, Ordering::Relaxed);
-            }
-        });
+    let _ = std::thread::Builder::new().name("kiri-builder-idle".into()).spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(15));
+        let Some(engine) = me.upgrade() else { return };
+        let idle = idle_secs();
+        let Some((id, Status::Running)) = find(&engine) else {
+            LAST_USE.store(0, Ordering::Relaxed);
+            continue;
+        };
+        // daemon.json edited by hand, a registry in a listed network pulled
+        // from, or a setting saved while a build ran: the builder is put on
+        // today's config as soon as nothing uses it, running or paused.
+        if refresh_due(&engine, &id) {
+            refresh_if_stale(&engine);
+            LAST_USE.store(0, Ordering::Relaxed);
+            continue;
+        }
+        // Paused already: once something resumes it, it gets a full idle
+        // time again (counted from the first look at it running).
+        if engine.is_paused(&id) {
+            LAST_USE.store(0, Ordering::Relaxed);
+            continue;
+        }
+        let now = now_secs();
+        let busy = || BUILDS.load(Ordering::Relaxed) > 0 || engine.running_execs(&id) > 0;
+        if idle == 0 || busy() || LAST_USE.load(Ordering::Relaxed) == 0 {
+            LAST_USE.store(now, Ordering::Relaxed);
+            continue;
+        }
+        if now.saturating_sub(LAST_USE.load(Ordering::Relaxed)) < idle {
+            continue;
+        }
+        let _g = ENSURE.lock().unwrap_or_else(|e| e.into_inner());
+        if busy() {
+            continue;
+        }
+        crate::diag::info!("builder idle, pausing it", secs = idle);
+        if let Err(e) = engine.pause_idle_builder(&id) {
+            crate::diag::warn!("builder did not pause", error = format!("{e:?}"));
+        }
+        LAST_USE.store(0, Ordering::Relaxed);
+    });
+}
+
+/// Whether the idle watch restarts the builder for its config now.
+fn refresh_due(engine: &Engine, id: &str) -> bool {
+    restart_now(true, builder_busy(engine, id), stale_now(engine))
 }
 
 /// A build in progress, for the idle watch.
@@ -454,17 +660,7 @@ impl Drop for Busy {
 // --- In and out of the container -------------------------------------------
 
 fn internal_exec(argv: &[String], stdin: bool, env: Vec<String>) -> ExecConfig {
-    ExecConfig {
-        console_size: None,
-        argv: argv.to_vec(),
-        env,
-        cwd: "/".into(),
-        user: String::new(),
-        tty: false,
-        stdin,
-        privileged: true,
-        internal: true,
-    }
+    ExecConfig { console_size: None, argv: argv.to_vec(), env, cwd: "/".into(), user: String::new(), tty: false, stdin, privileged: true, internal: true }
 }
 
 /// A tar archive, as `docker cp` takes it, from (path, contents) entries; a
@@ -473,21 +669,10 @@ fn tar(entries: &[(&str, Option<&[u8]>)]) -> Vec<u8> {
     let mut out = Vec::new();
     for (name, data) in entries {
         let mut h = [0u8; 512];
-        let field = |h: &mut [u8; 512], at: usize, len: usize, v: &[u8]| {
-            h[at..at + v.len().min(len)].copy_from_slice(&v[..v.len().min(len)])
-        };
+        let field = |h: &mut [u8; 512], at: usize, len: usize, v: &[u8]| h[at..at + v.len().min(len)].copy_from_slice(&v[..v.len().min(len)]);
         field(&mut h, 0, 100, name.as_bytes());
         let size = data.map_or(0, <[u8]>::len);
-        field(
-            &mut h,
-            100,
-            8,
-            if data.is_some() {
-                b"0000644\0"
-            } else {
-                b"0000755\0"
-            },
-        );
+        field(&mut h, 100, 8, if data.is_some() { b"0000644\0" } else { b"0000755\0" });
         field(&mut h, 108, 8, b"0000000\0");
         field(&mut h, 116, 8, b"0000000\0");
         field(&mut h, 124, 12, format!("{size:011o}\0").as_bytes());
@@ -509,12 +694,7 @@ fn tar(entries: &[(&str, Option<&[u8]>)]) -> Vec<u8> {
 
 /// Unpacks a tar archive into a directory of the container, as `docker cp` does.
 fn copy_in(engine: &Engine, id: &str, path: &str, archive: &mut dyn Read) -> Result<(), Error> {
-    let stream = engine.copy(
-        id,
-        kiri_proto::copy_op::IN,
-        path,
-        kiri_proto::copy_flags::CHUNKED,
-    )?;
+    let stream = engine.copy(id, kiri_proto::copy_op::IN, path, kiri_proto::copy_flags::CHUNKED)?;
     let mut to_guest = std::fs::File::from(stream.fd.try_clone()?);
     api::send_chunks(archive, &mut to_guest)?;
     let mut from_guest = std::fs::File::from(stream.fd.try_clone()?);
@@ -522,23 +702,14 @@ fn copy_in(engine: &Engine, id: &str, path: &str, archive: &mut dyn Read) -> Res
     match kiri_proto::decode(&frame) {
         Ok(kiri_proto::Msg::CopyDone) => Ok(()),
         Ok(kiri_proto::Msg::Error(m)) => Err(api::copy_error(m)),
-        Ok(other) => Err(Error::Io(io::Error::other(format!(
-            "unexpected copy reply: {other:?}"
-        )))),
-        Err(e) => Err(Error::Io(io::Error::other(format!(
-            "bad copy reply: {e:?}"
-        )))),
+        Ok(other) => Err(Error::Io(io::Error::other(format!("unexpected copy reply: {other:?}")))),
+        Err(e) => Err(Error::Io(io::Error::other(format!("bad copy reply: {e:?}")))),
     }
 }
 
 /// Runs a command in the container with `input` as its stdin; returns its
 /// exit code and output.
-fn exec_with_input(
-    engine: &Engine,
-    id: &str,
-    argv: &[String],
-    input: &mut dyn Read,
-) -> Result<(i32, String), Error> {
+fn exec_with_input(engine: &Engine, id: &str, argv: &[String], input: &mut dyn Read) -> Result<(i32, String), Error> {
     let exec = engine.exec_create(id, internal_exec(argv, true, Vec::new()))?;
     let (_, rx) = engine.exec_start(&exec)?;
     let mut buf = vec![0u8; 64 * 1024];
@@ -554,9 +725,7 @@ fn exec_with_input(
     }
     let _ = engine.close_stdin(&exec);
     let out: Vec<u8> = rx.into_iter().flat_map(|(_, d)| d).collect();
-    let code = engine
-        .with_exec(&exec, |e| e.exit_code.unwrap_or(-1))
-        .unwrap_or(-1);
+    let code = engine.with_exec(&exec, |e| e.exit_code.unwrap_or(-1)).unwrap_or(-1);
     engine.forget_exec(&exec);
     Ok((code, String::from_utf8_lossy(&out).into_owned()))
 }
@@ -564,11 +733,7 @@ fn exec_with_input(
 fn run_ok(engine: &Engine, id: &str, argv: &[&str]) -> Result<(), String> {
     match engine.exec_capture(id, argv) {
         Ok((0, _)) => Ok(()),
-        Ok((code, out)) => Err(format!(
-            "{} failed ({code}): {}",
-            argv.join(" "),
-            out.trim()
-        )),
+        Ok((code, out)) => Err(format!("{} failed ({code}): {}", argv.join(" "), out.trim())),
         Err(e) => Err(format!("{e:?}")),
     }
 }
@@ -603,22 +768,15 @@ struct Options {
 fn json_query(req: &Request, key: &str) -> Result<Value, Error> {
     match req.query(key).filter(|v| !v.is_empty()) {
         None => Ok(Value::Null),
-        Some(v) => {
-            serde_json::from_str(v).map_err(|e| Error::BadRequest(format!("invalid {key}: {e}")))
-        }
+        Some(v) => serde_json::from_str(v).map_err(|e| Error::BadRequest(format!("invalid {key}: {e}"))),
     }
 }
 
 /// `a/b/Dockerfile` stays; a leading `./` or `/` goes; `..` is refused.
 fn clean_path(p: &str) -> Result<String, Error> {
-    let parts: Vec<&str> = p
-        .split('/')
-        .filter(|s| !s.is_empty() && *s != ".")
-        .collect();
+    let parts: Vec<&str> = p.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
     if parts.contains(&"..") {
-        return Err(Error::BadRequest(format!(
-            "the Dockerfile ({p}) must be within the build context"
-        )));
+        return Err(Error::BadRequest(format!("the Dockerfile ({p}) must be within the build context")));
     }
     Ok(parts.join("/"))
 }
@@ -632,88 +790,40 @@ impl Options {
         }
         let mut tags = Vec::new();
         for t in req.queries("t").filter(|t| !t.is_empty()) {
-            let r = Reference::parse(t)
-                .map_err(|_| Error::BadRequest(format!("invalid reference format: {t}")))?;
+            let r = Reference::parse(t).map_err(|_| Error::BadRequest(format!("invalid reference format: {t}")))?;
             if r.is_digest() {
-                return Err(Error::BadRequest(format!(
-                    "invalid reference format: {t}: a tag, not a digest"
-                )));
+                return Err(Error::BadRequest(format!("invalid reference format: {t}: a tag, not a digest")));
             }
             tags.push(r.short());
         }
         let pairs = |v: Value| -> Vec<(String, String)> {
-            let mut out: Vec<(String, String)> = v
-                .as_object()
-                .into_iter()
-                .flatten()
-                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
-                .collect();
+            let mut out: Vec<(String, String)> = v.as_object().into_iter().flatten().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned()))).collect();
             out.sort();
             out
         };
         let network = match req.query("networkmode").unwrap_or_default() {
             "" | "default" | "bridge" => String::new(),
             m @ ("host" | "none") => m.to_owned(),
-            m => {
-                return Err(Error::BadRequest(format!(
-                    "network mode \"{m}\" not supported by buildkit"
-                )));
-            }
+            m => return Err(Error::BadRequest(format!("network mode \"{m}\" not supported by buildkit"))),
         };
         let mut extra_hosts = Vec::new();
-        for h in req
-            .queries("extrahosts")
-            .flat_map(|h| h.split(','))
-            .map(str::trim)
-            .filter(|h| !h.is_empty())
-        {
-            let (name, ip) = h
-                .split_once(':')
-                .or_else(|| h.split_once('='))
-                .ok_or_else(|| Error::BadRequest(format!("invalid extra host {h}: name:ip")))?;
-            let ip = if ip == "host-gateway" {
-                super::ports::HOST_ADDR
-            } else {
-                ip
-            };
+        for h in req.queries("extrahosts").flat_map(|h| h.split(',')).map(str::trim).filter(|h| !h.is_empty()) {
+            let (name, ip) = h.split_once(':').or_else(|| h.split_once('=')).ok_or_else(|| Error::BadRequest(format!("invalid extra host {h}: name:ip")))?;
+            let ip = if ip == "host-gateway" { super::ports::HOST_ADDR } else { ip };
             extra_hosts.push(format!("{name}={ip}"));
         }
         let ulimits = json_query(req, "ulimits")?
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|u| {
-                Some(format!(
-                    "{}={}:{}",
-                    u["Name"].as_str()?,
-                    u["Soft"].as_i64()?,
-                    u["Hard"].as_i64()?
-                ))
-            })
+            .filter_map(|u| Some(format!("{}={}:{}", u["Name"].as_str()?, u["Soft"].as_i64()?, u["Hard"].as_i64()?)))
             .collect();
-        let cache_from = json_query(req, "cachefrom")?
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|c| c.as_str().map(str::to_owned))
-            .filter(|c| !c.is_empty())
-            .collect();
-        let dockerfile = clean_path(
-            req.query("dockerfile")
-                .filter(|d| !d.is_empty())
-                .unwrap_or("Dockerfile"),
-        )?;
+        let cache_from = json_query(req, "cachefrom")?.as_array().into_iter().flatten().filter_map(|c| c.as_str().map(str::to_owned)).filter(|c| !c.is_empty()).collect();
+        let dockerfile = clean_path(req.query("dockerfile").filter(|d| !d.is_empty()).unwrap_or("Dockerfile"))?;
         Ok(Options {
             tags,
-            dockerfile: if dockerfile.is_empty() {
-                "Dockerfile".into()
-            } else {
-                dockerfile
-            },
-            remote: req
-                .query("remote")
-                .filter(|r| !r.is_empty())
-                .map(str::to_owned),
+            dockerfile: if dockerfile.is_empty() { "Dockerfile".into() } else { dockerfile },
+            remote: req.query("remote").filter(|r| !r.is_empty()).map(str::to_owned),
             target: req.query("target").unwrap_or_default().to_owned(),
             build_args: pairs(json_query(req, "buildargs")?),
             labels: pairs(json_query(req, "labels")?),
@@ -722,10 +832,7 @@ impl Options {
             platform: req.query("platform").unwrap_or_default().to_lowercase(),
             network,
             extra_hosts,
-            shm_size: req
-                .query("shmsize")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0),
+            shm_size: req.query("shmsize").and_then(|s| s.parse().ok()).unwrap_or(0),
             ulimits,
             cache_from,
             quiet: req.flag("q"),
@@ -735,16 +842,7 @@ impl Options {
 
     /// `buildctl build …` for a context unpacked at `dir/context`.
     fn argv(&self, dir: &str) -> Vec<String> {
-        let mut a: Vec<String> = [
-            "buildctl",
-            "build",
-            "--progress",
-            "plain",
-            "--frontend",
-            "dockerfile.v0",
-        ]
-        .map(str::to_owned)
-        .to_vec();
+        let mut a: Vec<String> = ["buildctl", "build", "--progress", "plain", "--frontend", "dockerfile.v0"].map(str::to_owned).to_vec();
         let mut opt = |s: String| {
             a.push("--opt".into());
             a.push(s);
@@ -754,13 +852,7 @@ impl Options {
                 opt(format!("context={url}"));
                 opt(format!("filename={}", self.dockerfile));
             }
-            None => opt(format!(
-                "filename={}",
-                self.dockerfile
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(&self.dockerfile)
-            )),
+            None => opt(format!("filename={}", self.dockerfile.rsplit('/').next().unwrap_or(&self.dockerfile))),
         }
         if !self.target.is_empty() {
             opt(format!("target={}", self.target));
@@ -791,16 +883,8 @@ impl Options {
         }
         if self.remote.is_none() {
             let (sub, _) = self.dockerfile.rsplit_once('/').unwrap_or(("", ""));
-            a.extend([
-                "--local".into(),
-                format!("context={dir}/context"),
-                "--local".into(),
-            ]);
-            a.push(if sub.is_empty() {
-                format!("dockerfile={dir}/context")
-            } else {
-                format!("dockerfile={dir}/context/{sub}")
-            });
+            a.extend(["--local".into(), format!("context={dir}/context"), "--local".into()]);
+            a.push(if sub.is_empty() { format!("dockerfile={dir}/context") } else { format!("dockerfile={dir}/context/{sub}") });
         }
         if self.network == "host" {
             a.extend(["--allow".into(), "network.host".into()]);
@@ -814,11 +898,7 @@ impl Options {
         // An image archive on stdout, which the daemon loads into Kiri's
         // store; the names are quoted, the CSV way, since there may be several.
         a.push("--output".into());
-        a.push(if self.tags.is_empty() {
-            "type=docker,dest=-".into()
-        } else {
-            format!("type=docker,\"name={}\",dest=-", self.tags.join(","))
-        });
+        a.push(if self.tags.is_empty() { "type=docker,dest=-".into() } else { format!("type=docker,\"name={}\",dest=-", self.tags.join(",")) });
         a
     }
 }
@@ -827,23 +907,22 @@ impl Options {
 /// password, identitytoken, …}) as a docker config.json for buildctl.
 fn registry_config(header: &str) -> Option<Vec<u8>> {
     let raw = kiri_image::b64::decode(header)?;
-    let v: Value = serde_json::from_slice(&raw).ok()?;
+    let servers: std::collections::BTreeMap<String, kiri_image::LooseCredentials> = serde_json::from_slice(&raw).ok()?;
     let mut auths = serde_json::Map::new();
-    for (server, a) in v.as_object()? {
+    for (server, kiri_image::LooseCredentials(c)) in servers {
         let mut e = serde_json::Map::new();
-        if let (Some(u), Some(p)) = (a["username"].as_str(), a["password"].as_str()) {
-            e.insert(
-                "auth".into(),
-                kiri_image::b64::encode(format!("{u}:{p}").as_bytes()).into(),
-            );
-        } else if let Some(t) = a["auth"].as_str().filter(|t| !t.is_empty()) {
-            e.insert("auth".into(), t.into());
+        if !c.password.is_empty() {
+            e.insert("auth".into(), kiri_image::b64::encode(format!("{}:{}", c.username, c.password).as_bytes()).into());
+        } else if !c.auth.is_empty() {
+            e.insert("auth".into(), c.auth.into());
+        } else if !c.username.is_empty() && c.identity_token.is_empty() {
+            e.insert("auth".into(), kiri_image::b64::encode(format!("{}:", c.username).as_bytes()).into());
         }
-        if let Some(t) = a["identitytoken"].as_str().filter(|t| !t.is_empty()) {
-            e.insert("identitytoken".into(), t.into());
+        if !c.identity_token.is_empty() {
+            e.insert("identitytoken".into(), c.identity_token.into());
         }
         if !e.is_empty() {
-            auths.insert(server.clone(), Value::Object(e));
+            auths.insert(server, Value::Object(e));
         }
     }
     (!auths.is_empty()).then(|| json!({"auths": auths}).to_string().into_bytes())
@@ -916,12 +995,7 @@ fn sniff(head: &[u8]) -> Context {
 }
 
 /// `POST /build`: the classic builder API, run in the managed BuildKit.
-pub fn build(
-    req: &Request,
-    engine: &Arc<Engine>,
-    w: &mut UnixStream,
-    r: &mut BufReader<UnixStream>,
-) -> io::Result<Next> {
+pub fn build(req: &Request, engine: &Arc<Engine>, w: &mut UnixStream, r: &mut BufReader<UnixStream>) -> io::Result<Next> {
     let mut o = match Options::parse(req) {
         Ok(o) => o,
         Err(e) => {
@@ -961,11 +1035,7 @@ pub fn build(
                     out.stream(&format!("Successfully tagged {}\n", i.name));
                 }
             }
-            crate::diag::info!(
-                "image built",
-                tags = o.tags.join(","),
-                ms = began.elapsed().as_millis()
-            );
+            crate::diag::info!("image built", tags = o.tags.join(","), ms = began.elapsed().as_millis());
         }
         Err(m) => {
             crate::diag::warn!("build failed", error = m);
@@ -979,14 +1049,7 @@ pub fn build(
     Ok(Next::Close)
 }
 
-fn run(
-    req: &Request,
-    engine: &Engine,
-    o: &mut Options,
-    r: &mut BufReader<UnixStream>,
-    out: &mut Out<'_>,
-    probe: &UnixStream,
-) -> Result<Vec<kiri_image::Image>, String> {
+fn run(req: &Request, engine: &Engine, o: &mut Options, r: &mut BufReader<UnixStream>, out: &mut Out<'_>, probe: &UnixStream) -> Result<Vec<kiri_image::Image>, String> {
     let quiet = o.quiet;
     let id = ensure_running(engine, &mut |m| {
         if !quiet {
@@ -994,9 +1057,7 @@ fn run(
         }
     })
     .map_err(|e| match e {
-        Error::NotFound(m) | Error::Conflict(m) | Error::BadRequest(m) | Error::Unauthorized(m) => {
-            m
-        }
+        Error::NotFound(m) | Error::Conflict(m) | Error::BadRequest(m) | Error::Unauthorized(m) => m,
         Error::Io(e) => e.to_string(),
     })?;
     let dir = format!("{WORK}/{}", super::engine::random_hex(8));
@@ -1004,16 +1065,7 @@ fn run(
     let built = (|| {
         let env = match req.header("X-Registry-Config").and_then(registry_config) {
             Some(config) => {
-                copy_in(
-                    engine,
-                    &id,
-                    &dir,
-                    &mut io::Cursor::new(tar(&[
-                        ("docker/", None),
-                        ("docker/config.json", Some(&config)),
-                    ])),
-                )
-                .map_err(|e| format!("{e:?}"))?;
+                copy_in(engine, &id, &dir, &mut io::Cursor::new(tar(&[("docker/", None), ("docker/config.json", Some(&config))]))).map_err(|e| format!("{e:?}"))?;
                 vec![format!("DOCKER_CONFIG={dir}/docker")]
             }
             None => Vec::new(),
@@ -1028,100 +1080,49 @@ fn run(
 }
 
 /// The request body, unpacked into `dir/context` in the builder.
-fn send_context(
-    engine: &Engine,
-    id: &str,
-    dir: &str,
-    req: &Request,
-    r: &mut BufReader<UnixStream>,
-    o: &mut Options,
-) -> Result<(), String> {
+fn send_context(engine: &Engine, id: &str, dir: &str, req: &Request, r: &mut BufReader<UnixStream>, o: &mut Options) -> Result<(), String> {
     let mut body = http::Body::new(req, r);
     let mut head = Vec::with_capacity(512);
-    (&mut body)
-        .take(512)
-        .read_to_end(&mut head)
-        .map_err(|e| format!("reading the build context: {e}"))?;
+    (&mut body).take(512).read_to_end(&mut head).map_err(|e| format!("reading the build context: {e}"))?;
     let ctx = format!("{dir}/context");
     match sniff(&head) {
         // Two zero blocks after the body end an archive whose last entry
         // isn't padded (Compose's classic builder sends those).
-        Context::Tar => copy_in(
-            engine,
-            id,
-            &ctx,
-            &mut io::Cursor::new(head)
-                .chain(body)
-                .chain(io::repeat(0).take(1024)),
-        )
-        .map_err(|e| format!("unpacking the build context: {e:?}")),
+        Context::Tar => copy_in(engine, id, &ctx, &mut io::Cursor::new(head).chain(body).chain(io::repeat(0).take(1024))).map_err(|e| format!("unpacking the build context: {e:?}")),
         Context::Compressed(flag) => {
-            let argv: Vec<String> = ["tar", "-x", flag, "-f", "-", "-C", &ctx]
-                .map(str::to_owned)
-                .to_vec();
+            let argv: Vec<String> = ["tar", "-x", flag, "-f", "-", "-C", &ctx].map(str::to_owned).to_vec();
             match exec_with_input(engine, id, &argv, &mut io::Cursor::new(head).chain(body)) {
                 Ok((0, _)) => Ok(()),
                 Ok((_, m)) => Err(format!("unpacking the build context: {}", m.trim())),
                 Err(e) => Err(format!("unpacking the build context: {e:?}")),
             }
         }
-        Context::Zstd => Err(
-            "a zstd-compressed build context isn't supported: send it as tar, gzip, bzip2 or xz"
-                .into(),
-        ),
+        Context::Zstd => Err("a zstd-compressed build context isn't supported: send it as tar, gzip, bzip2 or xz".into()),
         Context::Dockerfile => {
             let mut text = head;
-            body.take(MAX_DOCKERFILE)
-                .read_to_end(&mut text)
-                .map_err(|e| format!("reading the Dockerfile: {e}"))?;
+            body.take(MAX_DOCKERFILE).read_to_end(&mut text).map_err(|e| format!("reading the Dockerfile: {e}"))?;
             o.dockerfile = "Dockerfile".into();
-            copy_in(
-                engine,
-                id,
-                &ctx,
-                &mut io::Cursor::new(tar(&[("Dockerfile", Some(&text))])),
-            )
-            .map_err(|e| format!("{e:?}"))
+            copy_in(engine, id, &ctx, &mut io::Cursor::new(tar(&[("Dockerfile", Some(&text))]))).map_err(|e| format!("{e:?}"))
         }
     }
 }
 
 /// Runs the build: its progress (stderr) to the client as it comes, the
 /// image archive (stdout) into Kiri's store as it comes.
-fn buildctl(
-    engine: &Engine,
-    id: &str,
-    dir: &str,
-    o: &Options,
-    env: Vec<String>,
-    out: &mut Out<'_>,
-    probe: &UnixStream,
-) -> Result<Vec<kiri_image::Image>, String> {
+fn buildctl(engine: &Engine, id: &str, dir: &str, o: &Options, env: Vec<String>, out: &mut Out<'_>, probe: &UnixStream) -> Result<Vec<kiri_image::Image>, String> {
     let argv = o.argv(dir);
     if !o.build_id.is_empty() {
-        CANCELLABLE.lock().unwrap_or_else(|e| e.into_inner()).push((
-            o.build_id.clone(),
-            id.to_owned(),
-            dir.to_owned(),
-        ));
+        CANCELLABLE.lock().unwrap_or_else(|e| e.into_inner()).push((o.build_id.clone(), id.to_owned(), dir.to_owned()));
     }
     let built = buildctl_run(engine, id, dir, o, argv, env, out, probe);
-    CANCELLABLE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|(_, _, d)| d != dir);
+    CANCELLABLE.lock().unwrap_or_else(|e| e.into_inner()).retain(|(_, _, d)| d != dir);
     built
 }
 
 /// `POST /build/cancel?id=`: interrupts that build (BuildKit cancels on SIGINT).
 pub fn cancel(req: &Request, engine: &Engine) -> Result<Value, Error> {
     let id = req.query("id").unwrap_or_default();
-    let found = CANCELLABLE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .find(|(b, _, _)| !id.is_empty() && b == id)
-        .cloned();
+    let found = CANCELLABLE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(b, _, _)| !id.is_empty() && b == id).cloned();
     if let Some((_, container, dir)) = found {
         let _ = engine.exec_capture(&container, &["pkill", "-INT", "-f", &dir]);
     }
@@ -1129,34 +1130,14 @@ pub fn cancel(req: &Request, engine: &Engine) -> Result<Value, Error> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn buildctl_run(
-    engine: &Engine,
-    id: &str,
-    dir: &str,
-    o: &Options,
-    argv: Vec<String>,
-    env: Vec<String>,
-    out: &mut Out<'_>,
-    probe: &UnixStream,
-) -> Result<Vec<kiri_image::Image>, String> {
-    let exec = engine
-        .exec_create(id, internal_exec(&argv, false, env))
-        .map_err(|e| format!("{e:?}"))?;
+fn buildctl_run(engine: &Engine, id: &str, dir: &str, o: &Options, argv: Vec<String>, env: Vec<String>, out: &mut Out<'_>, probe: &UnixStream) -> Result<Vec<kiri_image::Image>, String> {
+    let exec = engine.exec_create(id, internal_exec(&argv, false, env)).map_err(|e| format!("{e:?}"))?;
     let (_, rx) = engine.exec_start(&exec).map_err(|e| format!("{e:?}"))?;
     let mut cancelled = false;
     let mut tail: Vec<String> = Vec::new();
     let loaded = std::thread::scope(|s| {
         let (tx, lrx) = mpsc::sync_channel::<Vec<u8>>(64);
-        let loader = s.spawn(move || {
-            kiri_image::archive::load(
-                &engine.store,
-                ChanReader {
-                    rx: lrx,
-                    buf: Vec::new(),
-                    at: 0,
-                },
-            )
-        });
+        let loader = s.spawn(move || kiri_image::archive::load(&engine.store, ChanReader { rx: lrx, buf: Vec::new(), at: 0 }));
         let mut tx = Some(tx);
         let mut partial = Vec::new();
         loop {
@@ -1199,13 +1180,9 @@ fn buildctl_run(
             tail.push(line);
         }
         drop(tx);
-        loader
-            .join()
-            .unwrap_or_else(|_| Err(io::Error::other("the image loader panicked")))
+        loader.join().unwrap_or_else(|_| Err(io::Error::other("the image loader panicked")))
     });
-    let code = engine
-        .with_exec(&exec, |e| e.exit_code.unwrap_or(-1))
-        .unwrap_or(-1);
+    let code = engine.with_exec(&exec, |e| e.exit_code.unwrap_or(-1)).unwrap_or(-1);
     engine.forget_exec(&exec);
     if cancelled {
         return Err("build cancelled".into());
@@ -1224,10 +1201,7 @@ fn buildctl_run(
 fn failure(tail: &[String], code: i32) -> String {
     tail.iter()
         .rev()
-        .find_map(|l| {
-            l.strip_prefix("error: ")
-                .or_else(|| l.strip_prefix("ERROR: "))
-        })
+        .find_map(|l| l.strip_prefix("error: ").or_else(|| l.strip_prefix("ERROR: ")))
         .map(str::to_owned)
         .or_else(|| tail.iter().rev().find(|l| !l.trim().is_empty()).cloned())
         .unwrap_or_else(|| format!("buildctl exited with code {code}"))
@@ -1238,21 +1212,11 @@ fn failure(tail: &[String], code: i32) -> String {
 /// `POST /build/prune`: BuildKit's prune, if the builder exists (started
 /// for it if stopped). `{CachesDeleted, SpaceReclaimed}`.
 pub fn prune(req: &Request, engine: &Engine) -> Result<Value, Error> {
-    let f = api::filters(
-        req,
-        &[
-            "until",
-            "unused-for",
-            "id",
-            "parent",
-            "type",
-            "description",
-            "inuse",
-            "shared",
-            "private",
-        ],
-    )?;
-    let argv = prune_argv(req, &f)?;
+    // Docker's daemon puts this before every prune error.
+    let argv = prune_filters(req).and_then(|f| prune_argv(req, &f)).map_err(|e| match e {
+        Error::BadRequest(m) => Error::BadRequest(format!("failed to prune build cache: {m}")),
+        e => e,
+    })?;
     if find(engine).is_none() {
         return Ok(json!({"CachesDeleted": [], "SpaceReclaimed": 0}));
     }
@@ -1261,75 +1225,67 @@ pub fn prune(req: &Request, engine: &Engine) -> Result<Value, Error> {
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
     let (code, text) = engine.exec_capture(&id, &argv)?;
     if code != 0 {
-        let last = text
-            .lines()
-            .rev()
-            .find(|l| !l.trim().is_empty())
-            .unwrap_or("buildctl prune failed");
-        return Err(Error::Io(io::Error::other(
-            last.trim_start_matches("error: ").to_owned(),
-        )));
+        let last = text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("buildctl prune failed");
+        return Err(Error::Io(io::Error::other(last.trim_start_matches("error: ").to_owned())));
     }
     let (ids, space) = parse_prune(&text);
     Ok(json!({"CachesDeleted": ids, "SpaceReclaimed": space}))
 }
 
+/// The `filters` of `/build/prune`, read as Docker's daemon reads them
+/// (moby builder-next `Prune` and `toBuildkitPruneInfo`): `label` and
+/// `label!` are accepted and ignored, since `docker system prune --filter
+/// label=…` sends them here too; any other key takes one value, and `until`
+/// with `unused-for` is refused.
+fn prune_filters(req: &Request) -> Result<super::filters::Filters, Error> {
+    const ONE: [&str; 9] = ["until", "unused-for", "id", "parent", "type", "description", "inuse", "shared", "private"];
+    let f = api::filters(req, &[&ONE[..], &["label", "label!"]].concat())?;
+    if f.values("until").is_some() && f.values("unused-for").is_some() {
+        return Err(Error::BadRequest(r#"conflicting filters: "until" and "unused-for""#.into()));
+    }
+    for key in ONE {
+        let mut v = f.values(key).unwrap_or_default().to_vec();
+        v.sort();
+        v.dedup();
+        if v.len() > 1 {
+            return Err(Error::BadRequest("filters expect only one value".into()));
+        }
+    }
+    Ok(f)
+}
+
 fn prune_argv(req: &Request, f: &super::filters::Filters) -> Result<Vec<String>, Error> {
-    let mut a: Vec<String> = ["buildctl", "prune", "--format", "{{json .}}"]
-        .map(str::to_owned)
-        .to_vec();
+    let mut a: Vec<String> = ["buildctl", "prune", "--format", "{{json .}}"].map(str::to_owned).to_vec();
     if req.flag("all") {
         a.push("--all".into());
     }
     // Docker's sizes are bytes; buildctl's are MB (10^6).
-    let mb = |key: &str| {
-        req.query(key)
-            .and_then(|v| v.parse::<u64>().ok())
-            .filter(|v| *v > 0)
-            .map(|v| format!("{}", v as f64 / 1e6))
-    };
-    for (key, flag) in [
-        ("keep-storage", "--keep-storage"),
-        ("max-used-space", "--keep-storage"),
-        ("reserved-space", "--keep-storage-min"),
-        ("min-free-space", "--free-storage"),
-    ] {
+    let mb = |key: &str| req.query(key).and_then(|v| v.parse::<u64>().ok()).filter(|v| *v > 0).map(|v| format!("{}", v as f64 / 1e6));
+    for (key, flag) in [("keep-storage", "--keep-storage"), ("max-used-space", "--keep-storage"), ("reserved-space", "--keep-storage-min"), ("min-free-space", "--free-storage")] {
         if let Some(v) = mb(key)
             && !a.iter().any(|x| x == flag)
         {
             a.extend([flag.to_owned(), v]);
         }
     }
+    // A duration, date or Unix time, as Docker takes it; BuildKit wants the
+    // age, in whole seconds. A cut-off in the future keeps no age limit, as
+    // Docker's negative duration does.
     for key in ["until", "unused-for"] {
-        if let Some(v) = f.values(key).and_then(|v| v.first()) {
-            let ok = v.len() > 1
-                && v.ends_with(['h', 'm', 's'])
-                && v[..v.len() - 1]
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || b"hms.".contains(&b));
-            if !ok {
-                return Err(Error::BadRequest(format!(
-                    "{key}: give a duration such as 24h"
-                )));
+        if let Some(cut) = super::ops::prune_until(f, key)? {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+            if now > cut {
+                a.extend(["--keep-duration".into(), format!("{}s", (now - cut).round().max(1.0) as u64)]);
             }
-            a.extend(["--keep-duration".into(), v.clone()]);
         }
     }
-    for (key, as_) in [
-        ("id", "id~="),
-        ("parent", "parents=="),
-        ("type", "type=="),
-        ("description", "description=="),
-    ] {
+    for (key, as_) in [("id", "id~="), ("parent", "parents=="), ("type", "type=="), ("description", "description==")] {
         for v in f.values(key).into_iter().flatten() {
             a.extend(["--filter".into(), format!("{as_}{v}")]);
         }
     }
     for key in ["inuse", "shared", "private"] {
-        if f.bool(key) == Some(true)
-            || f.values(key)
-                .is_some_and(|v| v.iter().any(String::is_empty))
-        {
+        if f.bool(key) == Some(true) || f.values(key).is_some_and(|v| v.iter().any(String::is_empty)) {
             a.extend(["--filter".into(), key.to_owned()]);
         }
     }
@@ -1340,11 +1296,7 @@ fn prune_argv(req: &Request, f: &super::filters::Filters) -> Result<Vec<String>,
 fn parse_prune(text: &str) -> (Vec<String>, u64) {
     let mut ids = Vec::new();
     let mut space = 0;
-    for v in text
-        .lines()
-        .filter(|l| l.starts_with('{'))
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-    {
+    for v in text.lines().filter(|l| l.starts_with('{')).filter_map(|l| serde_json::from_str::<Value>(l).ok()) {
         if let Some(id) = v["ID"].as_str() {
             ids.push(id.to_owned());
         }
@@ -1356,9 +1308,7 @@ fn parse_prune(text: &str) -> (Vec<String>, u64) {
 /// `system df`'s BuildCache: BuildKit's records while the builder runs
 /// (asking a stopped one would start it); none otherwise.
 pub fn cache(engine: &Engine) -> Value {
-    let Some((id, Status::Running)) = find(engine) else {
-        return json!([]);
-    };
+    let Some((id, Status::Running)) = find(engine) else { return json!([]) };
     let _busy = Busy::new();
     match engine.exec_capture(&id, &["buildctl", "du", "--format", "{{json .}}"]) {
         Ok((0, text)) => du_rows(&text),
@@ -1369,11 +1319,7 @@ pub fn cache(engine: &Engine) -> Value {
 /// buildctl's usage records as Docker's BuildCache entries.
 fn du_rows(text: &str) -> Value {
     let start = text.find('[').unwrap_or(text.len());
-    let records: Vec<Value> = serde_json::Deserializer::from_str(&text[start..])
-        .into_iter::<Vec<Value>>()
-        .next()
-        .and_then(Result::ok)
-        .unwrap_or_default();
+    let records: Vec<Value> = serde_json::Deserializer::from_str(&text[start..]).into_iter::<Vec<Value>>().next().and_then(Result::ok).unwrap_or_default();
     Value::Array(
         records
             .iter()
@@ -1391,6 +1337,332 @@ fn du_rows(text: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A busy builder (a build, or a buildx session) is never stopped, and
+    /// its recorded config is not advanced.
+    #[test]
+    fn a_builder_whose_config_is_unknown_or_old_is_stale() {
+        let r = |c: kiri_image::RegistryConfig, unverified: &[&str]| Registries { config: std::sync::Arc::new(c), unverified: unverified.iter().map(|s| s.to_string()).collect() };
+        let none = r(kiri_image::RegistryConfig::default(), &[]);
+        let some = r(kiri_image::RegistryConfig { insecure: vec![kiri_image::Insecure::parse("registry.lan:5000").unwrap()], ..Default::default() }, &[]);
+        assert!(is_stale(None, &none), "never written by this daemon");
+        assert!(is_stale(Some(&none), &some));
+        assert!(!is_stale(Some(&some), &some));
+    }
+
+    /// An image pulled from a registry inside a listed network, after the
+    /// builder started, makes it stale: its config has no table for it.
+    #[test]
+    fn a_registry_pulled_from_inside_a_listed_network_makes_the_builder_stale() {
+        let c = std::sync::Arc::new(kiri_image::RegistryConfig { insecure: vec![kiri_image::Insecure::parse("10.0.0.0/8").unwrap()], ..Default::default() });
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let before = Registries { config: c.clone(), unverified: super::super::mirror::unverified(&c, &names(&["docker.io"])) };
+        let after = Registries { config: c.clone(), unverified: super::super::mirror::unverified(&c, &names(&["docker.io", "ghcr.io", "10.1.2.3:5000"])) };
+        assert_eq!(after.unverified, ["10.1.2.3:5000"]);
+        assert!(is_stale(Some(&before), &after));
+        // A registry outside the list changes nothing.
+        let other = Registries { config: c.clone(), unverified: super::super::mirror::unverified(&c, &names(&["docker.io", "ghcr.io"])) };
+        assert!(!is_stale(Some(&before), &other));
+    }
+
+    /// A builder on an old config is restarted only when it is up and
+    /// nothing uses it; and it is stopped before its new config is written,
+    /// so one that will not stop keeps what it is recorded as running with.
+    #[test]
+    fn a_stale_builder_is_restarted_only_when_idle_and_stopped_before_its_config_is_written() {
+        assert!(restart_now(true, false, true));
+        assert!(!restart_now(true, true, true), "a build or a buildx session is under way");
+        assert!(!restart_now(false, false, true), "the next start writes today's config");
+        assert!(!restart_now(true, false, false));
+        let at = |s: Step| STOP_THEN_WRITE.iter().position(|x| *x == s).unwrap();
+        assert!(at(Step::Resume) < at(Step::Stop) && at(Step::Stop) < at(Step::Write), "{STOP_THEN_WRITE:?}");
+    }
+
+    /// `before_exec` re-checks the builder's state under `ENSURE` (so a waiter
+    /// never kills a builder that became busy, fresh, stopped or gone while
+    /// waiting), and never starts the builder if resuming, stopping or writing
+    /// its config failed.
+    #[test]
+    fn before_exec_rechecks_under_lock_and_skips_start_when_stop_fails() {
+        // 1. State changed while waiting on the lock: nothing stopped or started.
+        let cases: Vec<(&str, Option<BuilderState>)> = vec![
+            ("now busy", Some(BuilderState { id: "b1".into(), up: true, busy: true, stale: true })),
+            ("already fresh", Some(BuilderState { id: "b1".into(), up: true, busy: false, stale: false })),
+            ("already stopped", Some(BuilderState { id: "b1".into(), up: false, busy: false, stale: true })),
+            ("gone", None),
+        ];
+        for (label, under_lock) in cases {
+            let lock = Arc::new(Mutex::new(()));
+            let held = lock.lock().unwrap();
+            let shared: Arc<Mutex<Option<BuilderState>>> = Arc::new(Mutex::new(Some(BuilderState { id: "b1".into(), up: true, busy: false, stale: true })));
+            let actions: Arc<Mutex<Vec<String>>> = Arc::default();
+            let waiter = std::thread::spawn({
+                let (lock, shared, actions) = (lock.clone(), shared.clone(), actions.clone());
+                move || {
+                    before_exec_with(
+                        &lock,
+                        || shared.lock().unwrap().take(),
+                        |id| {
+                            actions.lock().unwrap().push(format!("stop:{id}"));
+                            true
+                        },
+                        |id| actions.lock().unwrap().push(format!("start:{id}")),
+                    );
+                }
+            });
+            // Mutate state while holding the lock, then release it.
+            *shared.lock().unwrap() = under_lock;
+            drop(held);
+            waiter.join().unwrap();
+            assert!(actions.lock().unwrap().is_empty(), "{label}: {:?}", actions.lock().unwrap());
+        }
+
+        // 2. Resume, stop or config write fails: start is never called.
+        let err = || Err(Error::Conflict("boom".into()));
+        let steps = std::cell::RefCell::new(Vec::new());
+        assert!(!stop_then_write_with(
+            true,
+            || {
+                steps.borrow_mut().push("resume");
+                err()
+            },
+            || {
+                steps.borrow_mut().push("stop");
+                Ok(())
+            },
+            || {
+                steps.borrow_mut().push("write");
+                true
+            },
+        ));
+        assert_eq!(*steps.borrow(), ["resume"]);
+
+        steps.borrow_mut().clear();
+        assert!(!stop_then_write_with(
+            false,
+            || {
+                steps.borrow_mut().push("resume");
+                Ok(())
+            },
+            || {
+                steps.borrow_mut().push("stop");
+                err()
+            },
+            || {
+                steps.borrow_mut().push("write");
+                true
+            },
+        ));
+        assert_eq!(*steps.borrow(), ["stop"]);
+
+        let lock = Mutex::new(());
+        let mut started = false;
+        before_exec_with(
+            &lock,
+            || Some(BuilderState { id: "b1".into(), up: true, busy: false, stale: true }),
+            |_| stop_then_write_with(false, || Ok(()), err, || true),
+            |_| started = true,
+        );
+        assert!(!started, "must not start when stop failed");
+
+        before_exec_with(
+            &lock,
+            || Some(BuilderState { id: "b1".into(), up: true, busy: false, stale: true }),
+            |_| stop_then_write_with(false, || Ok(()), || Ok(()), || false),
+            |_| started = true,
+        );
+        assert!(!started, "must not start when config write failed");
+
+        // 3. Still running, idle and stale under the lock, and stop+write
+        // succeed: restarts the re-fetched container id.
+        let log = std::cell::RefCell::new(Vec::new());
+        before_exec_with(
+            &lock,
+            || Some(BuilderState { id: "b2".into(), up: true, busy: false, stale: true }),
+            |id| {
+                log.borrow_mut().push(format!("stop:{id}"));
+                stop_then_write_with(
+                    true,
+                    || {
+                        log.borrow_mut().push("resume".into());
+                        Ok(())
+                    },
+                    || {
+                        log.borrow_mut().push("stop".into());
+                        Ok(())
+                    },
+                    || {
+                        log.borrow_mut().push("write".into());
+                        true
+                    },
+                )
+            },
+            |id| log.borrow_mut().push(format!("start:{id}")),
+        );
+        assert_eq!(*log.borrow(), ["stop:b2", "resume", "stop", "write", "start:b2"]);
+    }
+
+    /// `before_exec` enters `ENSURE` for the builder without an unlocked
+    /// `restart_now` early return, so a concurrent exec waits while another
+    /// request is restarting or starting the builder; execs for other
+    /// containers never block on `ENSURE`.
+    #[test]
+    fn before_exec_waits_on_ensure_while_builder_is_restarting() {
+        use std::io::Write as _;
+        let dir = std::env::temp_dir().join(format!("kiri-builder-before-exec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = kiri_image::Store::open(&dir).unwrap();
+        let cfg = json!({"created": "2026-11-16T00:00:00Z", "architecture": "arm64", "os": "linux", "config": {"Cmd": ["sh"]}});
+        let mut w = store.ingest().unwrap();
+        w.write_all(&serde_json::to_vec(&cfg).unwrap()).unwrap();
+        let (digest, _) = w.finish().unwrap();
+        store.put_image(kiri_image::archive::from_config("demo:1".into(), &digest, &cfg, Vec::new())).unwrap();
+        let engine = Engine::boot(store).unwrap();
+        let make = |name: &str| {
+            let body = json!({"Image": "demo:1", "HostConfig": {"NetworkMode": "none"}});
+            let req = Request::internal("POST", "/containers/create", &[("name", name)], serde_json::to_vec(&body).unwrap());
+            api::create(&req, &engine).unwrap()["Id"].as_str().unwrap().to_owned()
+        };
+        let builder_id = make(&container_name());
+        let other_id = make("other");
+
+        // Hold ENSURE to simulate an in-progress builder restart (where the
+        // builder is momentarily not running: Status::Created / Exited).
+        let held = ENSURE.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Exec on a non-builder container returns without waiting on ENSURE.
+        before_exec(&engine, &other_id);
+
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let waiter = std::thread::spawn({
+            let (engine, builder_id) = (engine.clone(), builder_id.clone());
+            move || {
+                let _ = entered_tx.send(());
+                before_exec(&engine, &builder_id);
+                let _ = done_tx.send(());
+            }
+        });
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let waited = matches!(done_rx.recv_timeout(Duration::from_millis(100)), Err(RecvTimeoutError::Timeout));
+        drop(held);
+        if waited {
+            done_rx.recv_timeout(Duration::from_secs(2)).expect("waiter must resume once ENSURE is released");
+        }
+        waiter.join().unwrap();
+        drop(engine);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(waited, "before_exec must wait on ENSURE while the builder is stopped mid-restart");
+    }
+
+    #[test]
+    fn a_settings_change_never_stops_a_running_builder() {
+        assert_eq!(refresh_action(true, true), Refresh::Leave);
+        assert_eq!(refresh_action(true, false), Refresh::Leave);
+        assert_eq!(refresh_action(false, true), Refresh::WriteOnly);
+        assert_eq!(refresh_action(false, false), Refresh::Leave);
+    }
+
+    /// `refresh` checks staleness under `ENSURE`, never blocks on `ENSURE`,
+    /// never stops a running builder, and never wakes a sleeping VM; `start`
+    /// writes today's config and starts a stopped builder under `ENSURE`.
+    #[test]
+    fn refresh_checks_staleness_and_start_writes_config_under_lock() {
+        // 1. Fresh stopped builder: refresh does not write.
+        let lock = Mutex::new(());
+        let mut wrote = false;
+        refresh_with(&lock, || Some(("b1".into(), false)), || false, || true, |_| wrote = true);
+        assert!(!wrote, "fresh builder must not be rewritten");
+
+        // 2. Running stale builder: refresh neither stops nor writes.
+        refresh_with(&lock, || Some(("b1".into(), true)), || true, || true, |_| wrote = true);
+        assert!(!wrote, "running builder must not be written or stopped by refresh");
+
+        // 3. Stopped stale builder while VM is asleep: refresh does not wake it.
+        refresh_with(&lock, || Some(("b1".into(), false)), || true, || false, |_| wrote = true);
+        assert!(!wrote, "sleeping VM must not be woken by refresh");
+
+        // 4. Stopped stale builder while VM is awake: writes under lock.
+        let mut locked_during_write = false;
+        refresh_with(&lock, || Some(("b1".into(), false)), || true, || true, |_| {
+            wrote = true;
+            locked_during_write = lock.try_lock().is_err();
+        });
+        assert!(wrote && locked_during_write);
+
+        // 5. Lock held: refresh returns immediately without blocking.
+        let held = lock.lock().unwrap();
+        let touched = std::cell::Cell::new(false);
+        refresh_with(
+            &lock,
+            || {
+                touched.set(true);
+                Some(("b1".into(), false))
+            },
+            || true,
+            || true,
+            |_| touched.set(true),
+        );
+        drop(held);
+        assert!(!touched.get(), "refresh must not block on ENSURE");
+
+        // 6. start_with: stopped stale builder writes config AND starts while
+        // holding ENSURE; an already-running builder under ENSURE is not written.
+        let log = std::cell::RefCell::new(Vec::new());
+        let res = start_with(
+            &lock,
+            || Some(("b1".into(), false)),
+            |id| {
+                assert!(lock.try_lock().is_err(), "ENSURE must be held during write");
+                log.borrow_mut().push(format!("write:{id}"));
+                Ok(())
+            },
+            |id| {
+                assert!(lock.try_lock().is_err(), "ENSURE must be held during start");
+                log.borrow_mut().push(format!("start:{id}"));
+                Ok(())
+            },
+        );
+        assert!(matches!(res, Some(Ok(()))));
+        assert_eq!(*log.borrow(), ["write:b1", "start:b1"]);
+
+        log.borrow_mut().clear();
+        let res = start_with(
+            &lock,
+            || Some(("b1".into(), true)),
+            |id| {
+                log.borrow_mut().push(format!("write:{id}"));
+                Ok(())
+            },
+            |id| {
+                log.borrow_mut().push(format!("start:{id}"));
+                Ok(())
+            },
+        );
+        assert!(matches!(res, Some(Ok(()))));
+        assert_eq!(*log.borrow(), ["start:b1"], "already running builder must not be written into");
+
+        assert!(start_with(&lock, || None, |_| panic!("wrote"), |_| panic!("started")).is_none());
+    }
+
+    /// `start` does not boot the builder when writing `buildkitd.toml` fails,
+    /// returning the write error instead of starting with stale config.
+    #[test]
+    fn start_aborts_when_writing_config_fails() {
+        let lock = Mutex::new(());
+        let mut started = false;
+        let res = start_with(
+            &lock,
+            || Some(("b1".into(), false)),
+            |_| Err(Error::Io(io::Error::other("copy_in failed"))),
+            |_| {
+                started = true;
+                Ok(())
+            },
+        );
+        assert!(!started, "must not start builder when write_config fails");
+        assert!(matches!(res, Some(Err(Error::Io(ref e))) if e.to_string().contains("copy_in failed")), "{res:?}");
+    }
 
     /// BuildKit looks the emulator up by name and skips it when it isn't
     /// executable, so the file taking its place must be a plain 0644 file.
@@ -1432,51 +1704,20 @@ mod tests {
         .unwrap();
         assert_eq!(o.tags, ["app:latest", "ghcr.io/o/app:1"]);
         assert_eq!(o.dockerfile, "docker/Dockerfile.dev");
-        assert_eq!(
-            o.build_args,
-            [
-                ("A".to_owned(), "1".to_owned()),
-                ("B".to_owned(), "2".to_owned())
-            ]
-        );
+        assert_eq!(o.build_args, [("A".to_owned(), "1".to_owned()), ("B".to_owned(), "2".to_owned())]);
         assert!(o.no_cache && o.pull && o.quiet);
         assert_eq!(o.platform, "linux/amd64");
-        assert_eq!(
-            o.extra_hosts,
-            [
-                "db=10.0.0.2".to_owned(),
-                format!("host.docker.internal={}", super::super::ports::HOST_ADDR)
-            ]
-        );
+        assert_eq!(o.extra_hosts, ["db=10.0.0.2".to_owned(), format!("host.docker.internal={}", super::super::ports::HOST_ADDR)]);
         let a = o.argv("/tmp/kiri-build/x");
         let has = |pair: &[&str]| a.windows(pair.len()).any(|w| w == pair);
         assert!(has(&["--opt", "filename=Dockerfile.dev"]));
-        assert!(has(&[
-            "--local",
-            "context=/tmp/kiri-build/x/context",
-            "--local",
-            "dockerfile=/tmp/kiri-build/x/context/docker"
-        ]));
-        assert!(
-            has(&["--opt", "build-arg:A=1"])
-                && has(&["--opt", "label:team=core"])
-                && has(&["--opt", "target=dev"])
-        );
-        assert!(
-            has(&["--opt", "image-resolve-mode=pull"])
-                && has(&["--no-cache"])
-                && has(&["--opt", "platform=linux/amd64"])
-        );
+        assert!(has(&["--local", "context=/tmp/kiri-build/x/context", "--local", "dockerfile=/tmp/kiri-build/x/context/docker"]));
+        assert!(has(&["--opt", "build-arg:A=1"]) && has(&["--opt", "label:team=core"]) && has(&["--opt", "target=dev"]));
+        assert!(has(&["--opt", "image-resolve-mode=pull"]) && has(&["--no-cache"]) && has(&["--opt", "platform=linux/amd64"]));
         assert!(has(&["--opt", "force-network-mode=host"]) && has(&["--allow", "network.host"]));
         assert!(has(&["--opt", "shm-size=67108864"]) && has(&["--opt", "ulimit=nofile=1024:2048"]));
-        assert!(has(&[
-            "--import-cache",
-            "type=registry,ref=ghcr.io/o/app:cache"
-        ]));
-        assert_eq!(
-            a.last().unwrap(),
-            "type=docker,\"name=app:latest,ghcr.io/o/app:1\",dest=-"
-        );
+        assert!(has(&["--import-cache", "type=registry,ref=ghcr.io/o/app:cache"]));
+        assert_eq!(a.last().unwrap(), "type=docker,\"name=app:latest,ghcr.io/o/app:1\",dest=-");
         assert!(!a.iter().any(|x| x.contains("UNSET")));
     }
 
@@ -1485,23 +1726,14 @@ mod tests {
         let o = Options::parse(&req(&[])).unwrap();
         assert_eq!(o.dockerfile, "Dockerfile");
         let a = o.argv("/d");
-        assert!(
-            a.windows(2)
-                .any(|w| w == ["--local", "dockerfile=/d/context"])
-        );
+        assert!(a.windows(2).any(|w| w == ["--local", "dockerfile=/d/context"]));
         assert_eq!(a.last().unwrap(), "type=docker,dest=-");
         assert!(Options::parse(&req(&[("t", "Bad:Tag!")])).is_err());
         assert!(Options::parse(&req(&[("dockerfile", "../Dockerfile")])).is_err());
         assert!(Options::parse(&req(&[("networkmode", "mynet")])).is_err());
         assert!(Options::parse(&req(&[("version", "2")])).is_err());
-        let remote = Options::parse(&req(&[("remote", "https://github.com/o/r.git#main")]))
-            .unwrap()
-            .argv("/d");
-        assert!(
-            remote
-                .windows(2)
-                .any(|w| w == ["--opt", "context=https://github.com/o/r.git#main"])
-        );
+        let remote = Options::parse(&req(&[("remote", "https://github.com/o/r.git#main")])).unwrap().argv("/d");
+        assert!(remote.windows(2).any(|w| w == ["--opt", "context=https://github.com/o/r.git#main"]));
         assert!(!remote.iter().any(|x| x == "--local"));
     }
 
@@ -1511,10 +1743,7 @@ mod tests {
         assert_eq!(sniff(&t[..512]), Context::Tar);
         assert_eq!(sniff(&[0x1f, 0x8b, 8]), Context::Compressed("-z"));
         assert_eq!(sniff(b"BZh91AY"), Context::Compressed("-j"));
-        assert_eq!(
-            sniff(&[0xfd, b'7', b'z', b'X', b'Z', 0]),
-            Context::Compressed("-J")
-        );
+        assert_eq!(sniff(&[0xfd, b'7', b'z', b'X', b'Z', 0]), Context::Compressed("-J"));
         assert_eq!(sniff(b"FROM alpine\nRUN true\n"), Context::Dockerfile);
         assert_eq!(sniff(b""), Context::Tar);
         // The archive reads back with the tar crate (as the guest's would).
@@ -1530,48 +1759,111 @@ mod tests {
     fn registry_config_becomes_docker_config() {
         let header = kiri_image::b64::encode(br#"{"https://index.docker.io/v1/":{"username":"u","password":"p"},"ghcr.io":{"identitytoken":"tok"},"empty":{}}"#);
         let v: Value = serde_json::from_slice(&registry_config(&header).unwrap()).unwrap();
-        assert_eq!(
-            v["auths"]["https://index.docker.io/v1/"]["auth"],
-            kiri_image::b64::encode(b"u:p")
-        );
+        assert_eq!(v["auths"]["https://index.docker.io/v1/"]["auth"], kiri_image::b64::encode(b"u:p"));
         assert_eq!(v["auths"]["ghcr.io"]["identitytoken"], "tok");
         assert!(v["auths"].get("empty").is_none());
+        // Null fields, as docker-java sends them, are empty (#654).
+        let header = kiri_image::b64::encode(br#"{"r.example":{"username":"u","password":"p","identitytoken":null,"auth":null,"email":null},"nulls":{"username":null,"password":null,"identitytoken":null}}"#);
+        let v: Value = serde_json::from_slice(&registry_config(&header).unwrap()).unwrap();
+        assert_eq!(v["auths"]["r.example"], json!({"auth": kiri_image::b64::encode(b"u:p")}));
+        assert!(v["auths"].get("nulls").is_none());
+        // A null registry value is skipped, and key case does not matter.
+        let header = kiri_image::b64::encode(br#"{"gone.example":null,"r.example":{"UserName":"u","Password":"p"}}"#);
+        let v: Value = serde_json::from_slice(&registry_config(&header).unwrap()).unwrap();
+        assert!(v["auths"].get("gone.example").is_none());
+        assert_eq!(v["auths"]["r.example"], json!({"auth": kiri_image::b64::encode(b"u:p")}));
+    }
+
+    /// What each registry entry becomes, field by field (#654).
+    #[test]
+    fn registry_config_entries() {
+        let entry = |json: &str| -> Value {
+            let header = kiri_image::b64::encode(format!(r#"{{"r.example":{json},"keep.example":{{"username":"k","password":"kp"}}}}"#).as_bytes());
+            let v: Value = serde_json::from_slice(&registry_config(&header).unwrap()).unwrap();
+            // The other registry is never affected by this one.
+            assert_eq!(v["auths"]["keep.example"], json!({"auth": kiri_image::b64::encode(b"k:kp")}), "{json}");
+            v["auths"].get("r.example").cloned().unwrap_or(Value::Null)
+        };
+        let auth = |s: &[u8]| json!({"auth": kiri_image::b64::encode(s)});
+        // No password: an `auth` there is kept.
+        let up = kiri_image::b64::encode(b"u:p");
+        assert_eq!(entry(&format!(r#"{{"username":"u","password":null,"auth":"{up}"}}"#)), json!({"auth": up}));
+        assert_eq!(entry(&format!(r#"{{"username":"u","auth":"{up}"}}"#)), json!({"auth": up}));
+        // A username beside an identity token is not made into a password sign-in.
+        assert_eq!(entry(r#"{"username":"u","password":null,"identitytoken":"tok"}"#), json!({"identitytoken": "tok"}));
+        assert_eq!(entry(r#"{"username":"u","password":"","identitytoken":"tok"}"#), json!({"identitytoken": "tok"}));
+        // A password with an empty username, and a username with an empty password.
+        assert_eq!(entry(r#"{"username":"","password":"secret"}"#), auth(b":secret"));
+        assert_eq!(entry(r#"{"password":"secret"}"#), auth(b":secret"));
+        assert_eq!(entry(r#"{"username":"u","password":""}"#), auth(b"u:"));
+        // Docker reads a missing or null password the same as an empty one.
+        assert_eq!(entry(r#"{"username":"u"}"#), auth(b"u:"));
+        assert_eq!(entry(r#"{"username":"u","password":null}"#), auth(b"u:"));
+        assert_eq!(entry(r#"{"username":"u","password":"p","identitytoken":"tok"}"#), json!({"auth": up, "identitytoken": "tok"}));
+        // A null after a value leaves it, the same key spelled the same way or not.
+        assert_eq!(entry(r#"{"identitytoken":"tok","identitytoken":null}"#), json!({"identitytoken": "tok"}));
+        assert_eq!(entry(r#"{"username":"u","username":null,"password":"p"}"#), json!({"auth": up}));
+        assert_eq!(entry(r#"{"IdentityToken":"tok","identitytoken":null}"#), json!({"identitytoken": "tok"}));
+        // Later keys win in whatever case, in the order sent.
+        assert_eq!(entry(r#"{"identitytoken":"old","IdentityToken":"new"}"#), json!({"identitytoken": "new"}));
+        assert_eq!(entry(r#"{"IdentityToken":"old","identitytoken":"new"}"#), json!({"identitytoken": "new"}));
+        assert_eq!(entry(r#"{"username":"old","UserName":"u","password":"p"}"#), json!({"auth": up}));
+        assert_eq!(entry(r#"{"UserName":"old","username":"u","password":"p"}"#), json!({"auth": up}));
+        // Unknown fields, nested or not, are skipped; a known one of the wrong type is skipped alone.
+        assert_eq!(entry(r#"{"x":{"y":[{"z":null}]},"username":"u","Email":[1,"a"],"password":"p"}"#), json!({"auth": up}));
+        assert_eq!(entry(r#"{"username":"u","password":"p","identitytoken":1,"auth":{"a":"b"}}"#), json!({"auth": up}));
+        assert_eq!(entry(r#"{"username":"u","username":7,"password":"p"}"#), json!({"auth": up}));
+        // An entry that is not an object is no sign-in, and the rest still is.
+        for other in ["null", "1", "true", r#""u:p""#, "[]", r#"[{"username":"u","password":"p"}]"#, "{}", r#"{"username":"","password":""}"#] {
+            assert_eq!(entry(other), Value::Null, "{other}");
+        }
+        // A config with nothing to sign in with is none, as is one that is not a map.
+        for none in ["{}", "null", "[]", r#""x""#, r#"{"r.example":null}"#] {
+            assert!(registry_config(&kiri_image::b64::encode(none.as_bytes())).is_none(), "{none}");
+        }
     }
 
     #[test]
     fn prune_and_du() {
-        let r = Request::internal(
-            "POST",
-            "/build/prune",
-            &[
-                ("all", "1"),
-                ("keep-storage", "5000000000"),
-                ("filters", r#"{"until":["24h"],"type":["regular"]}"#),
-            ],
-            Vec::new(),
-        );
+        let r = Request::internal("POST", "/build/prune", &[("all", "1"), ("keep-storage", "5000000000"), ("filters", r#"{"until":["24h"],"type":["regular"]}"#)], Vec::new());
         let f = api::filters(&r, &["until", "type"]).unwrap();
         let a = prune_argv(&r, &f).unwrap();
         let has = |pair: &[&str]| a.windows(pair.len()).any(|w| w == pair);
-        assert!(
-            has(&["--all"])
-                && has(&["--keep-storage", "5000"])
-                && has(&["--keep-duration", "24h"])
-                && has(&["--filter", "type==regular"])
-        );
-        let bad = Request::internal(
-            "POST",
-            "/build/prune",
-            &[("filters", r#"{"until":["2026-01-01"]}"#)],
-            Vec::new(),
-        );
-        assert!(prune_argv(&bad, &api::filters(&bad, &["until"]).unwrap()).is_err());
-        let (ids, space) =
-            parse_prune("{\"ID\":\"a\",\"Size\":10}\n{\"ID\":\"b\",\"Size\":5}\nTotal: 15B\n");
+        assert!(has(&["--all"]) && has(&["--keep-storage", "5000"]) && has(&["--keep-duration", "86400s"]) && has(&["--filter", "type==regular"]), "{a:?}");
+        for bad in [r#"{"until":["yesterday"]}"#, r#"{"until":["1d"]}"#, r#"{"unused-for":["2026-13-01"]}"#] {
+            let bad = Request::internal("POST", "/build/prune", &[("filters", bad)], Vec::new());
+            assert!(prune_argv(&bad, &api::filters(&bad, &["until", "unused-for"]).unwrap()).is_err());
+        }
+        // Docker's daemon takes `label`/`label!` and ignores them; one value per other key.
+        let req = |f: &str| Request::internal("POST", "/build/prune", &[("filters", f)], Vec::new());
+        let argv = |f: &str| prune_filters(&req(f)).and_then(|x| prune_argv(&req(f), &x));
+        assert_eq!(argv(r#"{"label":["a=b"],"label!":["c"]}"#).unwrap(), argv("").unwrap());
+        assert_eq!(argv(r#"{"label":{"a=b":true}}"#).unwrap(), argv("").unwrap());
+        let a = argv(r#"{"label":["a=b"],"until":["24h"],"type":["regular"],"id":["x"],"inuse":[""]}"#).unwrap();
+        assert!(a.windows(2).any(|w| w == ["--keep-duration", "86400s"]) && a.windows(2).any(|w| w == ["--filter", "type==regular"]));
+        assert!(a.windows(2).any(|w| w == ["--filter", "id~=x"]) && a.windows(2).any(|w| w == ["--filter", "inuse"]));
+        assert!(argv(r#"{"type":["regular","regular"]}"#).is_ok());
+        // `until` as a date or Unix time becomes the age BuildKit wants;
+        // one in the future sets no age limit.
+        let age = |f: &str| argv(f).unwrap().windows(2).find(|w| w[0] == "--keep-duration").map(|w| w[1].trim_end_matches('s').parse::<u64>().unwrap());
+        let day = |secs: u64| (secs + 60) / 86_400;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        assert_eq!(age(&format!(r#"{{"until":["{}"]}}"#, now - 3 * 86_400)).map(day), Some(3));
+        assert_eq!(age(&format!(r#"{{"until":["{}"]}}"#, super::super::time::rfc3339(UNIX_EPOCH + Duration::from_secs(now - 2 * 86_400)))).map(day), Some(2));
+        assert_eq!(age(r#"{"unused-for":["1h30m"]}"#), Some(5400));
+        assert_eq!(age(r#"{"until":["2999-01-01T00:00:00Z"]}"#), None);
+        let msg = |f: &str| match prune_filters(&req(f)) {
+            Err(Error::BadRequest(m)) => m,
+            other => panic!("{f}: {other:?}"),
+        };
+        assert_eq!(msg(r#"{"type":["regular","source.local"]}"#), "filters expect only one value");
+        assert_eq!(msg(r#"{"until":["1h","2h"]}"#), "filters expect only one value");
+        assert_eq!(msg(r#"{"until":["1h"],"unused-for":["2h"]}"#), r#"conflicting filters: "until" and "unused-for""#);
+        assert_eq!(msg(r#"{"dangling":["true"]}"#), "invalid filter 'dangling'");
+        assert_eq!(msg(r#"{"mutable":[""]}"#), "invalid filter 'mutable'");
+        let (ids, space) = parse_prune("{\"ID\":\"a\",\"Size\":10}\n{\"ID\":\"b\",\"Size\":5}\nTotal: 15B\n");
         assert_eq!((ids, space), (vec!["a".to_owned(), "b".to_owned()], 15));
-        let rows = du_rows(
-            r#"[{"ID":"x","Mutable":false,"InUse":true,"Size":42,"Parents":["p"],"CreatedAt":"2026-10-30T10:00:00Z","LastUsedAt":null,"UsageCount":3,"Description":"mount / from exec","RecordType":"regular","Shared":false}]"#,
-        );
+        let rows = du_rows(r#"[{"ID":"x","Mutable":false,"InUse":true,"Size":42,"Parents":["p"],"CreatedAt":"2026-10-30T10:00:00Z","LastUsedAt":null,"UsageCount":3,"Description":"mount / from exec","RecordType":"regular","Shared":false}]"#);
         assert_eq!(rows[0]["ID"], "x");
         assert_eq!(rows[0]["Parent"], "p");
         assert_eq!(rows[0]["Type"], "regular");
@@ -1585,16 +1877,7 @@ mod tests {
         assert_eq!(default_cache(100 * GB), 10 * GB);
         assert_eq!(default_cache(2000 * GB), 20 * GB);
         assert!(config_toml(8 * GB, "").contains(&format!("maxUsedSpace = {}", 8 * GB)));
-        assert_eq!(
-            failure(
-                &[
-                    "#5 ERROR: boom".into(),
-                    "error: failed to solve: boom".into()
-                ],
-                1
-            ),
-            "failed to solve: boom"
-        );
+        assert_eq!(failure(&["#5 ERROR: boom".into(), "error: failed to solve: boom".into()], 1), "failed to solve: boom");
         assert_eq!(failure(&[], 2), "buildctl exited with code 2");
     }
 }

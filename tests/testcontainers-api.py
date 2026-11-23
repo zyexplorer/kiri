@@ -2,7 +2,10 @@
 """What Testcontainers (docker-java, .NET, Go) needs of the engine API, asked
 the way those clients ask: raw HTTP/1.1 on one kept-alive connection.
 
-    tests/testcontainers-api.py SOCKET [version|cmd|keepalive|close|follow|follow-created|timestamps|exec|endpoints|copy-after-start ...]
+    tests/testcontainers-api.py SOCKET [version|cmd|keepalive|close|follow|follow-created|timestamps|exec|endpoints|copy-after-start|buildx-bootstrap ...]
+
+buildx-bootstrap is not Testcontainers' but buildx's docker-container driver,
+which asks the same way (Go's client, one pooled connection).
 
 Prints one line per check, "ok <name>" or "FAIL <name>: why", and exits 1 if
 any failed. The containers it makes (tc-api-*) are left running.
@@ -47,11 +50,15 @@ class Conn:
         out, self.buf = self.buf[:n], self.buf[n:]
         return out
 
-    def send(self, method, path, body=None, ctype="application/json", extra=""):
+    def send(self, method, path, body=None, ctype="application/json", extra="", chunked=False):
         if isinstance(body, (dict, list)):
             body = json.dumps(body).encode()
         head = f"{method} /v1.32{path} HTTP/1.1\r\nHost: localhost:2375\r\nAccept: application/json\r\n{extra}"
-        if body is not None:
+        if body is not None and chunked:
+            # As Go's client sends a body of unknown length (an archive).
+            head += f"Content-Type: {ctype}\r\nTransfer-Encoding: chunked\r\n"
+            body = (b"%x\r\n%s\r\n" % (len(body), body) if body else b"") + b"0\r\n\r\n"
+        elif body is not None:
             head += f"Content-Type: {ctype}\r\nContent-Length: {len(body)}\r\n"
         self.s.sendall(head.encode() + b"\r\n" + (body or b""))
 
@@ -76,8 +83,8 @@ class Conn:
             self.take(2)
             yield data
 
-    def request(self, method, path, body=None, ctype="application/json"):
-        self.send(method, path, body, ctype)
+    def request(self, method, path, body=None, ctype="application/json", chunked=False):
+        self.send(method, path, body, ctype, chunked=chunked)
         status, headers = self.head()
         if headers.get("transfer-encoding") == "chunked":
             data = b"".join(self.chunks())
@@ -404,10 +411,47 @@ def check_copy_after_start():
     return "a file uploaded straight after /start is there, 3 of 3"
 
 
+def check_buildx_bootstrap(rounds=20):
+    # buildx's docker-container driver makes its BuildKit container, copies
+    # /etc/buildkit into it (a chunked PUT /archive) and starts it at once,
+    # on the same pooled connection. Kiri 0.1.18 answered the copy and then
+    # closed the connection without saying so: the start went into a closing
+    # socket and buildx failed with "connection reset by peer", in about one
+    # bootstrap in six (#83). Asked raw, the lost start shows every time.
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        d = tarfile.TarInfo("buildkit")
+        d.type, d.mode = tarfile.DIRTYPE, 0o755
+        tar.addfile(d)
+        conf = b"# buildkitd.toml\n"
+        f = tarfile.TarInfo("buildkit/buildkitd.toml")
+        f.size = len(conf)
+        tar.addfile(f, io.BytesIO(conf))
+    lost = []
+    for run in range(rounds):
+        c = Conn()
+        name = f"tc-api-buildx-{run}"
+        fresh(c, name, ["sleep", "600"])
+        status, headers, data = c.request("PUT", f"/containers/{name}/archive?noOverwriteDirNonDir=true&path=%2Fetc", buf.getvalue(), "application/x-tar", chunked=True)
+        assert status == 200, f"archive {status} {data[:200]!r}"
+        closing = headers.get("connection", "").lower() == "close"
+        try:
+            status, _, data = c.request("POST", f"/containers/{name}/start")
+            assert status == 204, f"start {status} {data[:200]!r}"
+        except (EOFError, BrokenPipeError, ConnectionResetError) as e:
+            lost.append(f"{run + 1}: {type(e).__name__}" + ("" if closing else ", no Connection: close sent"))
+        c.s.close()
+        if run < rounds - 1:
+            Conn().request("DELETE", f"/containers/{name}?force=1")
+    assert not lost, f"the start after the copy lost its connection in {len(lost)} of {rounds} rounds ({'; '.join(lost[:3])})"
+    return f"copy then start on one connection, {rounds} of {rounds}"
+
+
 CHECKS = {
     "version": check_version, "cmd": check_cmd, "keepalive": check_keepalive, "close": check_close,
     "follow": check_follow, "follow-created": check_follow_created, "timestamps": check_timestamps,
     "exec": check_exec, "endpoints": check_endpoints, "copy-after-start": check_copy_after_start,
+    "buildx-bootstrap": check_buildx_bootstrap,
 }
 
 if __name__ == "__main__":

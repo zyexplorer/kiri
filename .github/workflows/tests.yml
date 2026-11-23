@@ -1,0 +1,312 @@
+# Kiri's own tests on a pull request, each job started only by what can
+# break it. scripts/ci/tests-scope.py reads the change: for Rust, the code's
+# own markers (the module tree from each crate's roots, and the #[cfg(...)]
+# on each module and on the items the changed lines are in); for other
+# files, a short list. Its job summary says, file by file, which jobs a
+# change starts and why.
+#
+#   the pull request changes         unit (Linux)  windows-build  mac-build
+#   code built on all three              yes           yes           yes
+#   Linux-only code, the agent           yes            -             -
+#   Windows-only code                     -            yes            -
+#   macOS-only code                       -             -            yes
+#   the build (Cargo.toml, Cargo.lock),
+#   anything the script doesn't know     yes           yes           yes
+#   words, Kiri's kernel, the suites,
+#   comments only                         -             -             -
+#
+# Files Rust code includes (the window's page and its translations, which
+# the unit tests read) count for the code that includes them.
+#
+# - unit: the workspace's unit tests on Linux (kiri-init's as root, as in
+#   the guest, since several need it).
+# - windows-build: the Windows app and CLI still compile, so shared code
+#   can't use something only Unix has.
+# - mac-build: the build and the unit tests on a Mac, and what the runner
+#   offers for Kiri's VM (in its job summary).
+# - scripts: a change to the suites' or scripts' shell or Python files is
+#   checked in under a minute: bash -n, shellcheck, py_compile, the
+#   regressions table and the CI scripts' own tests.
+# - page-scan: what a pull request adds to the window's page is read for
+#   new addresses, network calls and hidden code (scripts/ci/page-scan.py);
+#   anything flagged fails until a maintainer adds the label `page-read`.
+#
+# One long job waits to be asked for:
+# - e2e-linux: the Linux engine built and started as a Linux host runs it,
+#   then tests/e2e.sh in strict mode (what the runner lacks fails, it is
+#   not skipped) and tests/stress.sh, both through the docker CLI. It runs
+#   only on a pull request that carries the label `run-tests`. Only people
+#   with rights on the repository can add a label. The label also starts the
+#   quick jobs whatever the files are.
+#
+# A kernel change can't be tested on a runner (it runs the runner's kernel,
+# and a Mac runner can't start Kiri's VM), and the window's page has its own
+# workflow. The full suite on macOS and Windows runs on Kiri's own machines.
+#
+# Safe for pull requests from forks: it runs on GitHub's machines with a
+# read-only token and no secrets, and uses pull_request (never
+# pull_request_target), so a fork's code can't write to the repository.
+# Images come from the suites' default public registry (tests/lib/images.sh).
+name: Tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+# Every run decides from the pull request as it is now: its files and the
+# labels it carries, never from which label was just added. So the newest
+# run always shows the true state. A run that skipped jobs for an unrelated
+# label would show those checks as "skipped", which GitHub counts as passing,
+# over an earlier failure. Any label change therefore runs the whole thing
+# again and cancels the run before it. That costs a few minutes per label;
+# labels are rare.
+concurrency:
+  group: tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      linux: ${{ steps.scope.outputs.linux }}
+      windows: ${{ steps.scope.outputs.windows }}
+      mac: ${{ steps.scope.outputs.mac }}
+      scripts: ${{ steps.scope.outputs.scripts }}
+      page: ${{ steps.scope.outputs.page }}
+      suite: ${{ steps.scope.outputs.suite }}
+    steps:
+      # The change as it would merge: its first parent is main, so the
+      # difference between the two is what the pull request changes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Which jobs this pull request needs
+        id: scope
+        env:
+          FORCED: ${{ contains(github.event.pull_request.labels.*.name, 'run-tests') }}
+        run: |
+          # The scripts are main's copies when main has them, so a pull
+          # request can't decide for itself that it needs no tests. They read
+          # the pull request's files as data; -I keeps the checkout's own
+          # Python files and PYTHON* variables out of them.
+          git show HEAD^1:scripts/ci/tests-scope.py > "$RUNNER_TEMP/scope.py" 2>/dev/null || cp scripts/ci/tests-scope.py "$RUNNER_TEMP/scope.py"
+          git show HEAD^1:scripts/ci/page-scan.py > "$RUNNER_TEMP/page-scan.py" 2>/dev/null || cp scripts/ci/page-scan.py "$RUNNER_TEMP/page-scan.py"
+          python3 -I "$RUNNER_TEMP/scope.py" HEAD^1 HEAD | tee "$RUNNER_TEMP/scope.txt"
+          if grep -qx 'suites_changed=true' "$RUNNER_TEMP/scope.txt" && [ "$FORCED" != true ]; then
+            echo "this pull request changes the suites; add the label run-tests to run them" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "suite=false" >> "$RUNNER_TEMP/scope.txt"
+          if [ "$FORCED" = true ]; then
+            echo "the run-tests label is on: every job runs" | tee -a "$GITHUB_STEP_SUMMARY"
+            printf 'linux=true\nwindows=true\nmac=true\nscripts=true\nsuite=true\n' > "$RUNNER_TEMP/scope.txt"
+          fi
+          # The page scan goes by the files whatever the labels are.
+          python3 -I "$RUNNER_TEMP/page-scan.py" --changed HEAD^1 HEAD | tee -a "$RUNNER_TEMP/scope.txt"
+          cat "$RUNNER_TEMP/scope.txt" >> "$GITHUB_OUTPUT"
+
+  unit:
+    needs: scope
+    if: needs.scope.outputs.linux == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Pull requests' caches stay with their pull request: a rerun or a new
+      # push to it starts warm, other pull requests and main never see it.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: unit-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: unit-${{ runner.os }}-
+      - name: Unit tests
+        run: cargo test --workspace --exclude kiri-init --locked
+      - name: kiri-init's unit tests, as root
+        run: |
+          # Built as this user; only the test binaries run under sudo
+          # (mknod, mounts and namespaces need root, as in the guest).
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          cargo test -p kiri-init --locked --config "target.$host.runner = 'sudo'"
+
+  windows-build:
+    needs: scope
+    if: needs.scope.outputs.windows == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the Windows app and CLI compile
+        run: cargo check --locked --target x86_64-pc-windows-msvc -p kiri-win -p kiri
+
+  mac-build:
+    needs: scope
+    if: needs.scope.outputs.mac == 'true'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # What the runner offers for Kiri's VM, to learn whether the suites
+      # could run here one day. Only looks; never fails the job.
+      - name: What this runner offers
+        continue-on-error: true
+        run: |
+          {
+            echo "### The macOS runner"
+            echo '```'
+            echo "kern.hv_support:       $(sysctl -n kern.hv_support 2>&1)"
+            echo "kern.hv_vmm_present:   $(sysctl -n kern.hv_vmm_present 2>&1)"
+            echo "cpu:                   $(sysctl -n machdep.cpu.brand_string 2>&1)"
+            echo "cores:                 $(sysctl -n hw.ncpu 2>&1) ($(sysctl -n hw.perflevel0.physicalcpu 2>/dev/null || echo '?') performance)"
+            echo "memory:                $(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1073741824 )) GiB"
+            sw_vers 2>&1
+            uname -m
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      # The window's Compose tests call the docker CLI and Compose, which a
+      # macOS runner doesn't have (Linux runners do, but the window isn't
+      # built there). The same versions Kiri.app bundles, each checked
+      # against its SHA-256 in crates/kiri/src/cli_pins.rs.
+      - name: The docker CLI and Compose Kiri ships
+        run: |
+          pin() { sed -n "s/^pub const $1: (&str, &str) = (\"\([^\"]*\)\", \"\([0-9a-f]\{64\}\)\");$/\1 \2/p" crates/kiri/src/cli_pins.rs; }
+          read -r dv dsum <<< "$(pin DOCKER_CLI)"
+          read -r cv csum <<< "$(pin COMPOSE)"
+          [ -n "$dsum" ] && [ -n "$csum" ] || { echo "could not read the pins from cli_pins.rs"; exit 1; }
+          cd "$RUNNER_TEMP"
+          curl -fsSL --proto '=https' -o docker.tgz "https://download.docker.com/mac/static/stable/aarch64/docker-$dv.tgz"
+          curl -fsSL --proto '=https' -o compose "https://github.com/docker/compose/releases/download/$cv/docker-compose-darwin-aarch64"
+          echo "$dsum  docker.tgz" | shasum -a 256 -c
+          echo "$csum  compose" | shasum -a 256 -c
+          mkdir -p bin "$HOME/.docker/cli-plugins"
+          tar -xzf docker.tgz -C bin --strip-components 1 docker/docker
+          install -m 755 compose "$HOME/.docker/cli-plugins/docker-compose"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          bin/docker --version && bin/docker compose version
+      # kiri-init is the Linux agent: its tests are built and run in `unit`.
+      - name: Build and unit tests on a Mac
+        run: cargo test --workspace --exclude kiri-init --locked
+
+  scripts:
+    needs: scope
+    if: needs.scope.outputs.scripts == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Shell and Python files the pull request changes
+        run: |
+          # The runner image's shellcheck (Ubuntu 24.04's, 0.9.0). Only the
+          # files this pull request changes are checked, and only findings
+          # (warning and above) their main copy didn't have fail the job.
+          git diff --name-only --diff-filter=d HEAD^1 HEAD > "$RUNNER_TEMP/changed.txt"
+          fail=0
+          while IFS= read -r f; do
+            case $f in
+              *.sh)
+                echo "bash -n $f"
+                bash -n "$f" || fail=1
+                if command -v shellcheck >/dev/null; then
+                  shellcheck -S warning -f gcc "$f" | sed 's/^[^:]*:[0-9]*:[0-9]*: //' | sort > "$RUNNER_TEMP/new.txt" || true
+                  : > "$RUNNER_TEMP/old.txt"
+                  if git cat-file -e "HEAD^1:$f" 2>/dev/null; then
+                    mkdir -p "$RUNNER_TEMP/main/$(dirname "$f")"
+                    git show "HEAD^1:$f" > "$RUNNER_TEMP/main/$f"
+                    (cd "$RUNNER_TEMP/main" && shellcheck -S warning -f gcc "$f" | sed 's/^[^:]*:[0-9]*:[0-9]*: //' | sort > "$RUNNER_TEMP/old.txt") || true
+                  fi
+                  if comm -13 "$RUNNER_TEMP/old.txt" "$RUNNER_TEMP/new.txt" | grep -q .; then
+                    echo "$f: new shellcheck findings:"
+                    shellcheck -S warning "$f" || true
+                    fail=1
+                  fi
+                fi
+                ;;
+              *.py)
+                echo "py_compile $f"
+                python3 -m py_compile "$f" || fail=1
+                ;;
+            esac
+          done < "$RUNNER_TEMP/changed.txt"
+          command -v shellcheck >/dev/null && shellcheck --version | sed -n 2p || echo "no shellcheck on this runner: skipped"
+          exit $fail
+      - name: The regressions table names checks that exist
+        run: python3 tests/lib/check-regressions.py
+      - name: The CI scripts' own tests
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+
+  # The window's page is JavaScript that ships to every user, and tests
+  # don't catch code that sends data out: a read does. This flags what the
+  # pull request adds to the page that needs one (new addresses, new ways to
+  # reach the network, code that builds or hides code, reads of what is
+  # worth stealing) and fails until a maintainer who has read it adds the
+  # label page-read. Remove the label when new commits come in: it stays on
+  # the pull request and accepts them too.
+  page-scan:
+    needs: scope
+    if: needs.scope.outputs.page == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: What the pull request adds to the window's page
+        env:
+          ACCEPTED: ${{ contains(github.event.pull_request.labels.*.name, 'page-read') }}
+        run: |
+          # Main's copy of the scanner, as with the scope script.
+          git show HEAD^1:scripts/ci/page-scan.py > "$RUNNER_TEMP/page-scan.py" 2>/dev/null || cp scripts/ci/page-scan.py "$RUNNER_TEMP/page-scan.py"
+          if [ "$ACCEPTED" = true ]; then set -- --accepted; fi
+          python3 -I "$RUNNER_TEMP/page-scan.py" HEAD^1 HEAD "$@"
+
+  e2e-linux:
+    needs: scope
+    if: needs.scope.outputs.suite == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the Linux engine
+        run: |
+          # The static engine, as `cargo xtask linux-dev` and the Speed check
+          # build it: in a Rust Alpine container, with [profile.fast] (what
+          # the suites check is behaviour, not speed). The image is Docker's
+          # official one, from the suites' registry, not Docker Hub.
+          mkdir -p "$RUNNER_TEMP/bin"
+          docker run --rm -v "$PWD:/src:ro" -v "$RUNNER_TEMP/bin:/out" \
+            -v kiri-target:/t -v kiri-cargo:/usr/local/cargo/registry \
+            -w /src -e CARGO_TARGET_DIR=/t -e CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=cc \
+            "${KIRI_TEST_REGISTRY:-public.ecr.aws/docker/library}/rust:1-alpine" sh -c \
+            'apk add -q musl-dev && cargo build --profile fast --locked -p kiri -p kiri-init && cp /t/fast/kiri /t/fast/kiri-init /out/'
+          ls -l "$RUNNER_TEMP/bin"
+      - name: Start the engine as a Linux host runs it
+        run: sh scripts/ci/linux-host-engine.sh "$RUNNER_TEMP/bin"
+      # As root, as on Kiri's Linux test machines, where every release is
+      # checked this way.
+      - name: tests/e2e.sh, strict
+        env:
+          KIRI_TEST_STRICT: 1
+        run: sudo --preserve-env=KIRI_TEST_STRICT,KIRI_TEST_REGISTRY bash tests/e2e.sh
+      - name: tests/stress.sh
+        run: sudo --preserve-env=KIRI_TEST_REGISTRY bash tests/stress.sh
+      - name: The engine's log
+        if: failure()
+        run: sudo journalctl -u kiri --no-pager | tail -n 300

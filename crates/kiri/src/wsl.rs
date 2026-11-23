@@ -1,4 +1,4 @@
-//! `kiri k8s`, `kiri machine` and `kiri diag` on Windows: the engine's own
+//! `kiri k8s`, `kiri machine`, `kiri diag`, `kiri usb` and `kiri domains` on Windows: the engine's own
 //! commands, run by the Linux `kiri` in the WSL distro Kiri's engine lives
 //! in, as the engine runs (root, with its HOME), so it finds the daemon's
 //! socket. Arguments go through as they are: Windows paths are not
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// The commands passed to the engine in WSL.
-pub const COMMANDS: &[&str] = &["k8s", "machine", "diag", "usb"];
+pub const COMMANDS: &[&str] = &["k8s", "machine", "diag", "usb", "domains", "registry"];
 
 /// In Kiri Linux, kiri-start wakes the engine if it isn't up; in a distro
 /// of the user's own, systemd or wsl.conf runs it.

@@ -700,6 +700,7 @@ fn msi(root: &Path, arch: WinArch) -> io::Result<()> {
 /// as download.docker.com served it), checked before anything is bundled.
 #[path = "../../crates/kiri/src/cli_pins.rs"]
 mod cli_pins;
+mod macho;
 use cli_pins::{WIN_ARM64_BUILDX, WIN_ARM64_COMPOSE, WIN_ARM64_DOCKER_SRC, WIN_BUILDX, WIN_COMPOSE, WIN_DOCKER_CLI};
 
 /// Downloads `url` into the cache once; returns the cached path.
@@ -904,9 +905,16 @@ fn app_dev(root: &Path, built: &Path, feature: Option<&str>) -> io::Result<()> {
     }
     fs::copy(&icns, contents.join("Resources/Kiri.icns"))?;
 
+    // An executable UUID of its own (macho.rs): macOS's Local Network
+    // permission follows it, and the copies of one build would share it.
+    let exe = contents.join("MacOS/kiri");
+    let mut bin = fs::read(&exe)?;
+    macho::restamp_uuid(&mut bin, &id)?;
+    fs::write(&exe, &bin)?;
+
     let identity = signing_identity();
     let entitlements = root.join("crates/kiri/kiri.entitlements");
-    for target in [contents.join("MacOS/kiri"), app.clone()] {
+    for target in [exe, app.clone()] {
         run(Command::new("codesign").args(["--force", "--sign", &identity, "--entitlements"]).arg(&entitlements).arg(target))?;
     }
     run(Command::new("codesign").args(["--verify", "--deep", "--strict"]).arg(&app))?;

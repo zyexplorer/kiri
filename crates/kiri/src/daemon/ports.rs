@@ -1050,11 +1050,20 @@ pub fn serve_ssh_agent(stream: kiri_vmm::VsockStream) {
 /// the docker socket (crates/kiri/src/daemon/binds.rs).
 pub const ENGINE_API_PORT: u32 = 1036;
 
-/// One container connection to the engine's API, relayed to this daemon's
-/// own socket, so it is served like any other client.
-pub fn serve_engine_api(stream: kiri_vmm::VsockStream) {
+/// One container connection to the engine's API, served like any other
+/// client's, marked as a container's.
+pub fn serve_engine_api(stream: kiri_vmm::VsockStream, engine: std::sync::Weak<super::engine::Engine>) {
     let _ = std::thread::Builder::new().name("kiri-engine-api".into()).spawn(move || {
-        let Ok(api) = super::socket_path().and_then(std::os::unix::net::UnixStream::connect) else { return };
+        // Served here rather than through the daemon's socket, so the API
+        // knows these requests are a container's (caller.rs).
+        let Some(engine) = engine.upgrade() else { return };
+        let Ok((api, ours)) = std::os::unix::net::UnixStream::pair() else { return };
+        let served = std::thread::Builder::new().name("kiri-api".into()).spawn(move || {
+            let _ = super::api::serve(ours, engine, super::caller::Caller::Container);
+        });
+        if served.is_err() {
+            return;
+        }
         let (Ok(mut api_read), Ok(from_guest), Ok(to_guest)) = (api.try_clone(), stream.fd.try_clone(), stream.fd.try_clone()) else {
             return;
         };

@@ -118,10 +118,11 @@ t("before the app says, the note names the system's store", () => {
   ui.logins = null;
   eq(regStore("ghcr.io"), WIN ? "Kept in Credential Manager" : "Kept in the Keychain", "store");
 });
-t("held back: the app has no Registries tab and says docker login in the row", () => {
+t("held back: the Registries tab has no sign-ins and the row says docker login", () => {
   ui.loginsOn = false;
+  prefs.tab = "registries";
   show("settings");
-  eq(document.querySelector('[data-stab="registries"]'), null, "no tab");
+  eq([!!document.querySelector('[data-stab="registries"]'), document.querySelector("[data-regopen]"), document.querySelector("[data-logout]")], [true, null, null], "no sign-ins");
   show("images");
   const R2 = "ghcr.io/acme/web:1";
   pullRef(R2);

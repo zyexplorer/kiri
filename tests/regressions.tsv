@@ -1,0 +1,199 @@
+# Checks that guard a real bug: check name, tab, issue or pull request, tab,
+# what broke. A failing check listed here prints a "guards:" line naming it.
+# A name with a / is a test file (tests/ui/...). Every bug fix adds its check
+# here; python3 tests/lib/check-regressions.py fails when a name is gone.
+connection-close-start	#588	a start sent with Connection: close was never closed, so Docker.DotNet hung until its timeout (#520)
+http10-start-closes	#588	an HTTP/1.0 request stayed open after its answer (#479)
+keep-alive-start-stays	#588	the connection-close fix must not close a kept-alive connection
+connection-close-said	#588	the answer to Connection: close did not say Connection: close
+http10-ping-closes	#588	an HTTP/1.0 ping stayed open after its answer (#479)
+pid-mode-inspect	#588	--pid was accepted and ignored; inspect lost HostConfig.PidMode (#347)
+pid-container-sees	#588	--pid container:NAME did not join that container's PID namespace (#347)
+pid-container-pid1	#588	--pid container:NAME did not see the other container's PID 1 (#347)
+pid-host-sees-more	#588	--pid host did not show the host's processes (#347)
+pid-own-default	#588	a container without --pid must keep its own PID namespace (#347)
+pid-container-stopped	#588	joining a stopped container's PID namespace was not refused (#347)
+pid-container-unknown	#588	--pid container:missing was not refused with Docker's message (#347, #600)
+bridge-name-refused	#588	a network's own bridge name was reported but never applied (#423)
+bridge-name-nothing-made	#588	a refused bridge name still made the network (#423)
+bridge-name-empty	#588	an empty bridge name, Docker's unset, must still be accepted (#423)
+port-exposed-null	#588	an exposed port that is not published was missing from inspect, so Traefik found no port (#492)
+port-exposed-stopped	#588	a stopped container's exposed ports were shown wrongly in inspect (#492)
+volumes-from-running	#588	--volumes-from was accepted and ignored (#450)
+volumes-from-ro	#588	--volumes-from :ro was not read-only (#450)
+volumes-from-inspect	#588	inspect did not show the mounts --volumes-from gave (#450)
+volumes-from-stopped	#588	--volumes-from a stopped container gave nothing (#450)
+volumes-from-unknown	#588	--volumes-from a missing container was not refused with Docker's message (#450, #600)
+volumes-from-anon-kept	#588	an anonymous volume still used by another container was removed with its first owner (#450)
+top-aux	#588	docker top ignored ps_args such as aux (#348)
+top-aux-master	#588	docker top aux did not give ps's columns (#348)
+top-eo	#588	docker top -eo did not give the columns asked for (#348)
+top-eo-rss	#588	docker top -eo rss gave no memory column (#348)
+top-ps-args-refused	#588	unsupported ps_args were silently ignored instead of refused (#348)
+ij-setup	#588	sets up the damaged image list check below (#440)
+ij-info-warns	#588	a repaired images.json gave no docker info warning (#440)
+ij-info-names-lost	#588	the repair warning did not name the images it lost (#440)
+ij-layers-kept	#588	a lost image's unpacked layers were deleted by the repair (#440)
+ij-layers-kept-next-start	#588	a lost image's unpacked layers were deleted at the next start (#440)
+ij-warning-gone	#588	the repair warning stayed after the kept copy was removed (#440)
+userns-layer-devices	#665	an image layer with a device node failed to unpack when the engine ran in a user namespace (nested Docker, Sysbox, CI), where mknod is refused
+image-inspect-rootfs-diffid	#596	image inspect gave compressed blob digests as RootFS.Layers, not the uncompressed diff IDs
+image-labels-inspect	#596	image labels were missing from inspect
+image-labels-filter	#596	the label filter on the image list did not match image labels
+image-labels-filter-not	#596	the label! filter on the image list did not exclude labelled images
+image-labels-api-empty	#596	an image without labels did not show Docker's empty Labels shape
+container-labels-inherited	#596	a container did not inherit its image's labels
+container-labels-override	#596	a container's own --label did not win over its image's
+commit-keeps-labels	#596	docker commit dropped the image's labels
+link-missing	#600	a missing --link container was a 404, so the docker CLI pulled the image first
+netns-missing	#600	a missing --network container: was a 404, so the docker CLI pulled the image first
+limit-shares-default	#612	--cpu-shares 1024, Docker's default, gave less CPU weight than setting nothing
+limit-shares-inspect	#612	inspect did not give back the --cpu-shares asked for
+status-tag	#612	an image tag answered 204, not Docker's 201
+status-connect	#612	network connect answered 204, not Docker's 200
+status-disconnect	#612	network disconnect answered 204, not Docker's 200
+rename-dns-new	#467	after docker rename the new name did not resolve on a user network: the guest's DNS names were set at start only
+rename-dns-new-extra-net	#467	after docker rename the new name did not resolve on a network the container was connected to
+rename-dns-old-gone	#467	after docker rename the old name still resolved to the container
+rename-dns-old-gone-extra-net	#467	after docker rename the old name still resolved on a connected network
+rename-dns-keeps-own-servers	#467	a rename that dropped the container's names also dropped its own --dns servers, so its lookups went to Kiri's resolver
+rename-dns-alias-extra-net	#467	after docker rename an alias on a connected network no longer resolved
+rename-dns-ipv6-only-aaaa	#467	after docker rename on an IPv6-only network the new name had no AAAA record
+rename-dns-ipv6-only-no-a	#467	after docker rename on an IPv6-only network the new name got an A record for an address the container does not have
+rename-dns-host-name-stays-host	#467	a container renamed to host.docker.internal took that name from the host for every container on its network
+rename-name-starts-with-letter	#467	a container could be renamed to a name starting with an underscore, dot or dash, which Docker refuses
+status-exec-detached	#612	a detached exec start answered 204, not Docker's 200
+status-start-still-204	#612	the status fix must keep a container start at 204
+api-too-old	#612	an API version older than 1.24 was served instead of refused
+api-too-old-status	#612	an API version older than 1.24 was not a 400
+api-min-served	#612	the oldest supported API version must still be served
+api-newer-served	#612	an API version newer than the engine's must still be served
+cp-proc-by-link	#612	docker cp walked into the kernel's /proc through a link to /
+cp-sys-by-link	#612	docker cp walked into the kernel's /sys through a link to /
+cp-link-still-copies	#612	the /proc and /sys fix must still copy through links
+cp-tar-mode	#612	docker cp archives put file type bits in the mode field
+diff-never-started	#612	docker diff failed on a container that never started
+commit-never-started	#612	docker commit failed on a container that never started (chroot: No such file or directory)
+create-missing-network	#612	a container on a missing network was refused at create, not at start as Docker does
+missing-network-inspect	#612	a container created on a missing network could not be inspected
+start-missing-network	#612	the start of a container on a missing network was not refused
+start-missing-network-status	#612	the start of a container on a missing network did not give Docker's status
+run-missing-network	#612	docker run on a missing network did not give Docker's message
+run-missing-network-no-pull	#612	docker run on a missing network made the docker CLI pull the image first
+run-missing-network-removed	#612	docker run --rm on a missing network left the container behind
+starts-beside-df	#621	a container start hung for ever when it ran beside docker system df
+rm-f-stuck-start	#621	a stuck start could not be removed: rm -f, kill and stop never answered
+agent-dies-beside-stuck-start	#621	an agent that died beside a stuck start went unnoticed and every request hung
+rm-f-during-start	#621	rm -f sent while containers start must answer and leave nothing behind; the racing start succeeds or says Docker's "marked for removal"
+stop-during-start	#621	stop sent while containers start must answer and leave nothing behind; the racing start must succeed, as on Docker (#621 answered it 409)
+kill-during-start	#650	a kill, stop or rm -f sent while a container started was dropped (it kept running), then (#621) cancelled the start, which answered 409 where Docker answers 204
+kill-stuck-start	#650	a kill must not wait for ever behind a start that never finishes: after 10 s it cancels it
+churn-beside-df	#621	create, start, exec and rm beside docker system df must each answer within its limit
+rm-f-exit-code	#622	docker run --rm exited 0, not 137, when docker rm -f raced it
+image-ls-untagged-row	#623	the image list hid untagged images
+image-ls-dangling	#623	the image list's dangling=true filter did not work
+image-ls-dangling-false	#623	the image list's dangling=false filter did not work
+image-ls-until	#623	the image list's until filter did not work
+system-prune-label	#623	a system prune with a label filter failed on the build cache after pruning containers
+image-prune-label-keeps	#623	an image prune with a label filter deleted untagged images without the label
+image-prune-all-label-keeps	#623	an image prune -a with a label filter deleted unused images without the label
+network-prune-until	#623	a network prune did not read until as Docker does
+volume-prune-keeps-opts	#623	a volume prune deleted volumes made with driver options
+build-prune-until-date	#623	a build-cache prune did not take until as a date
+dns-default-bridge-gateway	#624	on a host whose resolver is one of its own addresses (WSL), the default bridge got a loopback resolver
+dns-default-bridge-no-loopback	#624	on a host whose resolver is one of its own addresses (WSL), the default bridge got 127.0.0.11
+network-rm-init-gateway-dns	#248	a removed network's DNS listener stayed open in an --init container's PID 1, so the next network on that subnet had no DNS at its gateway (and, before #642, no container could start on it)
+build-resolvconf	#624	on a host whose resolver is one of its own addresses (WSL), build steps did not get Kiri's resolver
+build-no-public-resolver	#624	on a host whose resolver is one of its own addresses (WSL), BuildKit put 8.8.8.8 in build steps
+user-net-own-dns-server	#624	a container on a user network could not bind port 53 for its own DNS server
+user-net-own-dns-names	#624	a container running its own DNS server must still resolve the network's names
+user-net-own-dns-upstream	#624	a container running its own DNS server must still resolve names outside
+dns-user-net-next-after-refusal	#455	on a user network a --dns server that refused ended the lookup: the next --dns server was never asked
+dns-user-net-all-refused-fails-at-once	#455	when every --dns server of a container on a user network refused, the lookup waited for the client to give up instead of failing
+dns-user-net-next-after-silence	#455	on a user network a --dns server that never answered ended the lookup: the next --dns server was never asked
+top-l	#625	docker top -l was refused or gave the wrong columns
+top-l-values	#625	docker top -l gave wrong values
+top-efl-cmd	#625	docker top -efl gave the wrong command column
+top-sort	#625	docker top --sort was ignored
+top-sort-k	#625	docker top k KEY was ignored
+top-width	#625	docker top ignored column widths such as pid:8
+top-title-refused	#625	docker top accepted a PID title on a column other than pid, which Docker refuses
+top-title-no-pid	#625	docker top with a renamed pid column did not give Docker's error
+tests/ui/setup-wsl-unknown.js	#627	Windows' first start flashed Install WSL before kiri-win said whether WSL is there
+bind-v-creates	#651	on a Linux host a folder made for a missing bind-mount source was 0750 (the service's umask), so its own user could not look into it; Docker makes it 0755
+bind-create-0200	#651	a file a container makes with mode 0200 in a bind mount must be readable from the host by its owner; the check also runs as a plain user now
+body-too-large-answered	#651	a request body over 8 MiB to an endpoint that does not stream it got no answer: the connection was dropped
+body-too-large-chunked	#651	the same with a chunked body: an empty reply where a 413 belongs
+build-65-layers-run	#253	an image of 60 or more layers failed to start: the overlay options naming every layer did not fit in one page
+build-65-layers-lowest	#253	the lowest layer of a 65-layer image must be in its container
+dockerfw-internet	#247	with Docker on the same Linux host its FORWARD policy drop dropped every container's traffic, though Kiri's own table accepted it: no DNS, no internet
+dockerfw-rules	#247	Kiri's rules in Docker's DOCKER-USER chain, for IPv4 and IPv6, added when Docker's firewall appears while the engine runs
+dockerfw-docker-kept-apart	#247	letting Kiri's containers through Docker's firewall must not let them into a container on Docker's own bridge
+import-dir-mtime	#676	every directory of an image layer had the time Kiri unpacked it, not the layer's
+buildx-copy-then-start	#83	buildx's bootstrap failed with "connection reset by peer": the engine answered the copy into the new BuildKit container, then closed the connection without saying so, and the start sent next on it was lost
+buildx-bootstrap-loop	#83	about one buildx docker-container bootstrap in six failed at the BuildKit container's start with "connection reset by peer", leaving it created
+taken-default-bridge-moves	#489	the default bridge kept a subnet Docker's docker0 had taken while Kiri was stopped, so its containers could not reach their gateway
+taken-pool-network-moves	#489	a network made without --subnet kept a subnet another engine's bridge had taken since, so its containers could not reach their gateway
+taken-user-subnet-refused	#489	a network whose --subnet another engine's bridge holds started containers that could not reach their gateway, with no word why
+fwdrop-internet	#247	a FORWARD policy of drop without Docker (set by hand or by ufw) dropped every container's traffic, though Kiri's own table accepted it
+fwdrop-user-network	#247	the same on a user-defined network (kiri1, kiri2, ...), not only the default bridge
+fwdrop-rules	#247	Kiri's rules at the top of FORWARD, for IPv4 and IPv6, when nothing else lets its containers through
+fwdrop-kept-apart	#247	letting Kiri's containers through the host's firewall must not let them into another program's bridge
+fwdrop-ufw-internet	#247	ufw turned on while the engine runs (its FORWARD policy drop) dropped every container's traffic
+fwdrop-ufw-reload	#247	Kiri's rules must survive ufw reload
+fwdrop-nft-warns	#247	an nftables chain of the administrator's own with policy drop: docker info says which rules let Kiri's containers through
+fwdrop-flush-rebuilt	#247	a flush of the whole ruleset (nftables.service) took Kiri's table, so containers had no NAT and no forward filter until the engine restarted
+layer-dir-times-alpine	#676	the reporter's command: alpine's directories showed the time Kiri unpacked the layer, not the layer's
+layer-dir-times-edges	#676	directory times from the layer, nested, in two layers, opaque, with a whiteout made in them, 0, after 2038, behind a symlink
+layer-dir-times-cp-out	#676	docker cp out of an image directory gave the unpack time
+layer-dir-times-commit	#676	a directory dated in a container lost its time through docker commit
+layers-59-to-125	#253	images of 60 or more layers failed to start: the overlay options naming every layer did not fit in one page
+layers-125-lifecycle	#253	a container of 125 layers must take exec, restart, stop and start, and a commit to 126 layers
+layer-hardlink-symlinks	#409	a hard link to a symlink failed to unpack (Nix images such as supabase/postgres); dangling, relative, chained and cross-directory ones too
+layer-special-files	#679	device nodes and fifos in a layer were not unpacked as such; a time of 0 became 1 (#684)
+load-no-layers-run	#685	an image with no layers did not start
+rmi-during-save	#661	a docker rmi during a docker save deleted a layer the save was still sending
+frame-limit-request-alone	#658	a request over the agent's frame limit ended the agent and every container with it
+user-boundaries	#664	a numeric user not in /etc/passwd did not get group 0
+ncpu-engine-cpus	#659	on a Linux host docker info's NCPU was the Mac VM's default of 2, not the CPUs the engine may run on
+ncpu-affinity	#659	an engine under a three-CPU affinity mask must say NCPU 3 (the old count said 2)
+auth-null-fields	#654	POST /auth with JSON null fields (docker-java) was refused as invalid JSON
+auth-null-fields-wrong	#654	a wrong password with null fields must still say incorrect username or password
+pull-auth-null-fields	#654	X-Registry-Auth with JSON null fields (Testcontainers) was dropped, so a private pull went anonymous and got 401
+pull-auth-null-std-b64	#654	X-Registry-Auth with null fields in standard padded base64 must sign in too
+pull-auth-all-null	#654	X-Registry-Auth with every field null is no sign-in: the pull stays anonymous
+network-rm-failed-start-gateway-dns	#248	a start that failed on a network left a DNS listener at its gateway after the network was removed
+insecure-http-unlisted-refused	#329	a plain-HTTP registry daemon.json doesn't list must stay refused
+insecure-tls-unlisted-refused	#329	a self-signed registry daemon.json doesn't list must stay refused
+insecure-login-unlisted-refused	#329	docker login must not send a password over plain HTTP to a registry daemon.json doesn't list
+insecure-cli-add	#329	there was no way to list an insecure registry: no daemon.json, no kiri registry, no Settings
+insecure-cli-refuses-everything	#329	an insecure-registries network of every address must be refused: insecure is for listed hosts only
+insecure-http-pull	#329	pulling from a plain-HTTP registry on the network failed: only loopback registries were reached over HTTP
+insecure-http-push	#611	pushing to a plain-HTTP registry on the network failed: the push always used HTTPS
+insecure-selfsigned-pull	#329	pulling from a registry with a self-signed certificate failed UnknownIssuer with no way to allow it
+insecure-http-login	#329	docker login to a plain-HTTP registry failed: login always used HTTPS
+insecure-http-auth-pull	#329	pulling with credentials from a listed plain-HTTP registry failed
+insecure-other-port-still-refused	#329	an insecure entry must cover its own host and port only, as Docker matches it, shown against a registry that answers on the unlisted port
+insecure-docker-info	#329	docker info listed no Insecure Registries
+insecure-build	#329	docker build FROM a plain-HTTP registry failed: buildkitd.toml had no http/insecure entry for it
+insecure-selfsigned-build	#329	docker build FROM a self-signed HTTPS registry in the list must reach it over HTTPS without a certificate check
+insecure-removed-refused	#329	a registry taken off the list must be refused again, without a restart
+insecure-hand-edit	#329	daemon.json edited by hand must apply at the next pull, without a restart
+insecure-hand-edit-keeps-keys	#329	saving from kiri registry must keep the other keys a hand-edited daemon.json has
+mirror-http-pull	#118	Docker Hub pulls could not go through a registry mirror; Docker's http:// mirrors were refused
+mirror-docker-info	#118	docker info listed no Registry Mirrors
+mirror-build	#118	docker build FROM a Docker Hub image did not use the configured mirror
+insecure-cli-remove	#329	kiri registry insecure remove must take a host off the list
+mirror-cli-add	#118	there was no way to add a Docker Hub mirror from the terminal into daemon.json
+hub-downgrade-refused	#329	Docker Hub must stay on verified HTTPS when its name resolves into a listed network, with a plain-HTTP registry on port 80 there
+socket-mount-settings-refused	#329	a container given the engine's socket could change Kiri's registry settings
+access-directory-accounts	#349	directory accounts and NSS groups outside /etc/passwd and /etc/group could not use a Linux host engine socket
+layer-same-path-retyped	#716	a layer that names a path twice as different kinds unpacked the first kind or failed; the later entry must win
+layer-retype-across-layers	#716	a path named again as another kind in a later layer
+layer-retype-whiteout	#716	a retyped path removed by a whiteout in the next layer, and a path given a whiteout then a new kind
+layer-retype-deep	#716	a retyped path deep in a tree, and a parent folder retyped over its subtree
+layer-retype-hardlink	#716	hard links to a retyped path
+rename-dns-reused-name	#467	a container renamed to a name an earlier container had held did not get that name
+rename-dns-reused-name-extra-net	#467	the same on a network the container was connected to
+dns-user-net-three-refused-servfail-at-once	#455	with three refusing --dns servers on a user network the lookup was not answered until the client gave up
+dns-user-net-three-silent-servfail-in-time	#455	with three silent --dns servers on a user network the lookup was not answered at all, instead of within their waits

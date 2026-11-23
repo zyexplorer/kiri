@@ -33,9 +33,9 @@ KIRI_REG_FALLBACK=${KIRI_REG_FALLBACK:-mirror.gcr.io/library}
 # What each suite runs; tests/lib/check-images.py compares them with the scripts.
 KIRI_IMAGES_E2E="alpine:latest alpine:3.22 busybox:1.36 busybox:1.37 nginx:alpine redis:7-alpine postgres:17-alpine python:3.13-alpine node:22-alpine valkey/valkey:latest curlimages/curl:latest docker:cli httpd:2.4-alpine registry:2 moby/buildkit:buildx-stable-1"
 # In the engine tests/linux-host.sh starts; the engine around it needs alpine.
-KIRI_IMAGES_LINUX_HOST="alpine:latest alpine:3.21 nginx:alpine redis:7-alpine docker:cli moby/buildkit:buildx-stable-1"
+KIRI_IMAGES_LINUX_HOST="alpine:latest alpine:3.21 nginx:alpine redis:7-alpine docker:cli moby/buildkit:buildx-stable-1 registry:2"
 # In the engine tests/wsl.sh starts; around it, ubuntu:24.04 (for its platform) and alpine.
-KIRI_IMAGES_WSL="hello-world:latest alpine:latest nginx:alpine redis:7-alpine"
+KIRI_IMAGES_WSL="hello-world:latest alpine:latest nginx:alpine redis:7-alpine registry:2"
 KIRI_IMAGES_EDGE="alpine:3.21 busybox:1.36 nginx:alpine"
 KIRI_IMAGES_UPGRADE="alpine:3.21 busybox:1.36 nginx:alpine redis:7-alpine postgres:17-alpine"
 KIRI_IMAGES_IPV6="alpine:3.21 nginx:alpine"

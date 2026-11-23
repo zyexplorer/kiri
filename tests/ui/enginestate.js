@@ -95,4 +95,46 @@ t("a fresh Kiri whose engine is up and asleep reads running", () => {
   vm(false); state("asleep");
   eq(everywhere(), RUNNING, "fresh asleep");
 });
+
+// #93: the button turns from Start to Stop as the engine comes back, often
+// as someone reaches for Start. That press must not be a Stop.
+const pressToggle = () => vbtn().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+t("a press that began on Start is not a Stop when the engine comes back meanwhile", () => {
+  state("stopping"); state("stopped");
+  const n = sent.length;
+  pressToggle();
+  state("booting"); vm(true); state("running");
+  vbtn().click();
+  eq(sent.slice(n).map((m) => m.type), [], "sent");
+  eq(card(), ON, "still running");
+});
+t("a press just after the button turned to Stop is not a Stop", () => {
+  state("stopping"); state("stopped");
+  state("booting"); vm(true); state("running");
+  const n = sent.length;
+  pressToggle(); vbtn().click();
+  eq(sent.slice(n).map((m) => m.type), [], "sent");
+});
+t("a press on Stop once it has read Stop a while is a Stop", () => {
+  vbtn().dataset.flipped = String(Date.now() - 2000);
+  pressToggle(); vbtn().click();
+  eq(sent.at(-1)?.type, "stop", "sent");
+  state("stopping"); state("stopped");
+  eq(everywhere(), STOPPED, "stopped");
+});
+t("a press dragged off the button does not swallow a later Stop from the keyboard", () => {
+  pressToggle();
+  vbtn().dispatchEvent(new PointerEvent("pointerleave"));
+  state("booting"); vm(true); state("running");
+  vbtn().dataset.flipped = String(Date.now() - 2000);
+  const n = sent.length;
+  vbtn().click();
+  eq(sent.slice(n).map((m) => m.type), ["stop"], "sent");
+  state("stopping"); state("stopped");
+});
+t("a press on Start is a Start", () => {
+  pressToggle(); vbtn().click();
+  eq(sent.at(-1)?.type, "start", "sent");
+  state("booting"); vm(true); state("running");
+});
 report(R);

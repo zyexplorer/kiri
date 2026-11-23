@@ -74,6 +74,10 @@ pub struct Image {
     /// Unix seconds when this image was pulled.
     pub pulled_at: u64,
     pub config: RunConfig,
+    /// The Docker Hub mirror (`host[:port]`) a pull took the image from,
+    /// when it did not come from the registry its name says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<String>,
 }
 
 impl Image {
@@ -129,6 +133,45 @@ static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 /// Serializes index changes between the threads of this process; the lock
 /// file does it between processes (the CLI opens the store too).
 static INDEX_LOCK: Mutex<()> = Mutex::new(());
+
+/// Taken around a blob's rename into place by a writer that holds it
+/// ([`Ingest::finish_pinned`]) and around a removal's check of the holds
+/// and its delete, so the two never interleave.
+static BLOB_LOCK: Mutex<()> = Mutex::new(());
+
+/// Blobs something in this process is using that an image's removal must
+/// not delete (a save or a push still sending them, a load until its images
+/// are recorded), by path, with how many hold each. One table for the
+/// process, so every `Store` of one folder shares it.
+static PINNED: Mutex<std::collections::BTreeMap<PathBuf, usize>> = Mutex::new(std::collections::BTreeMap::new());
+
+/// A blob kept from deletion until this is dropped ([`Store::pin`]).
+#[derive(Debug)]
+pub struct Pin(Option<PathBuf>);
+
+impl Pin {
+    fn take(path: PathBuf) -> Pin {
+        *PINNED.lock().unwrap_or_else(|e| e.into_inner()).entry(path.clone()).or_insert(0) += 1;
+        Pin(Some(path))
+    }
+}
+
+impl Drop for Pin {
+    fn drop(&mut self) {
+        let Some(p) = self.0.take() else { return };
+        let mut m = PINNED.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = m.get_mut(&p) {
+            *n -= 1;
+            if *n == 0 {
+                m.remove(&p);
+            }
+        }
+    }
+}
+
+fn pinned(p: &Path) -> bool {
+    PINNED.lock().unwrap_or_else(|e| e.into_inner()).contains_key(p)
+}
 
 /// Where the program writes error-level lines.
 pub type ErrorLog = fn(&str);
@@ -424,7 +467,18 @@ impl Store {
         self.write_index(&images)
     }
 
-    /// Removes the image and deletes blobs no remaining image uses.
+    /// Keeps the blob `digest` from deletion while the pin lives. Pin first,
+    /// then check the blob is there: a pin taken after the check could miss
+    /// a removal in between.
+    pub fn pin(&self, digest: &str) -> Pin {
+        match self.blob_path(digest) {
+            Ok(p) => Pin::take(p),
+            Err(_) => Pin(None),
+        }
+    }
+
+    /// Removes the image and deletes blobs no remaining image uses and
+    /// nothing holds ([`Store::pin`]).
     pub fn remove_image(&self, name: &str) -> io::Result<Option<Image>> {
         let _lock = self.lock_index()?;
         let mut images = self.read_locked()?;
@@ -433,13 +487,34 @@ impl Store {
         self.write_index(&images)?;
         let in_use = |d: &str| images.iter().any(|i| i.config_digest == d || i.layers.iter().any(|l| l.digest == d));
         for d in std::iter::once(&removed.config_digest).chain(removed.layers.iter().map(|l| &l.digest)) {
-            if !in_use(d)
-                && let Ok(path) = self.blob_path(d)
-            {
-                let _ = fs::remove_file(path);
+            if !in_use(d) {
+                self.remove_unpinned(d);
             }
         }
         Ok(Some(removed))
+    }
+
+    /// Deletes the blob `digest` if no image uses it and nothing holds it,
+    /// as [`Store::remove_image`] deletes the blobs it frees: for a writer
+    /// that put a blob in that nothing came to name.
+    pub fn remove_if_unused(&self, digest: &str) -> io::Result<()> {
+        let _lock = self.lock_index()?;
+        let images = self.read_locked()?;
+        if !images.iter().any(|i| i.config_digest == digest || i.layers.iter().any(|l| l.digest == digest)) {
+            self.remove_unpinned(digest);
+        }
+        Ok(())
+    }
+
+    /// The hold check and the delete under the blob lock, which a writer's
+    /// pin and rename take too ([`Ingest::finish_pinned`]): a blob written
+    /// or found again by a writer between the two is never deleted.
+    fn remove_unpinned(&self, digest: &str) {
+        let Ok(path) = self.blob_path(digest) else { return };
+        let _one = BLOB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        if !pinned(&path) {
+            let _ = fs::remove_file(path);
+        }
     }
 
     /// Replaces the index with `images`, see [`crate::jsonfile::replace`].
@@ -531,6 +606,20 @@ impl Ingest {
         fs::rename(&self.tmp, self.root.join("blobs/sha256").join(&hex))?;
         Ok((format!("sha256:{hex}"), self.written))
     }
+
+    /// As [`Ingest::finish`], the blob held ([`Store::pin`]) from before
+    /// it is in place: a removal of the last image using a blob of the same
+    /// digest cannot delete it between the rename and the writer recording
+    /// an image that names it (`docker load`).
+    pub fn finish_pinned(mut self) -> io::Result<(String, u64, Pin)> {
+        let hex = hex(&std::mem::take(&mut self.hasher).finalize());
+        self.file.sync_all()?;
+        let dest = self.root.join("blobs/sha256").join(&hex);
+        let _one = BLOB_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let pin = Pin::take(dest.clone());
+        fs::rename(&self.tmp, &dest)?;
+        Ok((format!("sha256:{hex}"), self.written, pin))
+    }
 }
 
 impl Drop for Ingest {
@@ -557,6 +646,39 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    /// A blob something still uses (a save, a push, a load not yet
+    /// recorded) outlives the removal of the image that named it.
+    #[test]
+    fn a_pinned_blob_outlives_the_removal_of_its_image() {
+        let root = std::env::temp_dir().join(format!("kiri-store-pin-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let store = Store::open(&root).unwrap();
+        let mut ingest = store.ingest().unwrap();
+        ingest.write_all(b"a layer a save is sending").unwrap();
+        let (layer, size) = ingest.finish().unwrap();
+        let image = |name: &str| Image { mirror: None,
+            name: name.into(),
+            digest: "sha256:manifest".into(),
+            index_digest: None,
+            config_digest: format!("sha256:{}", "3".repeat(64)),
+            layers: vec![Layer { digest: layer.clone(), size, media_type: "application/vnd.oci.image.layer.v1.tar".into() }],
+            size,
+            platform: "linux/amd64".into(),
+            created: String::new(),
+            pulled_at: 0,
+            config: RunConfig::default(),
+        };
+        store.put_image(image("a:1")).unwrap();
+        let pin = store.pin(&layer);
+        store.remove_image("a:1").unwrap();
+        assert!(store.has_blob(&layer, size), "something still holds it");
+        drop(pin);
+        store.put_image(image("b:1")).unwrap();
+        store.remove_image("b:1").unwrap();
+        assert!(!store.has_blob(&layer, size), "no one holds it any more");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn rejects_paths_instead_of_digests() {
         let root = std::env::temp_dir().join(format!("kiri-store-path-test-{}", std::process::id()));
@@ -570,7 +692,7 @@ mod tests {
         assert!(store.blob_writer(&path).is_err());
         assert!(store.read_config(&path).is_err());
 
-        let image = Image {
+        let image = Image { mirror: None,
             name: "malicious:latest".into(),
             digest: "sha256:manifest".into(),
             index_digest: None,
@@ -594,7 +716,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("kiri-store-index-test-{}", std::process::id()));
         let store = Store::open(&root).unwrap();
         let (index, manifest) = (format!("sha256:{}", "1".repeat(64)), format!("sha256:{}", "2".repeat(64)));
-        let image = Image {
+        let image = Image { mirror: None,
             name: format!("kindest/node@{index}"),
             digest: manifest.clone(),
             index_digest: Some(index.clone()),
@@ -621,7 +743,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("kiri-store-push-test-{}", std::process::id()));
         let store = Store::open(&root).unwrap();
         let d = |c: &str| format!("sha256:{}", c.repeat(64));
-        let image = |name: &str, config: &str, index: Option<String>| Image {
+        let image = |name: &str, config: &str, index: Option<String>| Image { mirror: None,
             name: name.into(),
             digest: d(config),
             index_digest: index,
@@ -668,7 +790,7 @@ mod tests {
     }
 
     fn named(name: &str) -> Image {
-        Image {
+        Image { mirror: None,
             name: name.into(),
             digest: format!("sha256:{}", "1".repeat(64)),
             index_digest: None,
@@ -843,7 +965,7 @@ mod tests {
 
     #[test]
     fn repo_strips_a_tag_but_not_a_port() {
-        let named = |name: &str| Image {
+        let named = |name: &str| Image { mirror: None,
             name: name.into(),
             digest: String::new(),
             index_digest: None,

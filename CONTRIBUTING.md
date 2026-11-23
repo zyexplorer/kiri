@@ -55,6 +55,20 @@ fails when a script names an image the list lacks. `tests/e2e.sh` ends with
 `Docker Hub allowance used during the run (whole network): N`, which should
 be 0; other machines on the same network count against it too.
 
+Every bug fix adds a check that fails without the fix and passes with it (a
+line in `tests/e2e.sh` or `tests/linux-host.sh`, a case in `tests/stress.sh`,
+or a unit test), and names it in `tests/regressions.tsv` with the issue or
+pull request and one line on what broke. A listed check that fails says
+which bug it guards; `python3 tests/lib/check-regressions.py` fails when the
+table names a check that is gone. `KIRI_TEST_ONLY='^udp-'` runs only the
+`tests/e2e.sh` checks whose names match. `tests/stress.sh` runs the races
+(starts beside `docker system df`, `rm -f` against `docker run --rm` and
+against starts, a minute of churn) in two to five minutes;
+`KIRI_STRESS_ROUNDS` and `KIRI_STRESS_SECONDS` make it longer. On a Linux
+test host, `sudo KIRI_TEST_ALLOW_HOST_CHANGES=1 KIRI_ENGINE_RESTART='...'
+tests/wsl-shape.sh` runs the DNS checks with the host shaped like WSL 2 (its
+resolver an address of its own on `lo`) and puts the host back afterwards.
+
 ## Every feature ships on macOS, Windows and Linux together
 
 - A feature comes in one pull request, for all three systems, built and

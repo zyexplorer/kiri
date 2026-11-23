@@ -13,7 +13,11 @@
 //! says it does this with an ACK for connection 0 when it starts, and
 //! kiri-win asks for it per connection by sending 1 with OPEN; a kiri-win
 //! from before this ignores the first and never sends the second, and its
-//! connections get the old bounded queue.
+//! connections get the old bounded queue. The hello's data, 1, says this
+//! bridge answers a PING on connection 0 with one: how kiri-win tells a
+//! wsl.exe that runs and relays nothing (as after Windows wakes) from a
+//! bridge with nothing to say. An older kiri-win ignores the data and
+//! never sends one.
 //!
 //! A daemon that is not there (its socket missing or refusing: WSL
 //! restarted and nothing started it, or it crashed) is started here, by
@@ -21,8 +25,9 @@
 //! connections that come meanwhile (see `Starter`). A connection it still
 //! cannot reach is closed with the reason as the CLOSE's data, which
 //! kiri-win tells the docker client; a kiri-win from before this ignores
-//! CLOSE's data. A stopped engine still runs and answers ("Kiri is
-//! stopped"), so it is never started here.
+//! CLOSE's data. Each start and how it went is also told to kiri-win
+//! (NOTE) for its own log. A stopped engine still runs and answers ("Kiri
+//! is stopped"), so it is never started here.
 
 use std::collections::HashMap;
 use std::io::{self, BufReader, BufWriter, Read, Write};
@@ -47,6 +52,13 @@ const CLOSE: u8 = 4;
 /// Credit back: the data is how many bytes of this connection the sender
 /// of the ACK has handed on (u32 BE). For connection 0, the bridge's hello.
 const ACK: u8 = 5;
+/// From the bridge, on connection 0: a line of what it did to reach the
+/// engine (a start and how it went), in UTF-8, for kiri-win's own log, so
+/// a wake shows in kiri-win.log and not only in /var/log/kiri.log. A
+/// kiri-win from before this drops it: it has no connection 0.
+const NOTE: u8 = 6;
+/// On connection 0, from kiri-win: answered with the same, at once.
+const PING: u8 = 7;
 
 /// The largest frame either side accepts. Both send at most 64 KiB of
 /// data per frame; without a bound, a length of up to 4 GiB was allocated
@@ -92,8 +104,19 @@ pub fn run(args: &[String]) -> io::Result<()> {
         None => crate::daemon::socket_path()?,
     };
     let out: Out = Arc::new(Mutex::new(BufWriter::with_capacity(64 * 1024, io::stdout())));
-    let starter = Arc::new(Starter::new(socket, Box::new(start_engine), PathBuf::from(LOG)));
+    let mut starter = Starter::new(socket, Box::new(start_engine), PathBuf::from(LOG));
+    starter.tell = Some(teller(out.clone()));
+    let starter = Arc::new(starter);
     serve(BufReader::with_capacity(64 * 1024, io::stdin()), &out, &starter)
+}
+
+/// Tells kiri-win a line for its log (NOTE). Best effort: a kiri-win that
+/// has gone has nobody to tell.
+fn teller(out: Out) -> Box<dyn Fn(&str) + Send + Sync> {
+    Box::new(move |msg: &str| {
+        let msg = msg.as_bytes();
+        let _ = send(&out, NOTE, 0, &msg[..msg.len().min(4096)]);
+    })
 }
 
 /// One connection, as the frame reader sees it.
@@ -109,8 +132,8 @@ struct Conn {
 /// Relays the frames on `input` until it ends (kiri-win has gone; its
 /// connections go too).
 fn serve(mut input: impl Read, out: &Out, starter: &Arc<Starter>) -> io::Result<()> {
-    // Hello: this bridge does flow control.
-    send(out, ACK, 0, &[])?;
+    // Hello: this bridge does flow control, and (1) answers PING.
+    send(out, ACK, 0, &[1])?;
     let mut conns: HashMap<u32, Conn> = HashMap::new();
     while let Some((kind, id, data)) = read_frame(&mut input)? {
         match kind {
@@ -126,6 +149,7 @@ fn serve(mut input: impl Read, out: &Out, starter: &Arc<Starter>) -> io::Result<
                 let (out, starter) = (out.clone(), starter.clone());
                 std::thread::Builder::new().name("kiri-bridge-w".into()).spawn(move || writer(id, &starter, &rx, &queued, &out, credit, window))?;
             }
+            PING => send(out, PING, 0, &[])?,
             ACK => {
                 if let (Some(w), Some(n)) = (conns.get(&id).and_then(|c| c.window.as_ref()), ack_count(&data)) {
                     w.ack(n);
@@ -275,6 +299,8 @@ struct Starter {
     start: Box<dyn Fn(Instant) -> Result<(), String> + Send + Sync>,
     /// Where starts and their outcomes are logged.
     log: PathBuf,
+    /// Also told each of those lines: kiri-win, over NOTE frames.
+    tell: Option<Box<dyn Fn(&str) + Send + Sync>>,
     /// The most one start takes (START_LIMIT).
     limit: Duration,
     state: Mutex<StartState>,
@@ -298,7 +324,7 @@ struct StartState {
 
 impl Starter {
     fn new(socket: PathBuf, start: Box<dyn Fn(Instant) -> Result<(), String> + Send + Sync>, log: PathBuf) -> Starter {
-        Starter { socket, start, log, limit: START_LIMIT, state: Mutex::new(StartState { backoff: RETRY_AFTER, ..StartState::default() }), cv: Condvar::new() }
+        Starter { socket, start, log, tell: None, limit: START_LIMIT, state: Mutex::new(StartState { backoff: RETRY_AFTER, ..StartState::default() }), cv: Condvar::new() }
     }
 
     /// A connection to the daemon, or why there is none.
@@ -384,12 +410,16 @@ impl Starter {
         st.backoff = RETRY_AFTER;
     }
 
-    /// One line in the log, as the daemon's are stamped (UTC, to the ms).
+    /// One line in the log, as the daemon's are stamped (UTC, to the ms),
+    /// and the same told to kiri-win for kiri-win.log.
     fn note(&self, msg: &str) {
         let t = crate::daemon::time::rfc3339(SystemTime::now());
         let line = format!("{}Z kiri bridge: {msg}\n", t.get(..23).unwrap_or(&t));
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&self.log) {
             let _ = f.write_all(line.as_bytes());
+        }
+        if let Some(tell) = &self.tell {
+            tell(msg);
         }
     }
 }
@@ -631,7 +661,7 @@ mod tests {
         while done.len() < n {
             let (kind, id, data) = read_frame(from_bridge).unwrap().expect("the bridge ended");
             match kind {
-                ACK => {}
+                ACK | NOTE => {}
                 DATA => got.entry(id).or_default().extend_from_slice(&data),
                 EOF => {
                     done.insert(id, Ok(got.remove(&id).unwrap_or_default()));
@@ -686,6 +716,50 @@ mod tests {
         frame(&mut to_bridge, EOF, 5, &[]);
         assert_eq!(outcomes(&mut from_bridge, 1)[&5], Ok(b"again".to_vec()));
         assert_eq!(starts.load(Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Each start and how it went is told to kiri-win too, as NOTE frames
+    /// on connection 0, for kiri-win.log (#93: a wake left no trace there).
+    #[test]
+    fn starts_are_told_to_kiri_win() {
+        let dir = temp("tell");
+        let sock = dir.join("d.sock");
+        let s = sock.clone();
+        let mut starter = Starter::new(
+            sock,
+            Box::new(move |_| {
+                echo_daemon(&s);
+                Ok(())
+            }),
+            dir.join("log"),
+        );
+        let (output, mut from_bridge) = UnixStream::pair().unwrap();
+        starter.tell = Some(teller(Arc::new(Mutex::new(output))));
+        assert!(starter.connect().is_ok());
+        let mut notes = Vec::new();
+        for _ in 0..2 {
+            let (kind, id, data) = read_frame(&mut from_bridge).unwrap().unwrap();
+            assert_eq!((kind, id), (NOTE, 0));
+            notes.push(String::from_utf8(data).unwrap());
+        }
+        assert_eq!(notes, ["engine not answering on its socket; starting it", "engine started"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The hello says this bridge answers PING, and it does, while a
+    /// connection waits on a daemon that says nothing.
+    #[test]
+    fn a_ping_is_answered() {
+        let (mut to_bridge, mut from_bridge, dir) = bridge("ping", |s| {
+            std::thread::sleep(Duration::from_secs(2));
+            drop(s);
+        });
+        assert_eq!(read_frame(&mut from_bridge).unwrap(), Some((ACK, 0, vec![1])));
+        frame(&mut to_bridge, OPEN, 1, &[1]);
+        frame(&mut to_bridge, DATA, 1, b"GET /events HTTP/1.1\r\n\r\n");
+        frame(&mut to_bridge, PING, 0, &[]);
+        assert_eq!(read_frame(&mut from_bridge).unwrap(), Some((PING, 0, vec![])));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

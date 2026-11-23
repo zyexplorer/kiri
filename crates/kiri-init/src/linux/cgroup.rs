@@ -145,7 +145,8 @@ fn pids(dir: &Path, out: &mut Vec<libc::pid_t>) {
 /// `docker top`: one tab-separated line per process. The first seven fields
 /// are `ps -ef`'s (user pid ppid c stime tty time); then what other `ps_args`
 /// columns need (comm stat rss-KiB vsz-KiB %cpu %mem elapsed-secs cpu-secs
-/// uid); the command line last. The host picks and formats the columns.
+/// uid, then `-l`'s F, kernel priority, nice and SZ in pages); the command
+/// line last. The host picks and formats the columns.
 pub fn top(dir: &Path) -> Vec<String> {
     let mut list = Vec::new();
     pids(dir, &mut list);
@@ -215,7 +216,19 @@ pub fn top(dir: &Path) -> Vec<String> {
         let rss = num(21).max(0) as u64 * page_kib;
         let vsz = num(20).max(0) as u64 / 1024;
         let mem = rss as f64 * 100.0 / mem_kib as f64;
-        out.push(format!("{user}\t{pid}\t{ppid}\t{c}\t{stime}\t{tty}\t{time}\t{comm}\t{stat_col}\t{rss}\t{vsz}\t{cpu:.1}\t{mem:.1}\t{}\t{secs}\t{uid}\t{cmd}", elapsed as u64));
+        // ps's F: forked but not exec'd (1), used superuser privileges (4).
+        let flags = (f[6].parse::<u64>().unwrap_or(0) >> 6) & 7;
+        let prio = num(15);
+        // ps prints no nice value for a real-time policy (not OTHER or BATCH).
+        let ni = match f.get(38).map(|p| p.parse::<i64>().unwrap_or(0)) {
+            Some(p) if p != 0 && p != 3 => "-".to_owned(),
+            _ => nice.to_string(),
+        };
+        let sz = vsz / page_kib;
+        out.push(format!(
+            "{user}\t{pid}\t{ppid}\t{c}\t{stime}\t{tty}\t{time}\t{comm}\t{stat_col}\t{rss}\t{vsz}\t{cpu:.1}\t{mem:.1}\t{}\t{secs}\t{uid}\t{flags}\t{prio}\t{ni}\t{sz}\t{cmd}",
+            elapsed as u64
+        ));
     }
     out
 }

@@ -5,6 +5,7 @@ mod devices;
 mod copy;
 mod dns;
 mod fsnotify;
+mod firewall;
 mod fsview;
 mod hostopts;
 mod inroot;
@@ -17,6 +18,7 @@ mod roots;
 mod seccomp;
 mod sys;
 mod transport;
+mod trim;
 mod usb;
 mod usage;
 mod volmount;
@@ -47,6 +49,8 @@ pub fn main() {
 }
 
 fn run(init_start_ns: u64) -> io::Result<()> {
+    // Before anything starts: every container and step inherits them.
+    engine_rlimits();
     let paths = if transport::is_host_process() {
         // On a Linux host: the host's kernel filesystems, network and clock.
         host_dirs()?
@@ -68,6 +72,16 @@ fn run(init_start_ns: u64) -> io::Result<()> {
         net::remove_host_network();
     }
     served
+}
+
+/// Sets the limits containers and build steps inherit (hostopts::agent_rlimits),
+/// each on its own: one refused is said and the others are still set.
+fn engine_rlimits() {
+    for lim in hostopts::agent_rlimits() {
+        if let Err(e) = hostopts::set_rlimits(&[lim]) {
+            eprintln!("kiri-init: resource limits: {e}");
+        }
+    }
 }
 
 fn serve(paths: &container::Paths, init_start_ns: u64) -> io::Result<()> {
@@ -145,7 +159,16 @@ fn host_dirs() -> io::Result<container::Paths> {
     };
     mkdir(&root, 0o710)?;
     mkdir(&root.join("volumes"), 0o700)?;
-    take_over(&root)?;
+    // What a dead agent left running can hold its lock (see `take_over`).
+    let leftovers = || {
+        let Ok(old) = std::fs::read_to_string(root.join("agent.cgroup")) else { return };
+        let old = PathBuf::from(old.trim());
+        if old.starts_with("/sys/fs/cgroup") {
+            let paths = container::Paths { layers: root.join("layers"), containers: root.join("containers"), cgroup: old.clone() };
+            container::sweep(&paths, &old);
+        }
+    };
+    take_over(&root, leftovers)?;
     let paths = container::Paths { layers: root.join("layers"), containers: root.join("containers"), cgroup: host_cgroup()? };
     mkdir(&paths.layers, 0o700)?;
     mkdir(&paths.containers, 0o700)?;
@@ -173,7 +196,15 @@ static AGENT_LOCK: std::sync::OnceLock<File> = std::sync::OnceLock::new();
 /// it cleans up, then SIGKILL), and waited for a few seconds otherwise (a
 /// daemon still shutting down); if it stays, starting fails and says why
 /// rather than failing later on its sockets and ports.
-fn take_over(root: &std::path::Path) -> io::Result<()> {
+///
+/// The lock can outlive the agent that took it: a child it cloned holds a
+/// copy of the descriptor until it closes it, and one that hung before
+/// then (a container's first process stuck before its root was in place)
+/// kept it for good, so every later agent gave up here. Once the holder is
+/// gone, `leftovers` stops what this data directory's containers left
+/// running (the old agent's containers, which the start-up sweep stops
+/// anyway), once, and the lock is tried again.
+fn take_over(root: &std::path::Path, leftovers: impl Fn()) -> io::Result<()> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
     let path = root.join("agent.lock");
@@ -184,6 +215,7 @@ fn take_over(root: &std::path::Path) -> io::Result<()> {
     };
     let start = std::time::Instant::now();
     let mut signalled = None;
+    let mut swept = false;
     while !locked(&file) {
         let mut text = String::new();
         let _ = (&file).read_to_string(&mut text);
@@ -192,6 +224,13 @@ fn take_over(root: &std::path::Path) -> io::Result<()> {
         let daemon = parent_of(old);
         let orphan = old > 0 && !daemon.is_some_and(is_daemon);
         let waited = start.elapsed();
+        // Gone: whatever holds the lock now is something it left running.
+        if orphan && !swept && daemon.is_none() {
+            eprintln!("kiri-init: agent {old} is gone but its lock is held: stopping the containers it left");
+            leftovers();
+            swept = true;
+            continue;
+        }
         if orphan && signalled.is_none() {
             eprintln!("kiri-init: stopping agent {old}, left running by a daemon that is gone");
             // SAFETY: signalling the process that holds our data directory's lock.
@@ -342,7 +381,7 @@ fn data_dirs() -> io::Result<container::Paths> {
     // noinit_itable: the disk is made with lazy inode tables; zeroing them in
     // the background would only write gigabytes of zeros to the host.
     let disk = mount(c"/dev/vda", c"/var/lib/kiri", c"ext4", libc::MS_NOATIME, Some(c"noinit_itable"));
-    if let Err(e) = disk {
+    if let Err(ref e) = disk {
         eprintln!("kiri-init: no data disk ({e}); keeping images in memory");
         mount(c"kiri", c"/var/lib/kiri", c"tmpfs", libc::MS_NOATIME, Some(c"mode=0755"))?;
     }
@@ -377,6 +416,9 @@ fn data_dirs() -> io::Result<container::Paths> {
     }
     // Overlay lower dirs are given relative to the layer store.
     std::env::set_current_dir(&paths.layers)?;
+    if disk.is_ok() {
+        trim::start(DATA);
+    }
     Ok(paths)
 }
 
@@ -423,18 +465,49 @@ fn dial_host() -> io::Result<File> {
     Err(io::Error::new(last.kind(), format!("dial host: {last}")))
 }
 
-/// MemTotal and MemAvailable in KiB.
-fn meminfo() -> (u64, u64) {
-    let mut buf = [0u8; 2048];
-    let Ok(n) = File::open("/proc/meminfo").and_then(|mut f| f.read(&mut buf)) else { return (0, 0) };
-    let s = std::str::from_utf8(&buf[..n]).unwrap_or_default();
+/// MemTotal, MemAvailable and (when the kernel reports it) Balloon in KiB.
+fn meminfo_full() -> (u64, u64, Option<u64>) {
+    let Ok(s) = std::fs::read_to_string("/proc/meminfo") else { return (0, 0, None) };
+    let (total, avail, balloon) = parse_meminfo(&s);
+    // Older kernels without `Balloon:` in /proc/meminfo still expose
+    // balloon_inflate / balloon_deflate in /proc/vmstat inside the VM.
+    let balloon = balloon.or_else(|| (std::process::id() == 1).then(vmstat_balloon_kib).flatten());
+    (total, avail, balloon)
+}
+
+fn parse_meminfo(s: &str) -> (u64, u64, Option<u64>) {
     let field = |name: &str| {
         s.lines()
             .find_map(|l| l.strip_prefix(name))
             .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse().ok())
-            .unwrap_or(0)
     };
-    (field("MemTotal:"), field("MemAvailable:"))
+    (field("MemTotal:").unwrap_or(0), field("MemAvailable:").unwrap_or(0), field("Balloon:"))
+}
+
+fn vmstat_balloon_kib() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/vmstat").ok()?;
+    // SAFETY: sysconf takes no pointers.
+    let page_kib = (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as u64) >> 10;
+    parse_vmstat_balloon_kib(&s, page_kib)
+}
+
+fn parse_vmstat_balloon_kib(s: &str, page_kib: u64) -> Option<u64> {
+    let mut inflate = None;
+    let mut deflate = None;
+    for line in s.lines() {
+        if let Some(v) = line.strip_prefix("balloon_inflate ") {
+            inflate = v.trim().parse::<u64>().ok();
+        } else if let Some(v) = line.strip_prefix("balloon_deflate ") {
+            deflate = v.trim().parse::<u64>().ok();
+        }
+    }
+    Some(inflate?.saturating_sub(deflate?).saturating_mul(page_kib))
+}
+
+/// MemTotal and MemAvailable in KiB.
+fn meminfo() -> (u64, u64) {
+    let (total, avail, _) = meminfo_full();
+    (total, avail)
 }
 
 fn power_off() -> ! {
@@ -447,5 +520,74 @@ fn power_off() -> ! {
     loop {
         // SAFETY: pause takes no arguments.
         unsafe { libc::pause() };
+    }
+}
+
+#[cfg(test)]
+mod take_over_tests {
+    /// The agent that took the lock is gone but something it left (here a
+    /// child that inherited the locked descriptor and only waits) still
+    /// holds it: the leftovers are stopped once and the lock is taken,
+    /// where every new agent used to give up after 8 s.
+    #[test]
+    fn a_lock_held_by_what_a_dead_agent_left_is_taken_over() {
+        use std::os::fd::AsRawFd;
+        let root = std::env::temp_dir().join(format!("kiri-take-over-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // The old agent: a process that has exited.
+        let mut dead = std::process::Command::new("true").spawn().unwrap();
+        let old = dead.id();
+        dead.wait().unwrap();
+        let lock = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(root.join("agent.lock")).unwrap();
+        std::io::Write::write_all(&mut &lock, format!("{old}\n").as_bytes()).unwrap();
+        // SAFETY: flock on a descriptor we own.
+        assert_eq!(unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        // SAFETY: the child only waits to be killed.
+        let left = unsafe { libc::fork() };
+        if left == 0 {
+            loop {
+                // SAFETY: plain pause in the child.
+                unsafe { libc::pause() };
+            }
+        }
+        drop(lock);
+        let swept = std::cell::Cell::new(0);
+        let t = std::time::Instant::now();
+        super::take_over(&root, || {
+            swept.set(swept.get() + 1);
+            // SAFETY: killing and reaping the child forked above.
+            unsafe {
+                libc::kill(left, libc::SIGKILL);
+                libc::waitpid(left, std::ptr::null_mut(), 0);
+            }
+        })
+        .unwrap();
+        assert!(t.elapsed() < std::time::Duration::from_secs(2), "took {:?}", t.elapsed());
+        assert_eq!(swept.get(), 1);
+        let text = std::fs::read_to_string(root.join("agent.lock")).unwrap();
+        assert_eq!(text.trim(), std::process::id().to_string());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod meminfo_tests {
+    #[test]
+    fn meminfo_reads_balloon_when_present() {
+        let with = "MemTotal:       24656160 kB\nMemFree:        24297640 kB\nMemAvailable:   24122580 kB\nBalloon:          262144 kB\n";
+        assert_eq!(super::parse_meminfo(with), (24_656_160, 24_122_580, Some(262_144)));
+        let zero = "MemTotal:       8211244 kB\nMemAvailable:   8000000 kB\nBalloon:              0 kB\n";
+        assert_eq!(super::parse_meminfo(zero), (8_211_244, 8_000_000, Some(0)));
+        let without = "MemTotal:       8211244 kB\nMemAvailable:   8000000 kB\n";
+        assert_eq!(super::parse_meminfo(without), (8_211_244, 8_000_000, None));
+    }
+
+    #[test]
+    fn vmstat_balloon_fallback_computes_net_kib() {
+        let vmstat = "nr_free_pages 100\nballoon_inflate 262144\nballoon_deflate 65536\n";
+        assert_eq!(super::parse_vmstat_balloon_kib(vmstat, 4), Some(196_608 * 4));
+        assert_eq!(super::parse_vmstat_balloon_kib("balloon_inflate 10\nballoon_deflate 20\n", 4), Some(0));
+        assert_eq!(super::parse_vmstat_balloon_kib("nr_free_pages 100\n", 4), None);
     }
 }

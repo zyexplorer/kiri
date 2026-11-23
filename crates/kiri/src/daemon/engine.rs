@@ -26,9 +26,176 @@ const MEMORY_HEADROOM: u64 = 256 << 20;
 const MEMORY_FLOOR: u64 = 256 << 20;
 /// How much more the guest gets at once when it reports pressure.
 const MEMORY_GROW: u64 = 1 << 30;
+const MEMORY_SHRINK_STEP: u64 = 256 << 20;
+const MEMORY_DEADBAND: u64 = 64 << 20;
 
-/// What a request that needs the VM gets while Kiri is stopped.
-pub const STOPPED: &str = "Kiri is stopped: press Start in the Kiri window to run containers again";
+/// The balloon's next target, in bytes, or None to leave it.
+///
+/// The guest keeps `MEMORY_HEADROOM` of usable memory (`MemAvailable`) beyond
+/// everything Linux cannot hand out: the boot-time kernel reserve (`ceiling`
+/// less `MemTotal`, mostly `struct page`), zone reclaim watermarks and
+/// `lowmem_reserve`, uncharged kernel memory, container memory and the share
+/// of page cache Linux excludes from `MemAvailable` (up to `wmark_low`). On
+/// an 8 GiB VM the boot reserve alone is ~173 MiB, and on a 24 GiB VM zone
+/// watermarks, `lowmem_reserve` and uncharged kernel memory add another
+/// ~265 MiB — enough to leave `MemAvailable` at zero even when idle if only
+/// `used` and the boot reserve are counted (#509).
+///
+/// When the guest reports its live balloon size (`balloon`), `ceiling` less
+/// `balloon + mem_available` is that exact non-available total, independent
+/// of inflation or deflation lag while `mem_available` stays above zero.
+/// Whenever `mem_available` is below `MEMORY_HEADROOM` (such as right after
+/// `grow_memory()`, before the balloon finishes deflating, or with an older
+/// agent that reports no balloon size), `target` is never shrunk. Without a
+/// balloon reading, fall back to `used + (ceiling - mem_total)` and never
+/// shrink past `MEMORY_HEADROOM` of `mem_available`. Shrinks in steps, so the
+/// guest's caches go gradually, and grows at once.
+fn next_memory_target(
+    used: u64,
+    mem_total: u64,
+    mem_available: u64,
+    balloon: Option<u64>,
+    ceiling: u64,
+    target: u64,
+) -> Option<u64> {
+    let reserved = if mem_total > 0 { ceiling.saturating_sub(mem_total) } else { 0 };
+    let floor_need = used.saturating_add(reserved);
+    let need = match balloon {
+        Some(b) if mem_total > 0 => ceiling.saturating_sub(b.saturating_add(mem_available)).max(floor_need),
+        _ => floor_need,
+    };
+    let want = need.saturating_add(MEMORY_HEADROOM).clamp(MEMORY_FLOOR.min(ceiling), ceiling);
+    let want = if mem_total > 0 {
+        let min_target = match balloon {
+            Some(_) if mem_available < MEMORY_HEADROOM => target.min(ceiling),
+            Some(_) => 0,
+            None => target.min(ceiling).saturating_sub(mem_available.saturating_sub(MEMORY_HEADROOM)),
+        };
+        want.max(min_target)
+    } else {
+        want
+    };
+    let next = if want < target { want.max(target.saturating_sub(MEMORY_SHRINK_STEP)) } else { want };
+    (next.abs_diff(target) >= MEMORY_DEADBAND).then_some(next)
+}
+
+/// How much memory the guest holds, in bytes, from a `Stats` sample.
+fn estimate_used(stats: &kiri_proto::Stats, ceiling: u64, target: u64, host_rss: u64) -> u64 {
+    if stats.mem_used_kib > 0 {
+        // The agent's count: anonymous, shared and kernel memory from the
+        // cgroup, which neither the page cache nor the balloon's own pages
+        // get into.
+        stats.mem_used_kib.saturating_mul(1024).saturating_add(host_rss)
+    } else {
+        // An agent from before that count: MemTotal minus MemAvailable, with
+        // the balloon taken back out. Apple's balloon offers deflate-on-OOM,
+        // so Linux counts its pages as used rather than shrinking MemTotal.
+        // Without a live balloon reading, the balloon is guessed at
+        // ceiling - target, which it only is once the guest has caught up.
+        let apparent = stats.mem_total_kib.saturating_sub(stats.mem_available_kib).saturating_mul(1024);
+        let balloon = stats.mem_balloon_kib.map_or_else(|| ceiling.saturating_sub(target), |k| k.saturating_mul(1024));
+        apparent.saturating_sub(balloon)
+    }
+}
+
+const FALLBACK_SHRINK_SETTLE_TICKS: u8 = 5;
+
+enum PendingFallback {
+    /// Waiting for an in-flight grow to show up in `MemAvailable` before the
+    /// legacy (`mem_used_kib == 0`, no `mem_balloon_kib`) fallback may grow
+    /// again.
+    Grow { avail: u64, peak: u64 },
+    /// Waiting for an in-flight shrink to show up in `MemAvailable` before the
+    /// legacy fallback may shrink again.
+    Shrink { avail: u64, expected_avail: u64, ticks: u8 },
+}
+
+#[derive(Default)]
+struct BalloonState {
+    last_target: Option<u64>,
+    pending: Option<PendingFallback>,
+}
+
+impl BalloonState {
+    fn reset(&mut self) {
+        self.last_target = None;
+        self.pending = None;
+    }
+
+    fn next_target(&mut self, stats: &kiri_proto::Stats, used: u64, ceiling: u64, target: u64) -> Option<u64> {
+        let mem_total = stats.mem_total_kib.saturating_mul(1024);
+        let mem_available = stats.mem_available_kib.saturating_mul(1024);
+        let balloon = stats.mem_balloon_kib.map(|k| k.saturating_mul(1024));
+        let legacy_fallback = stats.mem_used_kib == 0 && balloon.is_none() && mem_total > 0;
+
+        if !legacy_fallback {
+            self.pending = None;
+            let next = next_memory_target(used, mem_total, mem_available, balloon, ceiling, target);
+            self.last_target = Some(next.unwrap_or(target));
+            return next;
+        }
+
+        // An external grow (e.g. `grow_memory()` on pressure) raised `target`
+        // since the last poll: wait for deflation to show up in `MemAvailable`
+        // before allowing the target-derived fallback to grow again.
+        if self.last_target.is_some_and(|prev| target > prev) {
+            self.pending = Some(PendingFallback::Grow { avail: mem_available, peak: mem_available });
+        }
+
+        match self.pending {
+            Some(PendingFallback::Grow { avail, mut peak }) => {
+                if mem_available > peak {
+                    peak = mem_available;
+                }
+                let recovered = mem_available >= MEMORY_HEADROOM
+                    || (peak >= avail.saturating_add(MEMORY_DEADBAND)
+                        && mem_available.saturating_add(MEMORY_DEADBAND) <= peak);
+                self.pending = (!recovered).then_some(PendingFallback::Grow { avail, peak });
+            }
+            Some(PendingFallback::Shrink { avail, expected_avail, ticks }) => {
+                let settled = mem_available < MEMORY_HEADROOM
+                    || mem_available <= expected_avail.saturating_add(MEMORY_DEADBAND)
+                    || mem_available >= avail.saturating_add(MEMORY_DEADBAND)
+                    || ticks >= FALLBACK_SHRINK_SETTLE_TICKS;
+                self.pending = (!settled).then_some(PendingFallback::Shrink {
+                    avail,
+                    expected_avail,
+                    ticks: ticks.saturating_add(1),
+                });
+            }
+            None => {}
+        }
+
+        let next = next_memory_target(used, mem_total, mem_available, None, ceiling, target);
+        let next = match (next, &self.pending) {
+            (Some(n), Some(PendingFallback::Grow { .. })) if n > target => None,
+            (Some(n), Some(PendingFallback::Shrink { .. })) if n < target => None,
+            (next, _) => next,
+        };
+
+        if let Some(n) = next {
+            self.pending = if n > target {
+                Some(PendingFallback::Grow { avail: mem_available, peak: mem_available })
+            } else {
+                Some(PendingFallback::Shrink {
+                    avail: mem_available,
+                    expected_avail: mem_available.saturating_sub(target.saturating_sub(n)),
+                    ticks: 0,
+                })
+            };
+        }
+        self.last_target = Some(next.unwrap_or(target));
+        next
+    }
+}
+
+/// What a request that needs the VM gets while Kiri is stopped (Stop in
+/// the window, the tray or the menu bar): only Start ends that.
+pub const STOPPED: &str = "Kiri is stopped: run `kiri start`, or press Start in the Kiri window, to run containers again";
+/// What one gets while the daemon shuts down (WSL or Windows stopping it,
+/// a restart, an update): not a Stop, so nothing to press; the next
+/// command reaches the engine that comes up after it (#93).
+pub const SHUTTING: &str = "Kiri's engine is shutting down: run the command again in a moment";
 
 /// The file that keeps "stopped" across engine restarts.
 fn stopped_marker() -> Option<std::path::PathBuf> {
@@ -47,23 +214,32 @@ pub fn memory_ceiling() -> u64 {
     (physical_memory() / 2).clamp(2 << 30, 8 << 30)
 }
 
-/// The VM's CPUs: `KIRI_CPUS`, else Settings → Resources, else a default.
-/// On Mac the host creates the guest with this many CPUs (default 2). On
-/// Linux (including WSL on Windows) the daemon runs inside that machine, so
-/// the default is how many CPUs it can see — Windows Settings writes
-/// `.wslconfig`, which changes `nproc`, not `vm.json`.
+/// The VM's CPUs: `KIRI_CPUS`, else Settings → Resources, else 2. On
+/// Linux there is no VM: containers run on the host's kernel, on every CPU
+/// the engine may use, and that is the count (`docker info` NCPU).
 pub fn vm_cpus() -> usize {
     let max = max_cpus();
-    std::env::var("KIRI_CPUS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .or_else(|| resources()["cpus"].as_u64().map(|c| c as usize))
-        .unwrap_or(if cfg!(target_os = "macos") { 2 } else { max })
-        .clamp(1, max)
+    if cfg!(target_os = "linux") {
+        return max;
+    }
+    std::env::var("KIRI_CPUS").ok().and_then(|v| v.parse().ok()).or_else(|| resources()["cpus"].as_u64().map(|c| c as usize)).unwrap_or(2).clamp(1, max)
 }
 
-/// The Mac's CPUs, the most the VM can have.
+/// The Mac's CPUs, the most the VM can have. On Linux the CPUs the engine
+/// may run on, counted as dockerd counts them for NCPU (Go's
+/// runtime.NumCPU: the affinity mask, not a cgroup's CPU quota).
 pub fn max_cpus() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: cpu_set_t is plain data; sched_getaffinity fills it.
+        let n = unsafe {
+            let mut set: libc::cpu_set_t = std::mem::zeroed();
+            if libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut set) == 0 { libc::CPU_COUNT(&set) } else { 0 }
+        };
+        if n > 0 {
+            return n as usize;
+        }
+    }
     std::thread::available_parallelism().map_or(2, std::num::NonZero::get)
 }
 
@@ -462,6 +638,52 @@ pub struct ExtraNetwork {
 struct StartGate {
     shut: Mutex<bool>,
     opened: Condvar,
+    /// Set by `Engine::await_start`: a stop, kill or `rm -f` found this start
+    /// stuck (`START_GRACE`, `REMOVE_GRACE`), or Kiri itself is stopping.
+    /// `VmLink::run` reads it.
+    cancel: std::sync::atomic::AtomicBool,
+    /// Why it was cancelled (`Cancel`), for the start's answer.
+    cancel_by: std::sync::atomic::AtomicU8,
+}
+
+/// Why a start was cancelled (`StartGate::cancel_by`); the larger wins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum Cancel {
+    /// A stop or kill that waited `START_GRACE` for it, or Kiri's own
+    /// stop (Stop, the VM's sleep).
+    Stopped = 1,
+    /// `rm -f`, after `REMOVE_GRACE`.
+    Removed = 2,
+}
+
+/// How long a `docker stop` or `kill` that comes while the container is
+/// starting waits for that start, before it takes the start as stuck and
+/// cancels it (see `Engine::await_start`). Docker's waits for as long as
+/// the start takes (its start holds the container's lock throughout); a
+/// healthy start here takes milliseconds, a queue of them a few seconds, and
+/// a start filling a new volume is let finish the fill even when cancelled.
+#[cfg(not(test))]
+const START_GRACE: Duration = Duration::from_secs(10);
+// Tests: wide enough apart that a slow, shared machine can't push one wait
+// into the other's window (300 and 400 ms did, at 436 ms).
+#[cfg(test)]
+const START_GRACE: Duration = Duration::from_secs(2);
+/// The same for `rm -f`, which is expected to be prompt: a stuck start it
+/// cancels sooner, and that start answers with Docker's words for a start
+/// a removal got to first ("marked for removal").
+#[cfg(not(test))]
+const REMOVE_GRACE: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const REMOVE_GRACE: Duration = Duration::from_secs(1);
+
+/// What a cancelled start answers (see `Cancel`), as a 409 each time.
+fn cancelled_start_error(by: Option<Cancel>, id: &str) -> Option<Error> {
+    match by? {
+        // Docker's answer to a start that a removal got to first.
+        Cancel::Removed => Some(Error::Conflict("container is marked for removal and cannot be started".into())),
+        Cancel::Stopped => Some(Error::Conflict(format!("container {} was stopped before it finished starting", &id[..12.min(id.len())]))),
+    }
 }
 
 impl StartGate {
@@ -478,6 +700,28 @@ impl StartGate {
         let mut shut = self.shut.lock().unwrap_or_else(|e| e.into_inner());
         while *shut {
             shut = self.opened.wait(shut).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    /// Waits at most `limit` for the gate to open. True when it is open.
+    fn wait_for(&self, limit: Duration) -> bool {
+        let deadline = std::time::Instant::now() + limit;
+        let mut shut = self.shut.lock().unwrap_or_else(|e| e.into_inner());
+        while *shut {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            shut = self.opened.wait_timeout(shut, left).unwrap_or_else(|e| e.into_inner()).0;
+        }
+        true
+    }
+
+    fn cancelled_by(&self) -> Option<Cancel> {
+        match self.cancel_by.load(std::sync::atomic::Ordering::SeqCst) {
+            0 => None,
+            1 => Some(Cancel::Stopped),
+            _ => Some(Cancel::Removed),
         }
     }
 }
@@ -504,6 +748,10 @@ impl Drop for StartGuard {
 pub struct Container {
     /// Serializes start with stop/kill/remove through guest creation.
     lifecycle: Arc<Mutex<u64>>,
+    /// Orders the changes to the container's DNS names in the guest: a
+    /// rename, a network joined and one left each read the names and tell
+    /// the guest under it, so none is applied over another's.
+    names_sync: Arc<Mutex<()>>,
     /// See `StartGate`.
     start_gate: Arc<StartGate>,
     pub id: String,
@@ -874,12 +1122,30 @@ struct State {
 /// Set while the daemon shuts down: exits then are not restarts.
 static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// What a request that would boot the VM is told, if anything: a Stop
+/// says so, and wins; a shutdown says to try again.
+fn boot_refusal(stopped: bool, shutting_down: bool) -> Option<&'static str> {
+    if stopped { Some(STOPPED) } else if shutting_down { Some(SHUTTING) } else { None }
+}
+
 /// `docker stop`'s default wait, when neither the request nor the container sets one.
 pub const DEFAULT_STOP_TIMEOUT: i64 = 10;
 
 /// A stop timeout in seconds as a wait; negative means as long as it takes.
 pub fn stop_wait(secs: i64) -> Duration {
     if secs < 0 { Duration::from_secs(365 * 86_400) } else { Duration::from_secs(secs as u64) }
+}
+
+/// One network's DNS names for a renamed container: (bridge, IPv4 key, IPv6,
+/// whether the network has IPv4 addresses, names).
+type RenamedDns = (String, [u8; 4], Option<[u8; 16]>, bool, Vec<String>);
+
+/// The names a `DnsRename` carries: each once (the guest's DNS names are
+/// lowercase), none empty, in order (the container's name first) and no
+/// more than the frame takes (`kiri_proto::MAX_DNS_NAMES`).
+fn rename_names(names: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    names.into_iter().filter(|n| !n.is_empty() && seen.insert(n.to_ascii_lowercase())).take(kiri_proto::MAX_DNS_NAMES).collect()
 }
 
 pub struct Engine {
@@ -914,6 +1180,8 @@ pub struct Engine {
     /// Wakes the thread that syncs `containers.json` to disk after a save
     /// (`start_syncer`); none once `shutdown` has stopped it.
     syncer: Mutex<Option<Sender<()>>>,
+    /// Syncs of `containers.json` the syncer thread has made.
+    syncer_syncs: Arc<std::sync::atomic::AtomicU64>,
     /// Why the container list may be missing containers, found by `load`
     /// (or by a save that kept a copy later): what `docker info` warns
     /// about. While any of it holds nothing is deleted for not being in the
@@ -1063,6 +1331,7 @@ impl Engine {
             pending_copy: Mutex::new(None),
             on_disk: Mutex::new(None),
             syncer: Mutex::new(None),
+            syncer_syncs: Arc::default(),
             me: OnceLock::new(),
             held_restarts: Mutex::new(Vec::new()),
             power: Mutex::new(()),
@@ -1096,6 +1365,12 @@ impl Engine {
     /// Why the container list may be missing containers, for `docker info`.
     pub fn records_damage(&self) -> Vec<String> {
         self.records_damage.lock().unwrap_or_else(|e| e.into_inner()).message(&self.records).into_iter().collect()
+    }
+
+    /// What the agent found wrong with a Linux host, for `docker info`
+    /// (`VmLink::host_warnings`).
+    pub fn host_warnings(&self) -> Vec<String> {
+        self.awake().map(|vm| vm.host_warnings()).unwrap_or_default()
     }
 
     /// Why unpacked layers may belong to images the image list lost, for
@@ -1138,8 +1413,8 @@ impl Engine {
         if let Some(vm) = old.as_ref().filter(|vm| !vm.is_lost()) {
             return Ok(vm.clone());
         }
-        if self.is_stopped() || SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(io::Error::other(STOPPED));
+        if let Some(why) = self.boot_refused() {
+            return Err(io::Error::other(why));
         }
         if recovery {
             let mut st = self.lock();
@@ -1161,8 +1436,8 @@ impl Engine {
         // Retained old links are inert; successful retirement has released
         // their VM and completed cleanup before the replacement opens disk.
         *self.link.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        if self.is_stopped() || SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(io::Error::other(STOPPED));
+        if let Some(why) = self.boot_refused() {
+            return Err(io::Error::other(why));
         }
         if recovery && !self.lock().containers.values().any(recover_after_vm_loss) {
             return Err(io::Error::new(io::ErrorKind::WouldBlock, "VM recovery was canceled"));
@@ -1195,7 +1470,8 @@ impl Engine {
         // The engine's API, for containers that mount /var/run/docker.sock
         // (a Linux host's containers mount the daemon's socket itself).
         if cfg!(target_os = "macos") {
-            vm.listen(super::ports::ENGINE_API_PORT, Box::new(super::ports::serve_engine_api))?;
+            let engine = self.me.get().cloned().unwrap_or_default();
+            vm.listen(super::ports::ENGINE_API_PORT, Box::new(move |s| super::ports::serve_engine_api(s, engine.clone())))?;
         }
         // Container lookups the VM's gateway resolver fails, asked of the
         // Mac's own (VM only: a Linux host's agent asks the host's itself).
@@ -1654,6 +1930,12 @@ impl Engine {
         self.stopped.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// Why the VM may not boot now: Kiri stopped (STOPPED), or the daemon
+    /// shutting down (SHUTTING). Only a Stop says to press Start.
+    fn boot_refused(&self) -> Option<&'static str> {
+        boot_refusal(self.is_stopped(), SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
     /// Stop every container, then let the VM sleep (it wakes on the next
     /// request). The window's Stop is stop_all; restarting the VM is this,
     /// then Start. Neither is a stop by the user, as stopping Docker's daemon
@@ -1755,6 +2037,7 @@ impl Engine {
                 let was_running = s.status == Status::Running;
                 let mut c = Container {
                     lifecycle: Arc::new(Mutex::new(0)),
+                    names_sync: Arc::default(),
                     start_gate: Arc::default(),
                     id: s.id.clone(),
                     name: s.name,
@@ -1966,6 +2249,7 @@ impl Engine {
         const SYNC_AT_MOST: Duration = Duration::from_secs(1);
         let (tx, rx) = mpsc::channel::<()>();
         let path = self.records.clone();
+        let syncs = self.syncer_syncs.clone();
         let spawned = std::thread::Builder::new().name("kiri-sync".into()).spawn(move || {
             while rx.recv().is_ok() {
                 let first = std::time::Instant::now();
@@ -1978,6 +2262,7 @@ impl Engine {
                 if let Err(e) = kiri_image::jsonfile::sync(&path) {
                     crate::diag::error!("syncing containers to disk failed", error = e);
                 }
+                syncs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         });
         // Without the thread, save() syncs on the caller's thread.
@@ -2225,39 +2510,25 @@ impl Engine {
         }
         let me = Arc::downgrade(self);
         let _ = std::thread::Builder::new().name("kiri-balloon".into()).spawn(move || {
+            let mut balloon_state = BalloonState::default();
             loop {
                 std::thread::sleep(Duration::from_secs(1));
                 let Some(engine) = me.upgrade() else { return };
-                let Some(vm) = engine.awake() else { continue };
+                let Some(vm) = engine.awake() else {
+                    balloon_state.reset();
+                    continue;
+                };
                 let Ok(stats) = vm.stats() else { continue };
                 let mut target = engine.memory_target.lock().unwrap_or_else(|e| e.into_inner());
                 let ceiling = engine.ceiling();
-                let used = if stats.mem_used_kib > 0 {
-                    // The agent's count: anonymous, shared and kernel memory
-                    // from the cgroup, which neither the page cache nor the
-                    // balloon's own pages get into.
-                    stats.mem_used_kib * 1024 + if cfg!(target_os = "macos") { 0 } else { self_rss() }
-                } else {
-                    // An agent from before that count: MemTotal minus
-                    // MemAvailable, with the balloon taken back out. Apple's
-                    // balloon offers deflate-on-OOM, so Linux counts its pages
-                    // as used rather than shrinking MemTotal. The balloon is
-                    // guessed at ceiling - target, which it only is once the
-                    // guest has inflated that far: short of that, the guess
-                    // exceeds the use and the result sits at zero.
-                    let apparent = (stats.mem_total_kib.saturating_sub(stats.mem_available_kib)) * 1024;
-                    apparent.saturating_sub(ceiling - *target)
-                };
+                let used = estimate_used(&stats, ceiling, *target, if cfg!(target_os = "macos") { 0 } else { self_rss() });
                 engine.memory_used.store(used, std::sync::atomic::Ordering::Relaxed);
                 engine.memory_stall.store(stats.mem_stall, std::sync::atomic::Ordering::Relaxed);
                 engine.oom_kills.store(stats.oom_kills, std::sync::atomic::Ordering::Relaxed);
                 if !cfg!(target_os = "macos") {
                     continue;
                 }
-                let want = (used + MEMORY_HEADROOM).clamp(MEMORY_FLOOR, ceiling);
-                // Shrink in steps (so the guest's caches go gradually), grow at once.
-                let next = if want < *target { want.max(target.saturating_sub(256 << 20)) } else { want };
-                if next.abs_diff(*target) >= 64 << 20 {
+                if let Some(next) = balloon_state.next_target(&stats, used, ceiling, *target) {
                     *target = next;
                     vm.set_memory_target(next);
                 }
@@ -2267,7 +2538,7 @@ impl Engine {
 
     fn grow_memory(&self) {
         let mut target = self.memory_target.lock().unwrap_or_else(|e| e.into_inner());
-        let next = (*target + MEMORY_GROW).min(self.ceiling());
+        let next = target.saturating_add(MEMORY_GROW).min(self.ceiling());
         if next != *target {
             *target = next;
             if let Some(vm) = self.awake() {
@@ -2476,6 +2747,7 @@ impl Engine {
             id.clone(),
             Container {
                 lifecycle: Arc::new(Mutex::new(0)),
+                names_sync: Arc::default(),
                 start_gate: Arc::default(),
                 id: id.clone(),
                 name,
@@ -2523,6 +2795,11 @@ impl Engine {
         resolve(&st, key)
     }
 
+    /// The lock that orders a container's DNS name changes (see `names_sync`).
+    fn names_sync(&self, id: &str) -> Option<Arc<Mutex<()>>> {
+        self.lock().containers.get(id).map(|c| c.names_sync.clone())
+    }
+
     fn lifecycle(&self, key: &str) -> Result<Arc<Mutex<u64>>, Error> {
         let st = self.lock();
         let id = resolve(&st, key)?;
@@ -2562,8 +2839,10 @@ impl Engine {
         // Retirement and boot own no container lock. A manual action can
         // invalidate this attempt while the previous VM is stopping.
         let prepared = self.vm_inner(reason == Start::VmRecovery);
-        let _starting = lifecycle.lock().unwrap_or_else(|e| e.into_inner());
-        if *_starting != generation {
+        let starting = lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        if *starting != generation {
+            // Removed meanwhile: "No such container", as on Docker.
+            self.resolve(key)?;
             return Err(Error::Conflict("container start was canceled".into()));
         }
         let vm = match prepared {
@@ -2576,11 +2855,15 @@ impl Engine {
                 return Err(Error::Io(e));
             }
         };
-        self.start_on_vm(key, reason, vm)
+        self.start_on_vm(key, reason, vm, starting)
     }
 
-    /// The lifecycle lock is held by start_inner for this entire attempt.
-    fn start_on_vm(&self, key: &str, reason: Start, vm: Arc<VmLink>) -> Result<(), Error> {
+    /// `starting` is the container's lifecycle lock, held by start_inner:
+    /// this attempt keeps it until the guest has the process, so a stop,
+    /// kill or remove acts on it only then, and lets go before handing
+    /// over input sent ahead of the start (see below).
+    fn start_on_vm(&self, key: &str, reason: Start, vm: Arc<VmLink>, starting: MutexGuard<'_, u64>) -> Result<(), Error> {
+        let mut starting = Some(starting);
         let (id, layers, argv, mut spec, size, gate) = {
             let mut st = self.lock();
             let id = resolve(&st, key)?;
@@ -2691,7 +2974,20 @@ impl Engine {
         if spec.pid_mode == "host" {
             flags |= run_flags::PID_HOST;
         }
-        let net = self.lock_networks().find(&spec.network_mode).cloned();
+        // The network's subnet, checked against the host's once more before
+        // its first container (#489).
+        let net = {
+            let mut nets = self.lock_networks();
+            match nets.settle(&spec.network_mode) {
+                Ok(()) => nets.find(&spec.network_mode).cloned(),
+                Err(e) => {
+                    drop(nets);
+                    let e = Error::Conflict(e);
+                    self.fail_start(&id, &spec, &e);
+                    return Err(e);
+                }
+            }
+        };
         let links = match net.as_ref().map(|n| self.link_hosts(&id, &spec, n)).transpose() {
             Ok(l) => l.unwrap_or_default(),
             Err(e) => {
@@ -2856,7 +3152,12 @@ impl Engine {
         {
             return Err(e);
         }
-        let started = vm.run(&id, &layers, &argv, &spec.env, &spec.cwd, &spec.user, &hostname, flags, net_args, &spec.mounts, &spec.limits.wire(), spec.caps, &host_opts, &seccomp);
+        let cancelled = || gate.0.cancel.load(std::sync::atomic::Ordering::SeqCst);
+        let started = if cancelled() {
+            Err(io::Error::other("cancelled before it reached the guest"))
+        } else {
+            vm.run(&id, &layers, &argv, &spec.env, &spec.cwd, &spec.user, &hostname, flags, net_args, &spec.mounts, &spec.limits.wire(), spec.caps, &host_opts, &seccomp, &gate.0.cancel)
+        };
         if let Ok(pid) = started
             && let Some(c) = self.lock().containers.get_mut(&id).filter(|c| c.status == Status::Running)
         {
@@ -2867,8 +3168,17 @@ impl Engine {
         // the container as the failure left it, not half-way there.
         if let Err(e) = started {
             crate::diag::warn!("container did not start", id = &id[..12], image = spec.image, error = e);
-            self.fail_start(&id, &spec, &e);
-            return Err(Error::Io(e));
+            match gate.0.cancelled_by() {
+                // Docker refuses a start that a removal got to first before
+                // the start touches the container: its exit code stays 0,
+                // which is what a waiter on the removed container gets.
+                Some(Cancel::Removed) => self.fail_start_code(&id, &spec, 0),
+                // A stuck start that a stop or kill ended: its first process
+                // was killed, as the stop or kill would have killed it.
+                Some(Cancel::Stopped) => self.fail_start_code(&id, &spec, 128 + libc::SIGKILL),
+                None => self.fail_start(&id, &spec, &e),
+            }
+            return Err(cancelled_start_error(gate.0.cancelled_by(), &id).unwrap_or(Error::Io(e)));
         }
         // Before anything below, which may itself exec (a health probe),
         // and after the pid is set.
@@ -2932,6 +3242,11 @@ impl Engine {
                 }
                 break;
             }
+            // The guest takes no more of this than the program reads, which
+            // may be never: a stop or kill must not wait behind it for the
+            // container's lock. The process is there to signal now, and its
+            // exit ends this hand-over (its window closes) and the loop.
+            drop(starting.take());
             let _ = vm.input(&id, &early);
         }
         self.health_start(&id);
@@ -3175,11 +3490,15 @@ impl Engine {
     /// with the exit code Docker gives that failure (see `start_exit_code`).
     /// A start the VM's crash ended keeps the crash's exit (255).
     fn fail_start(&self, id: &str, spec: &Spec, err: &dyn std::fmt::Debug) {
+        self.fail_start_code(id, spec, start_exit_code(&format!("{err:?}")));
+    }
+
+    /// `fail_start` with the exit code given.
+    fn fail_start_code(&self, id: &str, spec: &Spec, code: i32) {
         let vm = self.link.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if let Some(vm) = vm {
             let _ = vm.is_lost();
         }
-        let code = start_exit_code(&format!("{err:?}"));
         let mut st = self.lock();
         // Lost may have run before this start finished allocating addresses.
         // Reclaim those even when preserving the crash's exit accounting.
@@ -3517,7 +3836,8 @@ impl Engine {
         loop {
             match st.containers.get(&id) {
                 None => {
-                    let code = st.removed.iter().rev().find(|(r, _)| *r == id).map_or(0, |(_, c)| *c);
+                    // Its first exit is the real one: ids are never reused.
+                    let code = st.removed.iter().find(|(r, _)| *r == id).map_or(0, |(_, c)| *c);
                     return Ok(code);
                 }
                 Some(c) => match condition {
@@ -3535,7 +3855,16 @@ impl Engine {
     /// SIGTERM, then SIGKILL after `timeout` if it is still running.
     /// Plugs a running container into one more network as `eth{n}`.
     fn attach_extra(&self, vm: &VmLink, id: &str, n: u32, extra: &ExtraNetwork) -> Result<(), Error> {
-        let net = self.lock_networks().find(&extra.name).cloned().ok_or_else(|| Error::NotFound(format!("network {} not found", extra.name)))?;
+        // Held from the name read to the network being recorded, so a rename
+        // lands before (and the guest then has the new name) or after (and
+        // renames this network too).
+        let sync = self.names_sync(id);
+        let _order = sync.as_ref().map(|m| m.lock().unwrap_or_else(|e| e.into_inner()));
+        let net = {
+            let mut nets = self.lock_networks();
+            nets.settle(&extra.name).map_err(Error::Conflict)?;
+            nets.find(&extra.name).cloned().ok_or_else(|| Error::NotFound(format!("network {} not found", extra.name)))?
+        };
         if net.driver != "bridge" {
             return Err(Error::BadRequest(format!("only bridge networks can be connected, not {}", net.driver)));
         }
@@ -3650,6 +3979,10 @@ impl Engine {
     pub fn disconnect(&self, network: &str, key: &str) -> Result<(), Error> {
         // As for connect.
         let id = self.resolve_after_start(key)?;
+        // A rename sees the network gone, or is done before it goes: never
+        // names put back on an address the container has left.
+        let sync = self.names_sync(&id);
+        let _order = sync.as_ref().map(|m| m.lock().unwrap_or_else(|e| e.into_inner()));
         let net = self.lock_networks().find(network).cloned().ok_or_else(|| Error::NotFound(format!("network {network} not found")))?;
         let (n, ip) = {
             let mut st = self.lock();
@@ -3872,9 +4205,25 @@ impl Engine {
         if !valid_container_name(new) {
             return Err(Error::BadRequest(format!("Invalid container name ({new}), only [a-zA-Z0-9][a-zA-Z0-9_.-] are allowed")));
         }
+        // After a start under way: its names are registered in the guest
+        // only once it is done, so a rename in between would be undone by it.
+        let key = self.resolve_after_start(key)?;
+        // A start reads the name and sets the pid under the container's
+        // lifecycle lock, as a stop+start does: held from the name change to
+        // the guest being told, so a start that comes meanwhile registers the
+        // new name, and one under way is done (its pid set) when the names
+        // are read below. Taken before `names_sync`, in the order a start's
+        // `attach_extra` takes them.
+        let lifecycle = self.lifecycle(&key)?;
+        let _life = lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        // One change of this container's guest names at a time (a network
+        // joined or left, another rename), each told to the guest in the
+        // order it was made.
+        let sync = self.names_sync(&key).ok_or_else(|| gone(&key))?;
+        let _order = sync.lock().unwrap_or_else(|e| e.into_inner());
         let id = {
             let mut st = self.lock();
-            let id = resolve(&st, key)?;
+            let id = resolve(&st, &key)?;
             if let Some(c) = st.containers.values().find(|c| c.name == new && c.id != id) {
                 return Err(name_in_use(new, &c.id));
             }
@@ -3886,8 +4235,54 @@ impl Engine {
             id
         };
         self.save();
+        // The guest's DNS names are registered when a container starts. A
+        // rename has to replace them too, or the new name never resolves and
+        // the old one keeps answering to the same address.
+        let updates = self.dns_names_after_rename(&id);
+        // No update for a stopped container, and never a VM woken for one.
+        if !updates.is_empty()
+            && let Some(vm) = self.awake()
+        {
+            for (bridge, ip, ip6, v4, names) in updates {
+                if let Err(e) = vm.dns_rename(&id, &bridge, ip, ip6, v4, &names) {
+                    crate::diag::warn!("the guest's DNS names were not renamed", id = &id[..12], network = bridge, error = e);
+                }
+            }
+        }
         self.emit_container("rename", &id, &[]);
         Ok(())
+    }
+
+    /// The DNS names a running container should answer to after a rename,
+    /// one set per attached user network: (bridge, IPv4, IPv6, names). The
+    /// same names it was given there: at start on its first network (name,
+    /// aliases, hostname), on `attach_extra` for the others (name, short ID,
+    /// aliases). The default bridge has no embedded DNS and is left out.
+    fn dns_names_after_rename(&self, id: &str) -> Vec<RenamedDns> {
+        let st = self.lock();
+        let Some(c) = st.containers.get(id) else { return Vec::new() };
+        if c.pid == 0 {
+            return Vec::new();
+        }
+        let networks = self.lock_networks();
+        let mut out = Vec::new();
+        if let Some(ip) = c.ip
+            && let Some(n) = networks.find(&c.spec.network_mode)
+            && !n.builtin()
+        {
+            let hostname = if c.spec.hostname.is_empty() { c.short_id() } else { c.spec.hostname.as_str() };
+            let mut names = vec![c.name.clone(), hostname.to_owned()];
+            names.extend(c.spec.aliases.iter().cloned());
+            out.push((n.bridge.clone(), ip, c.ip6, !n.no_ipv4, rename_names(names)));
+        }
+        for (network, ip) in &c.extra_ips {
+            let Some(n) = networks.find(network).filter(|n| !n.builtin()) else { continue };
+            let ip6 = c.extra_ip6s.iter().find(|(name, _)| name == network).map(|(_, ip)| *ip);
+            let mut names = vec![c.name.clone(), c.short_id().to_owned()];
+            names.extend(c.spec.extra_networks.iter().find(|x| &x.name == network).into_iter().flat_map(|x| x.aliases.iter().cloned()));
+            out.push((n.bridge.clone(), *ip, ip6, !n.no_ipv4, rename_names(names)));
+        }
+        out
     }
 
     /// Pauses an idle BuildKit container, and resumes it at once if an exec
@@ -3917,6 +4312,13 @@ impl Engine {
     /// (Stop, the VM's sleep on request), which is not recorded as the
     /// user's: `unless-stopped` brings it back on Start.
     fn stop_as(&self, key: &str, timeout: Duration, by_user: bool) -> Result<bool, Error> {
+        let ended_start = if by_user {
+            self.await_start(key, START_GRACE, Cancel::Stopped)
+        } else {
+            // Kiri stopping, or its VM going to sleep: not held up by a
+            // start, as before.
+            self.cancel_start(key, Cancel::Stopped)
+        };
         let lifecycle = self.lifecycle(key)?;
         let mut stopping = lifecycle.lock().unwrap_or_else(|e| e.into_inner());
         let id = self.resolve(key)?;
@@ -3924,7 +4326,9 @@ impl Engine {
         self.thaw_for_signal(&id);
         let cancelled = by_user && self.mark_stopped(&id);
         if !self.is_running(&id) {
-            return Ok(cancelled);
+            // A start this stop ended is something it stopped: 204, not
+            // "already stopped" (304).
+            return Ok(cancelled || ended_start);
         }
         self.emit_container("kill", &id, &[("signal", (libc::SIGTERM).to_string())]);
         let sig = self.lock().containers.get(&id).and_then(|c| c.spec.stop_signal).unwrap_or(libc::SIGTERM as u32);
@@ -3978,7 +4382,65 @@ impl Engine {
         }
     }
 
+    /// A `docker stop`, `kill` or `rm -f` that comes while the container is
+    /// starting waits for that start, as Docker's does (its start holds the
+    /// container's lock throughout, and its stop, kill and removal take it):
+    /// the start answers as it would have (204 once the process runs), and
+    /// the signal then reaches the process. Before, a kill sent now found no
+    /// process in the guest and was dropped; then (#621) the three cancelled
+    /// the start, which answered 409 where Docker answers 204, after inspect
+    /// had already shown the container running.
+    ///
+    /// A start that has not finished after `limit` is taken as stuck (its
+    /// first process never got its root in place) and cancelled
+    /// (`cancel_gate`): it holds the container's lifecycle lock until the
+    /// guest says the root is in place, so without this the stop, kill or
+    /// removal would queue behind it for good. True when it was cancelled.
+    fn await_start(&self, key: &str, limit: Duration, by: Cancel) -> bool {
+        let (id, gate) = {
+            let st = self.lock();
+            let Ok(id) = resolve(&st, key) else { return false };
+            let gate = st.containers[&id].start_gate.clone();
+            (id, gate)
+        };
+        if gate.wait_for(limit) {
+            return false;
+        }
+        crate::diag::warn!("start not finished; cancelled", id = &id[..12], by = format!("{by:?}"), waited_ms = limit.as_millis());
+        self.cancel_gate(&id, &gate, by)
+    }
+
+    /// Kiri's own stop of a container whose start is still under way: the
+    /// start is cancelled at once (see `cancel_gate`). True when a start was
+    /// under way.
+    fn cancel_start(&self, key: &str, by: Cancel) -> bool {
+        self.await_start(key, Duration::ZERO, by)
+    }
+
+    /// Cancels the start that shut `gate`, if it is still under way. That
+    /// start holds the container's lifecycle lock until the guest says its
+    /// root is in place, which a child stuck before then never does; so
+    /// before waiting for that lock, the start is told
+    /// (`StartGate::cancel`, which its wait reads) and so is the guest
+    /// (`Msg::CancelStart`): a child still making its root is killed, the
+    /// start fails, and the lock is free. A child filling a volume is left
+    /// to finish (a slow fill is no reason to fail), then killed; a child
+    /// whose root is in place is not touched, and its start goes on.
+    fn cancel_gate(&self, id: &str, gate: &StartGate, by: Cancel) -> bool {
+        if !gate.is_shut() {
+            return false;
+        }
+        gate.cancel_by.fetch_max(by as u8, std::sync::atomic::Ordering::SeqCst);
+        gate.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+        // Never boots a VM: a start under way has one.
+        if let Some(vm) = self.awake() {
+            let _ = vm.cancel_start(id);
+        }
+        true
+    }
+
     pub fn kill(&self, key: &str, signal: u32) -> Result<(), Error> {
+        let cancelled = self.await_start(key, START_GRACE, Cancel::Stopped);
         let lifecycle = self.lifecycle(key)?;
         let mut killing = lifecycle.lock().unwrap_or_else(|e| e.into_inner());
         let id = self.resolve(key)?;
@@ -3990,6 +4452,10 @@ impl Engine {
                 *killing = killing.wrapping_add(1);
                 self.mark_stopped(&id);
                 self.save();
+                return Ok(());
+            }
+            if cancelled {
+                // Its start was under way, and ended because of this kill.
                 return Ok(());
             }
             return Err(Error::Conflict(format!("Container {} is not running", &id[..12])));
@@ -4019,6 +4485,9 @@ impl Engine {
     }
 
     pub fn remove(&self, key: &str, force: bool, with_volumes: bool) -> Result<(), Error> {
+        if force {
+            self.await_start(key, REMOVE_GRACE, Cancel::Removed);
+        }
         let lifecycle = self.lifecycle(key)?;
         let mut removing = lifecycle.lock().unwrap_or_else(|e| e.into_inner());
         let id = self.resolve(key)?;
@@ -4042,8 +4511,12 @@ impl Engine {
         self.emit_container("destroy", &id, &[]);
         let mut st = self.lock();
         let removed = st.containers.remove(&id);
-        let code = removed.as_ref().map_or(0, |c| c.exit_code);
-        note_removed(&mut st, &id, code);
+        // A `--rm` container that exited while the kill above waited has
+        // removed itself and noted its code (137 when this kill ended it);
+        // noting it again, with no record to read, told its waiters 0.
+        if let Some(c) = &removed {
+            note_removed(&mut st, &id, c.exit_code);
+        }
         st.execs.retain(|_, e| e.container_id != id);
         drop(st);
         self.changed.notify_all();
@@ -4365,6 +4838,9 @@ impl Engine {
     }
 }
 
+/// The `--dns` servers a container uses, as with Docker.
+const MAX_DNS_SERVERS: usize = 3;
+
 /// A Docker event in Kiri's log: containers and images coming and going,
 /// with name, image and exit code; never labels (they can hold anything).
 /// A BuildKit container's exec is a build session (`docker build`).
@@ -4378,7 +4854,25 @@ fn net_opts(spec: &Spec, joined: Option<&str>, domainname: &str) -> Vec<String> 
     if !spec.mac_address.is_empty() {
         opts.push(format!("{}={}", k::MAC, spec.mac_address));
     }
-    opts.extend(spec.dns.iter().map(|d| format!("{}={d}", k::NAMESERVER)));
+    // The embedded DNS asks the first three IPv4 `--dns` servers, as Docker
+    // does: later IPv4 ones are left out. IPv6 ones (for resolv.conf, which
+    // the embedded DNS doesn't ask) don't take an IPv4 server's place, and
+    // are bounded to three as well.
+    let is_v4 = |d: &&String| d.parse::<std::net::Ipv4Addr>().is_ok();
+    let v4 = spec.dns.iter().filter(is_v4).count();
+    let other = spec.dns.len() - v4;
+    if v4 > MAX_DNS_SERVERS || other > MAX_DNS_SERVERS {
+        crate::diag::warn!("more than three IPv4 or other --dns servers: only the first three of each are used", given = spec.dns.len());
+    }
+    let (mut kept4, mut kept_other) = (0, 0);
+    for d in &spec.dns {
+        let kept = if is_v4(&d) { &mut kept4 } else { &mut kept_other };
+        if *kept == MAX_DNS_SERVERS {
+            continue;
+        }
+        *kept += 1;
+        opts.push(format!("{}={d}", k::NAMESERVER));
+    }
     opts.extend(spec.dns_search.iter().map(|d| format!("{}={d}", k::SEARCH)));
     opts.extend(spec.dns_options.iter().map(|d| format!("{}={d}", k::OPTION)));
     if !domainname.is_empty() {
@@ -4557,11 +5051,12 @@ fn own_name(d: &str) -> &str {
     d.strip_suffix(".kiri.localhost").or_else(|| d.strip_suffix(".kiri.local")).unwrap_or(d)
 }
 
-/// Docker's container-name rule: non-empty, `[a-zA-Z0-9_.-]` only. A name
-/// is a DNS label on user networks and part of `<name>.kiri.localhost`, so
-/// it must not carry spaces, slashes or control characters.
+/// Docker's container-name rule: `[a-zA-Z0-9][a-zA-Z0-9_.-]*`. A name is a
+/// DNS label on user networks and part of `<name>.kiri.localhost`, so it
+/// must not carry spaces, slashes or control characters, nor start with a
+/// dot, dash or underscore.
 fn valid_container_name(n: &str) -> bool {
-    !n.is_empty() && n.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+    n.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric()) && n.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
 }
 
 /// Docker's words for a name another container has, on create and rename,
@@ -4604,6 +5099,23 @@ fn ancestor_ids(images: &[Image], values: &[String]) -> Vec<String> {
 }
 
 #[cfg(test)]
+mod refusal_tests {
+    /// A daemon shutting down (WSL or Windows stopping it, a restart) is
+    /// not a Stop: it says to try again, never to press Start (#93). A
+    /// Stop says what ends it, from the command line too.
+    #[test]
+    fn only_a_stop_says_to_start() {
+        assert_eq!(super::boot_refusal(false, false), None);
+        let shutting = super::boot_refusal(false, true).unwrap();
+        assert!(!shutting.contains("Start") && !shutting.contains("stopped"), "{shutting}");
+        assert!(shutting.contains("again"), "{shutting}");
+        assert_eq!(super::boot_refusal(true, false), Some(super::STOPPED));
+        assert_eq!(super::boot_refusal(true, true), Some(super::STOPPED));
+        assert!(super::STOPPED.starts_with("Kiri is stopped") && super::STOPPED.contains("`kiri start`"), "{}", super::STOPPED);
+    }
+}
+
+#[cfg(test)]
 mod image_lookup_tests {
     use kiri_image::{Image, RunConfig};
 
@@ -4611,7 +5123,7 @@ mod image_lookup_tests {
     const ARM64: &str = "sha256:6a3345f517a7df05185c648f83d18d464f2a94ea4a69eaee39b7e1de02611e59";
 
     fn image(name: &str, index: Option<&str>) -> Image {
-        Image {
+        Image { mirror: None,
             name: name.into(),
             digest: ARM64.into(),
             index_digest: index.map(str::to_owned),
@@ -4695,6 +5207,296 @@ mod name_in_use_tests {
         );
         // What Testcontainers for Go matches before it retries its reaper.
         assert!(m.contains("The container name \"/reaper_1\" is already in use by "));
+    }
+}
+
+#[cfg(test)]
+mod memory_target_tests {
+    use super::{estimate_used, next_memory_target, BalloonState, MEMORY_FLOOR, MEMORY_GROW, MEMORY_HEADROOM};
+
+    const MIB: u64 = 1 << 20;
+    const GIB: u64 = 1 << 30;
+    /// An 8 GiB VM's guest, idle (#509): the MemTotal it reports, and
+    /// what its cgroups hold.
+    const CEILING: u64 = 8 * GIB;
+    const MEM_TOTAL: u64 = 8_211_244 * 1024;
+    const USED: u64 = 100 * MIB;
+
+    /// Runs the balloon loop from `target` until it stops moving (older agent
+    /// without a balloon reading).
+    fn settle(used: u64, mem_total: u64, mut target: u64) -> u64 {
+        loop {
+            let balloon = CEILING.saturating_sub(target);
+            let mem_available = mem_total.saturating_sub(balloon).saturating_sub(used);
+            let Some(next) = next_memory_target(used, mem_total, mem_available, None, CEILING, target) else {
+                return target;
+            };
+            target = next;
+        }
+    }
+
+    /// Runs the balloon loop against a simulated guest where `unavailable`
+    /// bytes of `mem_total` are held by processes, uncharged kernel memory
+    /// and zone reserves (`wmark_low + lowmem_reserve`), and `balloon` tracks
+    /// `ceiling - target`.
+    fn settle_guest(ceiling: u64, mem_total: u64, used: u64, unavailable: u64) -> u64 {
+        let mut target = ceiling;
+        loop {
+            let balloon = ceiling - target;
+            let mem_available = mem_total.saturating_sub(balloon).saturating_sub(unavailable);
+            let Some(next) = next_memory_target(used, mem_total, mem_available, Some(balloon), ceiling, target) else {
+                return target;
+            };
+            target = next;
+        }
+    }
+
+    /// The guest keeps the headroom above what it holds and what its kernel
+    /// took at boot, so it isn't left below its reclaim watermarks.
+    #[test]
+    fn the_guest_keeps_its_headroom_beyond_its_kernels_reserve() {
+        let target = settle(USED, MEM_TOTAL, CEILING);
+        let reserved = CEILING - MEM_TOTAL;
+        assert!(reserved > 150 * MIB, "an 8 GiB guest's kernel keeps about 173 MiB");
+        assert_eq!(target, USED + reserved + MEMORY_HEADROOM);
+        // Settled: nothing left to move.
+        assert_eq!(next_memory_target(USED, MEM_TOTAL, MEMORY_HEADROOM, None, CEILING, target), None);
+    }
+
+    /// On a larger VM (24 GiB), zone watermarks, lowmem_reserve (~153 MiB)
+    /// and uncharged kernel memory (~110 MiB) exceed MEMORY_HEADROOM by
+    /// themselves. With the guest's live balloon and MemAvailable, the guest
+    /// still settles with at least MEMORY_HEADROOM of MemAvailable.
+    #[test]
+    fn large_vm_keeps_mem_available_headroom_beyond_zone_reserves() {
+        let ceiling = 24 * GIB;
+        let mem_total = 24_656_160 * 1024;
+        let used = 200 * MIB;
+        // cgroup-held memory + zone watermarks & lowmem_reserve (~153 MiB)
+        // + uncharged kernel memory & active file cache (~115 MiB).
+        let unavailable = used + 268 * MIB;
+        let target = settle_guest(ceiling, mem_total, used, unavailable);
+        let balloon = ceiling - target;
+        let mem_available = mem_total.saturating_sub(balloon).saturating_sub(unavailable);
+        assert!(mem_available >= MEMORY_HEADROOM, "MemAvailable settled at {} MiB", mem_available / MIB);
+        assert!(mem_available < MEMORY_HEADROOM + 64 * MIB, "kept too much headroom: {} MiB", mem_available / MIB);
+        assert_eq!(next_memory_target(used, mem_total, mem_available, Some(balloon), ceiling, target), None);
+    }
+
+    /// When the guest's balloon lags behind `ceiling - target` while
+    /// `MemAvailable` stays above headroom (during shrink or non-clamped
+    /// deflation), `balloon + mem_available` stays constant and the next
+    /// target does not overshoot or oscillate.
+    #[test]
+    fn target_is_invariant_to_balloon_lag() {
+        let ceiling = 24 * GIB;
+        let mem_total = 24_656_160 * 1024;
+        let unavailable = 300 * MIB;
+        let target = 2 * GIB;
+        let caught_up_balloon = ceiling - target;
+        let caught_up_avail = mem_total - caught_up_balloon - unavailable;
+        let shrink_lag_balloon = caught_up_balloon - 180 * MIB;
+        let shrink_lag_avail = mem_total - shrink_lag_balloon - unavailable;
+        let deflate_lag_balloon = caught_up_balloon + 180 * MIB;
+        let deflate_lag_avail = mem_total - deflate_lag_balloon - unavailable;
+        let expected = next_memory_target(100 * MIB, mem_total, caught_up_avail, Some(caught_up_balloon), ceiling, target);
+        assert_eq!(expected, next_memory_target(100 * MIB, mem_total, shrink_lag_avail, Some(shrink_lag_balloon), ceiling, target));
+        assert_eq!(expected, next_memory_target(100 * MIB, mem_total, deflate_lag_avail, Some(deflate_lag_balloon), ceiling, target));
+    }
+
+    /// Cold page cache is counted in MemAvailable by Linux, so the balloon
+    /// still reclaims it rather than hoarding gigabytes after a large read.
+    #[test]
+    fn cold_page_cache_is_reclaimed() {
+        let ceiling = 24 * GIB;
+        let mem_total = 24_656_160 * 1024;
+        let target = 5 * GIB;
+        let balloon = ceiling - target;
+        // 300 MiB committed + 4 GiB clean page cache (counted in MemAvailable).
+        let mem_available = mem_total - balloon - 300 * MIB;
+        assert_eq!(
+            next_memory_target(20 * MIB, mem_total, mem_available, Some(balloon), ceiling, target),
+            Some(target - 256 * MIB),
+        );
+    }
+
+    /// If MemAvailable drops to zero under pressure, the target grows at once.
+    #[test]
+    fn zero_mem_available_under_pressure_grows_target() {
+        let ceiling = 24 * GIB;
+        let mem_total = 24_656_160 * 1024;
+        let target = GIB;
+        let balloon = ceiling - target;
+        assert_eq!(
+            next_memory_target(200 * MIB, mem_total, 0, Some(balloon), ceiling, target),
+            Some(target + MEMORY_HEADROOM),
+        );
+    }
+
+    #[test]
+    fn it_shrinks_in_steps_and_grows_at_once() {
+        assert_eq!(next_memory_target(USED, MEM_TOTAL, MEM_TOTAL - USED, None, CEILING, CEILING), Some(CEILING - 256 * MIB));
+        let target = settle(USED, MEM_TOTAL, CEILING);
+        let more = USED + GIB;
+        assert_eq!(next_memory_target(more, MEM_TOTAL, 0, None, CEILING, target), Some(more + (CEILING - MEM_TOTAL) + MEMORY_HEADROOM));
+    }
+
+    #[test]
+    fn small_changes_leave_it_alone() {
+        let target = settle(USED, MEM_TOTAL, CEILING);
+        assert_eq!(next_memory_target(USED + 32 * MIB, MEM_TOTAL, MEMORY_HEADROOM - 32 * MIB, None, CEILING, target), None);
+    }
+
+    /// No MemTotal (an agent that sent none): no reserve to add.
+    #[test]
+    fn without_a_mem_total_only_the_headroom_is_added() {
+        assert_eq!(settle(USED, 0, CEILING), USED + MEMORY_HEADROOM);
+    }
+
+    #[test]
+    fn it_stays_between_the_floor_and_the_ceiling() {
+        assert_eq!(settle(0, CEILING, CEILING), MEMORY_FLOOR);
+        assert_eq!(settle(CEILING, MEM_TOTAL, CEILING / 2), CEILING);
+        assert_eq!(next_memory_target(u64::MAX, u64::MAX, u64::MAX, Some(u64::MAX), CEILING, CEILING / 2), Some(CEILING));
+    }
+
+    /// Right after a pressure growth (`MEMORY_GROW`), the balloon is still
+    /// deflating (`balloon > ceiling - target`) while `MemAvailable` is clamped
+    /// at zero (or still below headroom). The poll loop must hold `target`
+    /// steady instead of shrinking it back down and fighting the deflation.
+    #[test]
+    fn deflation_lag_after_growth_does_not_shrink_target() {
+        let ceiling = 24 * GIB;
+        let mem_total = 24_656_160 * 1024;
+        let old_target = GIB;
+        let target = old_target + MEMORY_GROW;
+        let unstarted_balloon = ceiling - old_target;
+        assert_eq!(next_memory_target(200 * MIB, mem_total, 0, Some(unstarted_balloon), ceiling, target), None);
+        // Partial deflation that has not yet restored MEMORY_HEADROOM still holds.
+        let partial_balloon = unstarted_balloon - 128 * MIB;
+        assert_eq!(next_memory_target(200 * MIB, mem_total, 64 * MIB, Some(partial_balloon), ceiling, target), None);
+        // Real demand beyond `target` can still grow immediately.
+        assert!(next_memory_target(2 * GIB, mem_total, 0, Some(unstarted_balloon), ceiling, target).is_some_and(|n| n > target));
+        // Once deflation restores ample MemAvailable, normal shrinking resumes.
+        let caught_up_balloon = ceiling - target;
+        let caught_up_avail = mem_total - caught_up_balloon - 300 * MIB;
+        assert_eq!(
+            next_memory_target(200 * MIB, mem_total, caught_up_avail, Some(caught_up_balloon), ceiling, target),
+            Some(target - 256 * MIB),
+        );
+    }
+
+    /// An older agent that omits `Balloon` still reports `MemTotal` and
+    /// `MemAvailable`. Even when zone reserves and uncharged kernel memory
+    /// exceed `MEMORY_HEADROOM`, the balloon must not shrink past
+    /// `MEMORY_HEADROOM` of `MemAvailable` or undo a pressure growth.
+    #[test]
+    fn missing_balloon_reading_preserves_mem_available_headroom() {
+        let ceiling = 24 * GIB;
+        let mem_total: u64 = 24_656_160 * 1024;
+        let used = 200 * MIB;
+        let unavailable = used + 268 * MIB;
+        let mut target = ceiling;
+        loop {
+            let balloon = ceiling - target;
+            let mem_available = mem_total.saturating_sub(balloon).saturating_sub(unavailable);
+            let Some(next) = next_memory_target(used, mem_total, mem_available, None, ceiling, target) else {
+                break;
+            };
+            target = next;
+        }
+        let mem_available = mem_total.saturating_sub(ceiling - target).saturating_sub(unavailable);
+        assert!(mem_available >= MEMORY_HEADROOM, "MemAvailable settled at {} MiB", mem_available / MIB);
+        assert!(mem_available < MEMORY_HEADROOM + 64 * MIB, "kept too much headroom: {} MiB", mem_available / MIB);
+        // After a pressure growth with MemAvailable still at 0, do not shrink.
+        assert_eq!(next_memory_target(used, mem_total, 0, None, ceiling, target + MEMORY_GROW), None);
+    }
+
+    /// A ceiling below MEMORY_FLOOR (e.g. a small KIRI_MEMORY_MIB) must clamp
+    /// cleanly instead of panicking in `u64::clamp`.
+    #[test]
+    fn ceiling_below_floor_does_not_panic() {
+        let small_ceiling = 128 * MIB;
+        let small_total = 120 * MIB;
+        assert_eq!(next_memory_target(32 * MIB, small_total, 64 * MIB, Some(0), small_ceiling, small_ceiling), None);
+        assert_eq!(next_memory_target(32 * MIB, small_total, 64 * MIB, None, small_ceiling, 0), Some(small_ceiling));
+        assert_eq!(next_memory_target(0, 0, 0, None, 0, 0), None);
+    }
+
+    /// An older agent reporting neither `mem_used_kib` nor `mem_balloon_kib`
+    /// derives `used` from `ceiling - target`. Under deflation lag (either
+    /// after a fallback grow or after `grow_memory()`), repeated polls with
+    /// `MemAvailable == 0` must not ratchet `target` toward `ceiling`, and
+    /// under shrink lag it must not overshoot downward before inflation lands.
+    #[test]
+    fn legacy_fallback_does_not_ratchet_or_overshoot_under_lag() {
+        let ceiling = 24 * GIB;
+        let mem_total_kib = 24_656_160;
+        let legacy_stats = |mem_available_kib| kiri_proto::Stats {
+            uptime_ns: 0,
+            mem_total_kib,
+            mem_available_kib,
+            agent_rss_kib: 0,
+            mem_used_kib: 0,
+            mem_stall: 0,
+            oom_kills: 0,
+            mem_balloon_kib: None,
+        };
+
+        // 1. Deflation lag after a fallback grow: grows once, then holds while
+        //    MemAvailable stays 0 (or climbs partway during deflation).
+        let mut state = BalloonState::default();
+        let mut target = GIB;
+        let st = legacy_stats(0);
+        let used = estimate_used(&st, ceiling, target, 0);
+        let first = state.next_target(&st, used, ceiling, target);
+        assert_eq!(first, Some(GIB + MEMORY_HEADROOM));
+        target = first.unwrap();
+        for _ in 0..20 {
+            let used = estimate_used(&st, ceiling, target, 0);
+            assert_eq!(state.next_target(&st, used, ceiling, target), None);
+        }
+        // Partial deflation still below headroom does not double-grow.
+        let partial = legacy_stats(128 * 1024);
+        let used = estimate_used(&partial, ceiling, target, 0);
+        assert_eq!(state.next_target(&partial, used, ceiling, target), None);
+        // Once deflation restores ample headroom, normal shrinking resumes.
+        let recovered = legacy_stats(512 * 1024);
+        let used = estimate_used(&recovered, ceiling, target, 0);
+        assert_eq!(state.next_target(&recovered, used, ceiling, target), Some(target - 256 * MIB));
+
+        // 2. Deflation lag right after an external `grow_memory()` bump:
+        //    zero additional fallback grows while MemAvailable remains 0.
+        let mut state = BalloonState::default();
+        let settled = legacy_stats(MEMORY_HEADROOM / 1024);
+        let used = estimate_used(&settled, ceiling, GIB, 0);
+        assert_eq!(state.next_target(&settled, used, ceiling, GIB), None);
+        let grown = GIB + MEMORY_GROW;
+        for _ in 0..10 {
+            let used = estimate_used(&st, ceiling, grown, 0);
+            assert_eq!(state.next_target(&st, used, ceiling, grown), None);
+        }
+
+        // 3. Shrink lag: balloon has not inflated yet after a 256 MiB step,
+        //    so MemAvailable stays at 512 MiB. Must hold until inflation lands
+        //    instead of stepping past equilibrium into MemAvailable == 0.
+        let mut state = BalloonState::default();
+        let reserved = ceiling - mem_total_kib * 1024;
+        let unavailable = 300 * MIB;
+        let eq_target = reserved + unavailable + MEMORY_HEADROOM;
+        let start = eq_target + 256 * MIB;
+        let high_avail = legacy_stats((512 * MIB) / 1024);
+        let used = estimate_used(&high_avail, ceiling, start, 0);
+        let shrunk = state.next_target(&high_avail, used, ceiling, start);
+        assert_eq!(shrunk, Some(eq_target));
+        // Two lagging polls before the balloon finishes inflating: no overshoot.
+        for _ in 0..2 {
+            let used = estimate_used(&high_avail, ceiling, eq_target, 0);
+            assert_eq!(state.next_target(&high_avail, used, ceiling, eq_target), None);
+        }
+        // Once inflation catches up, MemAvailable settles at MEMORY_HEADROOM.
+        let used = estimate_used(&settled, ceiling, eq_target, 0);
+        assert_eq!(state.next_target(&settled, used, ceiling, eq_target), None);
     }
 }
 
@@ -5094,7 +5896,9 @@ mod vm_recovery_tests {
         assert!(st.vm_recovery_at.unwrap() > std::time::Instant::now() + Duration::from_secs(50));
         let spec = st.containers[&ids[0]].spec.clone();
         drop(st);
-        assert!(engine.start_on_vm(&ids[0], Start::VmRecovery, lost_vm).is_err(), "a start borrowing the old VM cannot claim Running after Lost");
+        let lifecycle = engine.lifecycle(&ids[0]).unwrap();
+        let held = lifecycle.lock().unwrap();
+        assert!(engine.start_on_vm(&ids[0], Start::VmRecovery, lost_vm, held).is_err(), "a start borrowing the old VM cannot claim Running after Lost");
         assert_eq!(engine.with(&ids[0], |c| (c.status, c.vm_stopped, c.exit_code)).unwrap(), (Status::Exited, true, 255));
         engine.fail_start(&ids[0], &spec, &"the VM stopped");
         assert_eq!(engine.with(&ids[0], |c| c.exit_code).unwrap(), 255, "a late start failure must preserve VM-loss accounting");
@@ -5117,11 +5921,228 @@ mod vm_recovery_tests {
         engine.shutdown();
     }
 
+    /// A start whose child never says its root is in place holds the
+    /// container's lifecycle lock for as long as it waits. `kill` and
+    /// `stop` wait `START_GRACE` for it, `rm -f` `REMOVE_GRACE`
+    /// (`await_start`), then cancel it, instead of queueing behind it for
+    /// good. The start here is modelled as `VmLink::run`'s wait: it ends,
+    /// failed, once it sees the cancel.
+    #[test]
+    fn rm_kill_and_stop_cancel_a_start_that_never_finishes() {
+        let dir = std::env::temp_dir().join(format!("kiri-cancel-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let engine = Engine::boot(Store::open(&dir).unwrap()).unwrap();
+        // No real VM: the start below stands in for the guest's answers.
+        engine.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+        let image = Image { mirror: None,
+            name: "test:local".into(), digest: "sha256:test".into(), index_digest: None, config_digest: "sha256:test".into(),
+            layers: Vec::new(), size: 0, platform: "linux/arm64".into(), created: String::new(), pulled_at: 0, config: Default::default(),
+        };
+        for op in ["rm -f", "kill", "kill TERM", "stop"] {
+            let spec: Spec = serde_json::from_value(serde_json::json!({
+                "image": "test:local", "image_id": "sha256:test", "entrypoint": [], "cmd": ["sleep", "60"],
+                "env": [], "cwd": "/", "user": "", "auto_remove": false, "network_mode": "none", "labels": {},
+            })).unwrap();
+            let id = engine.create(Some(format!("stuck-{}", op.replace(' ', ""))), spec.clone(), &image).unwrap();
+            let (why, reason) = std::sync::mpsc::channel();
+            // Claimed as start_on_vm claims it: Running, gate shut, the
+            // lifecycle lock held across the wait.
+            let lifecycle = engine.lifecycle(&id).unwrap();
+            let (held, holding) = std::sync::mpsc::channel();
+            let start = {
+                let (engine, id) = (engine.clone(), id.clone());
+                std::thread::spawn(move || {
+                    let _starting = lifecycle.lock().unwrap();
+                    let (gate, guard) = {
+                        let mut st = engine.lock();
+                        let c = st.containers.get_mut(&id).unwrap();
+                        c.status = Status::Running;
+                        let guard = c.begin_start();
+                        (c.start_gate.clone(), guard)
+                    };
+                    held.send(()).unwrap();
+                    // The guest never says the root is in place; only a
+                    // cancel ends the wait, as a failed start.
+                    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                    while !gate.cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                        assert!(std::time::Instant::now() < deadline, "{op}: never cancelled");
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    why.send(gate.cancelled_by()).unwrap();
+                    engine.fail_start(&id, &spec, &"cancelled");
+                    drop(guard);
+                })
+            };
+            holding.recv().unwrap();
+            let t = std::time::Instant::now();
+            let (done, finished) = std::sync::mpsc::channel();
+            let worker = {
+                let (engine, id) = (engine.clone(), id.clone());
+                std::thread::spawn(move || {
+                    let r = match op {
+                        "rm -f" => engine.remove(&id, true, false),
+                        "kill" => engine.kill(&id, libc::SIGKILL as u32),
+                        "kill TERM" => engine.kill(&id, libc::SIGTERM as u32),
+                        // The stop ended the start: 204, not 304.
+                        _ => engine.stop(&id, Duration::from_secs(1)).and_then(|stopped| if stopped { Ok(()) } else { Err(Error::Conflict("answered 304".into())) }),
+                    };
+                    done.send(r.map_err(|e| format!("{e:?}"))).unwrap();
+                })
+            };
+            let got = finished.recv_timeout(START_GRACE * 3);
+            let took = t.elapsed();
+            start.join().unwrap();
+            worker.join().unwrap();
+            assert_eq!(got, Ok(Ok(())), "{op} of a container whose start never finishes");
+            match op {
+                "rm -f" => {
+                    assert!(took >= REMOVE_GRACE && took < START_GRACE, "rm -f waits for the start, briefly: {took:?}");
+                    assert_eq!(reason.recv().unwrap(), Some(Cancel::Removed));
+                }
+                _ => {
+                    assert!(took >= START_GRACE, "{op} waits for the start first: {took:?}");
+                    assert_eq!(reason.recv().unwrap(), Some(Cancel::Stopped), "{op}");
+                }
+            }
+            let st = engine.lock();
+            match op {
+                "rm -f" => assert!(!st.containers.contains_key(&id), "removed"),
+                _ => assert_eq!(st.containers[&id].status, Status::Exited, "{op}: no longer running"),
+            }
+        }
+        drop(engine);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A `kill` (any signal), `stop` or `rm -f` that comes while a healthy
+    /// start is under way waits for it, as Docker's does: the start is not
+    /// cancelled (it answers 204), and the signal goes to the process once
+    /// the guest has it. Before, the kill was dropped (no process yet), then
+    /// (#621) all three cancelled the start, which answered 409. The start is modelled:
+    /// the guest has the process after 150 ms (gate opened, pid set), and
+    /// the process exits once a stop or kill reaches it.
+    #[test]
+    fn a_stop_or_kill_during_a_healthy_start_waits_for_it() {
+        let dir = std::env::temp_dir().join(format!("kiri-signal-during-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let engine = Engine::boot(Store::open(&dir).unwrap()).unwrap();
+        // No real VM: the threads below stand in for the guest.
+        engine.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+        let image = Image { mirror: None,
+            name: "test:local".into(), digest: "sha256:test".into(), index_digest: None, config_digest: "sha256:test".into(),
+            layers: Vec::new(), size: 0, platform: "linux/arm64".into(), created: String::new(), pulled_at: 0, config: Default::default(),
+        };
+        let start_takes = Duration::from_millis(150);
+        assert!(start_takes < REMOVE_GRACE && REMOVE_GRACE < START_GRACE);
+        for op in ["kill", "kill TERM", "kill USR1", "stop", "rm -f"] {
+            let spec: Spec = serde_json::from_value(serde_json::json!({
+                "image": "test:local", "image_id": "sha256:test", "entrypoint": [], "cmd": ["sleep", "60"],
+                "env": [], "cwd": "/", "user": "", "auto_remove": false, "network_mode": "none", "labels": {},
+            })).unwrap();
+            let id = engine.create(Some(format!("healthy-{}", op.replace(' ', ""))), spec, &image).unwrap();
+            let lifecycle = engine.lifecycle(&id).unwrap();
+            let (held, holding) = std::sync::mpsc::channel();
+            let start = {
+                let (engine, id) = (engine.clone(), id.clone());
+                std::thread::spawn(move || {
+                    let starting = lifecycle.lock().unwrap();
+                    let (gate, guard) = {
+                        let mut st = engine.lock();
+                        let c = st.containers.get_mut(&id).unwrap();
+                        c.status = Status::Running;
+                        let guard = c.begin_start();
+                        (c.start_gate.clone(), guard)
+                    };
+                    held.send(()).unwrap();
+                    std::thread::sleep(start_takes);
+                    let cancelled = gate.cancel.load(std::sync::atomic::Ordering::SeqCst);
+                    // The guest has the process: the pid is set, the gate
+                    // opens, the lifecycle lock goes.
+                    engine.lock().containers.get_mut(&id).unwrap().pid = 42;
+                    let started_at = std::time::Instant::now();
+                    drop(guard);
+                    drop(starting);
+                    (cancelled, started_at)
+                })
+            };
+            holding.recv().unwrap();
+            // The process: it exits once a stop or a kill that ends it is
+            // recorded (both mark the container stopped by the user).
+            let exits = op != "kill USR1";
+            let process = {
+                let (engine, id) = (engine.clone(), id.clone());
+                std::thread::spawn(move || {
+                    let deadline = std::time::Instant::now() + if exits { Duration::from_secs(5) } else { Duration::from_millis(500) };
+                    let mut st = engine.lock();
+                    while !st.containers[&id].stopped_by_user {
+                        let left = deadline.saturating_duration_since(std::time::Instant::now());
+                        if left.is_zero() {
+                            return;
+                        }
+                        st = engine.changed.wait_timeout(st, left).unwrap().0;
+                    }
+                    let c = st.containers.get_mut(&id).unwrap();
+                    c.status = Status::Exited;
+                    c.exit_code = 137;
+                    c.exits += 1;
+                    drop(st);
+                    engine.changed.notify_all();
+                })
+            };
+            let r = match op {
+                "kill" => engine.kill(&id, libc::SIGKILL as u32),
+                "kill TERM" => engine.kill(&id, libc::SIGTERM as u32),
+                "kill USR1" => engine.kill(&id, libc::SIGUSR1 as u32),
+                "rm -f" => engine.remove(&id, true, false),
+                _ => engine.stop(&id, Duration::from_secs(1)).map(drop),
+            };
+            let answered = std::time::Instant::now();
+            let (cancelled, started_at) = start.join().unwrap();
+            process.join().unwrap();
+            assert!(r.is_ok(), "{op}: {r:?}");
+            assert!(!cancelled, "{op} must not cancel a start that finishes");
+            assert!(answered >= started_at, "{op} answered before the start finished");
+            let st = engine.lock();
+            if op == "rm -f" {
+                assert!(!st.containers.contains_key(&id), "removed once it had started");
+                continue;
+            }
+            let c = &st.containers[&id];
+            match exits {
+                true => assert_eq!((c.status, c.exit_code), (Status::Exited, 137), "{op}: delivered once the process existed"),
+                false => assert_eq!(c.status, Status::Running, "{op}: a signal that does not end it"),
+            }
+        }
+        drop(engine);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// What a cancelled start answers: Docker's own words for a start that
+    /// a removal got to first; a 409 for a stuck start that a stop or kill
+    /// ended; nothing special for a start that was not cancelled.
+    #[test]
+    fn a_cancelled_start_answers_as_docker_does() {
+        let id = "0123456789abcdef0123";
+        let msg = |by| match cancelled_start_error(by, id) {
+            Some(Error::Conflict(m)) => Some(m),
+            other => other.map(|e| format!("not a 409: {e:?}")),
+        };
+        assert_eq!(msg(Some(Cancel::Removed)).as_deref(), Some("container is marked for removal and cannot be started"));
+        assert_eq!(msg(Some(Cancel::Stopped)).as_deref(), Some("container 0123456789ab was stopped before it finished starting"));
+        assert_eq!(msg(None), None);
+        // A removal and a stop both cancelling: the removal's answer.
+        let gate = StartGate::default();
+        gate.cancel_by.fetch_max(Cancel::Stopped as u8, std::sync::atomic::Ordering::SeqCst);
+        gate.cancel_by.fetch_max(Cancel::Removed as u8, std::sync::atomic::Ordering::SeqCst);
+        gate.cancel_by.fetch_max(Cancel::Stopped as u8, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(gate.cancelled_by(), Some(Cancel::Removed));
+    }
+
     #[test]
     fn a_policy_start_waits_while_kiri_stops() {
         let dir = std::env::temp_dir().join(format!("kiri-vm-parking-{}", std::process::id()));
         let engine = Engine::boot(Store::open(&dir).unwrap()).unwrap();
-        let image = Image {
+        let image = Image { mirror: None,
             name: "test:local".into(), digest: "sha256:test".into(), index_digest: None, config_digest: "sha256:test".into(),
             layers: Vec::new(), size: 0, platform: "linux/arm64".into(), created: String::new(), pulled_at: 0, config: Default::default(),
         };
@@ -5165,7 +6186,7 @@ mod vm_recovery_tests {
         let engine = Engine::boot(store).unwrap();
         // Prevent any real VM boot: this test supplies the guest events.
         engine.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
-        let image = Image {
+        let image = Image { mirror: None,
             name: "test:local".into(), digest: "sha256:test".into(), index_digest: None, config_digest: "sha256:test".into(),
             layers: Vec::new(), size: 0, platform: "linux/arm64".into(), created: String::new(), pulled_at: 0, config: Default::default(),
         };
@@ -5368,6 +6389,44 @@ mod net_opts_tests {
         .unwrap();
         assert!(super::net_opts(&old, None, "").is_empty());
     }
+
+    /// The cap on `--dns` servers counts IPv4 ones: IPv6 servers ahead of
+    /// them don't push an IPv4 server out, and a fourth IPv4 one is left out.
+    #[test]
+    fn the_first_three_ipv4_dns_servers_are_kept() {
+        let spec: super::Spec = serde_json::from_value(serde_json::json!({
+            "image": "alpine", "image_id": "sha256:x", "entrypoint": [], "cmd": ["sh"], "env": [], "cwd": "", "user": "",
+            "auto_remove": false, "network_mode": "bridge", "labels": {},
+            "dns": ["2001:db8::1", "2001:db8::2", "2001:db8::3", "10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
+        }))
+        .unwrap();
+        assert_eq!(
+            super::net_opts(&spec, None, ""),
+            [
+                "nameserver=2001:db8::1",
+                "nameserver=2001:db8::2",
+                "nameserver=2001:db8::3",
+                "nameserver=10.0.0.1",
+                "nameserver=10.0.0.2",
+                "nameserver=10.0.0.3"
+            ]
+        );
+    }
+
+    /// IPv6 `--dns` entries are bounded to three as well.
+    #[test]
+    fn at_most_three_ipv6_dns_servers_are_kept() {
+        let spec: super::Spec = serde_json::from_value(serde_json::json!({
+            "image": "alpine", "image_id": "sha256:x", "entrypoint": [], "cmd": ["sh"], "env": [], "cwd": "", "user": "",
+            "auto_remove": false, "network_mode": "bridge", "labels": {},
+            "dns": ["2001:db8::1", "2001:db8::2", "2001:db8::3", "2001:db8::4", "10.0.0.1"],
+        }))
+        .unwrap();
+        assert_eq!(
+            super::net_opts(&spec, None, ""),
+            ["nameserver=2001:db8::1", "nameserver=2001:db8::2", "nameserver=2001:db8::3", "nameserver=10.0.0.1"]
+        );
+    }
 }
 
 /// A passed-through USB device keeps the VM awake: sleeping would unplug it.
@@ -5432,7 +6491,7 @@ mod records_tests {
     use std::path::Path;
 
     fn image() -> Image {
-        Image {
+        Image { mirror: None,
             name: "test:local".into(), digest: "sha256:test".into(), index_digest: None, config_digest: "sha256:test".into(),
             layers: Vec::new(), size: 0, platform: "linux/arm64".into(), created: String::new(), pulled_at: 0, config: Default::default(),
         }
@@ -5833,19 +6892,22 @@ mod image_labels_cache_tests {
 #[cfg(test)]
 mod save_speed_tests {
     use super::*;
+    use std::sync::atomic::Ordering;
 
     /// Many saves back to back from several threads (a compose up, a burst
-    /// of exits) cost about what writing the file costs: syncing it to disk
-    /// must not make each save wait. On a Mac's disk a sync takes 5 ms or
-    /// more, so a save that waits for one is many times slower than the
-    /// write itself.
+    /// of exits) never wait for the disk: no save syncs the file itself
+    /// (an fsync, 5 ms or more on a Mac's disk, so a save that waits for one
+    /// is many times slower than the write), and the syncer thread syncs
+    /// once per quiet moment, at most once a second during the burst, not
+    /// once per save. Counted, not timed, so neither a busy machine nor a
+    /// disk where syncing is free (tmpfs) changes the answer.
     #[test]
-    fn back_to_back_saves_stay_close_to_the_unsynced_write() {
+    fn back_to_back_saves_leave_syncing_to_the_syncer() {
         let root = std::env::temp_dir().join(format!("kiri-save-speed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let engine = Engine::boot(Store::open(&root).unwrap()).unwrap();
-        engine.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
-        let image = Image {
+        engine.stopped.store(true, Ordering::SeqCst);
+        let image = Image { mirror: None,
             name: "test:local".into(), digest: "sha256:test".into(), index_digest: None, config_digest: "sha256:test".into(),
             layers: Vec::new(), size: 0, platform: "linux/arm64".into(), created: String::new(), pulled_at: 0, config: Default::default(),
         };
@@ -5857,28 +6919,38 @@ mod save_speed_tests {
             })).unwrap();
             engine.create(Some(format!("speed{i}")), spec, &image).unwrap();
         }
-        let (threads, each) = (8, 100);
-        // The same number of plain writes of the same file: temp file, rename.
-        let bytes = std::fs::read(root.join("containers.json")).unwrap();
-        let plain = root.join("plain.json");
-        let t = std::time::Instant::now();
-        for _ in 0..threads * each {
-            let tmp = root.join("plain.json.tmp");
-            std::fs::write(&tmp, &bytes).unwrap();
-            std::fs::rename(&tmp, &plain).unwrap();
-        }
-        let unsynced = t.elapsed();
-        let t = std::time::Instant::now();
-        std::thread::scope(|s| {
-            for _ in 0..threads {
-                s.spawn(|| (0..each).for_each(|_| engine.save()));
+        // The creates' own sync, once it has happened: the burst starts quiet.
+        let quiet = |n: u64| {
+            let t = std::time::Instant::now();
+            while engine.syncer_syncs.load(Ordering::SeqCst) == n && t.elapsed() < Duration::from_secs(30) {
+                std::thread::sleep(Duration::from_millis(10));
             }
+            engine.syncer_syncs.load(Ordering::SeqCst)
+        };
+        let before = quiet(0);
+        let (threads, each) = (8, 100);
+        let t = std::time::Instant::now();
+        let inline: Vec<u64> = std::thread::scope(|s| {
+            let saving: Vec<_> = (0..threads)
+                .map(|_| {
+                    s.spawn(|| {
+                        let start = kiri_image::jsonfile::syncs_here();
+                        (0..each).for_each(|_| engine.save());
+                        kiri_image::jsonfile::syncs_here() - start
+                    })
+                })
+                .collect();
+            saving.into_iter().map(|h| h.join().unwrap()).collect()
         });
-        let saves = t.elapsed();
-        eprintln!("{} saves from {threads} threads: {saves:?}; the same writes unsynced: {unsynced:?}", threads * each);
-        // Loose, for other tests' disk work running alongside: waiting for
-        // a sync per save is 30 to 40 times the unsynced write on a Mac.
-        assert!(saves < unsynced * 8 + Duration::from_millis(500), "{saves:?} for saves against {unsynced:?} unsynced");
+        let took = t.elapsed();
+        let during = engine.syncer_syncs.load(Ordering::SeqCst) - before;
+        eprintln!("{} saves from {threads} threads in {took:?}: synced by the saves {inline:?}, by the syncer {during}", threads * each);
+        assert!(inline.iter().all(|&n| n == 0), "saves synced the file themselves: {inline:?} syncs per thread");
+        // At most one a second while saves keep coming (`SYNC_AT_MOST`), one
+        // more for a gap, however slow a busy machine makes the burst.
+        assert!(during <= took.as_secs() + 2, "the syncer synced {during} times during {} saves in {took:?}", threads * each);
+        // And the last save is made durable soon after the burst.
+        assert!(quiet(before + during) > before + during, "the syncer never synced after the burst");
         drop(engine);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -5930,7 +7002,7 @@ mod start_wait_tests {
         let _ = std::fs::remove_dir_all(&dir);
         let engine = Engine::boot(Store::open(&dir).unwrap()).unwrap();
         engine.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
-        let image = Image {
+        let image = Image { mirror: None,
             name: "test:local".into(), digest: "sha256:test".into(), index_digest: None, config_digest: "sha256:test".into(),
             layers: Vec::new(), size: 0, platform: "linux/arm64".into(), created: String::new(), pulled_at: 0, config: Default::default(),
         };
@@ -6125,6 +7197,44 @@ mod start_wait_tests {
         }
     }
 
+    /// `docker rm -f` of a running `--rm` container: its exit, reported while
+    /// the rm waits for the kill, removes it and notes its code. The rm must
+    /// not note a second one (0, with no container left to read), or a
+    /// `docker run --rm` waiting on it exits 0, not 137. A code the container
+    /// exited with by itself as the kill landed (3) is kept the same way; a
+    /// container without `--rm` is removed by the rm, with its code.
+    #[test]
+    fn a_force_remove_keeps_the_exit_code_of_a_container_that_removed_itself() {
+        for (auto_remove, code) in [(true, 137), (true, 3), (false, 137)] {
+            let (engine, id, dir) = engine(&format!("rm-code-{auto_remove}-{code}"));
+            engine.lock().containers.get_mut(&id).unwrap().spec.auto_remove = auto_remove;
+            let waiters: Vec<_> = ["removed", "next-exit", "not-running"]
+                .into_iter()
+                .map(|cond| {
+                    let (engine, id) = (engine.clone(), id.clone());
+                    (cond, std::thread::spawn(move || engine.wait(&id, cond)))
+                })
+                .collect();
+            let removing = {
+                let (engine, id) = (engine.clone(), id.clone());
+                std::thread::spawn(move || engine.remove(&id, true, false))
+            };
+            // The rm now waits for the exit of what it killed.
+            std::thread::sleep(Duration::from_millis(150));
+            assert!(!removing.is_finished(), "the rm did not wait for the exit");
+            engine.on_event(Event::Exited { id: &id, code, oom: false });
+            let r = removing.join().unwrap();
+            assert!(r.is_ok(), "rm -f: {r:?}");
+            let notes: Vec<i32> = engine.lock().removed.iter().filter(|(r, _)| *r == id).map(|(_, c)| *c).collect();
+            assert_eq!(notes, [code], "--rm {auto_remove}: one removal, with its real exit code");
+            for (cond, w) in waiters {
+                assert_eq!(w.join().unwrap().unwrap(), code, "wait {cond}, --rm {auto_remove}");
+            }
+            drop(engine);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
     /// A second container made with a volume (named or anonymous) that a
     /// start under way also uses waits for that start before it reaches the
     /// guest; one sharing no volume, or only a bind or tmpfs mount, does not.
@@ -6188,7 +7298,7 @@ mod start_wait_tests {
     /// C fills v1 for a long time; B uses v2; A uses both.
     fn three(name: &str) -> (Arc<Engine>, [String; 3], PathBuf) {
         let (engine, c, dir) = engine(name);
-        let image = Image {
+        let image = Image { mirror: None,
             name: "test:local".into(), digest: "sha256:test".into(), index_digest: None, config_digest: "sha256:test".into(),
             layers: Vec::new(), size: 0, platform: "linux/arm64".into(), created: String::new(), pulled_at: 0, config: Default::default(),
         };
@@ -6366,7 +7476,7 @@ mod leave_first_network_tests {
             let ipam = parse_ipam(&serde_json::json!({"Config": [{"Subnet": format!("10.98.{i}.0/24")}]})).unwrap();
             engine.lock_networks().create(net, Settings { ipam, internal: *internal, ..Default::default() }).unwrap();
         }
-        let image = Image {
+        let image = Image { mirror: None,
             name: "test:local".into(), digest: "sha256:test".into(), index_digest: None, config_digest: "sha256:test".into(),
             layers: Vec::new(), size: 0, platform: "linux/arm64".into(), created: String::new(), pulled_at: 0, config: Default::default(),
         };
@@ -6390,6 +7500,161 @@ mod leave_first_network_tests {
     fn done(engine: Arc<Engine>, dir: PathBuf) {
         drop(engine);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The names a rename puts in the guest: the container's own, its
+    /// aliases on each network, whether a network has IPv4 addresses, and
+    /// nothing for a stopped container or the default bridge.
+    #[test]
+    fn a_rename_names_each_network_with_its_aliases_and_address_kind() {
+        let (engine, id, dir) = engine("rename", &[("front", false), ("back6", false)]);
+        connect(&engine, "front", &id, &["web"], "");
+        connect(&engine, "back6", &id, &["api"], "");
+        // Stopped: nothing to tell the guest.
+        engine.rename(&id, "first").unwrap();
+        assert!(engine.dns_names_after_rename(&id).is_empty());
+        {
+            let mut st = engine.lock();
+            let c = st.containers.get_mut(&id).unwrap();
+            c.pid = 4242;
+            c.status = Status::Running;
+            c.ip = None;
+            c.extra_ips = vec![("front".to_owned(), [10, 98, 0, 5]), ("back6".to_owned(), [10, 98, 1, 5])];
+            c.extra_ip6s = vec![("back6".to_owned(), [0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5])];
+        }
+        engine.lock_networks().find_mut("back6").unwrap().no_ipv4 = true;
+        engine.rename(&id, "second").unwrap();
+        let mut sent = engine.dns_names_after_rename(&id);
+        sent.sort_by(|a, b| a.0.cmp(&b.0));
+        let short = engine.lock().containers[&id].short_id().to_owned();
+        let bridge_of = |n: &str| engine.lock_networks().find(n).unwrap().bridge.clone();
+        assert_eq!(sent.len(), 2);
+        let front = sent.iter().find(|u| u.0 == bridge_of("front")).unwrap();
+        assert_eq!((front.1, front.3, front.4.clone()), ([10, 98, 0, 5], true, vec!["second".to_owned(), short.clone(), "web".to_owned()]));
+        let back = sent.iter().find(|u| u.0 == bridge_of("back6")).unwrap();
+        assert_eq!((back.1, back.2.is_some(), back.3, back.4.clone()), ([10, 98, 1, 5], true, false, vec!["second".to_owned(), short, "api".to_owned()]));
+        done(engine, dir);
+    }
+
+    /// On its first network a rename names the container as its start did:
+    /// its name, aliases and hostname (its short ID when it has none). The
+    /// default bridge has no embedded DNS and gets nothing.
+    #[test]
+    fn a_rename_names_the_first_network_with_aliases_and_hostname() {
+        let (engine, id, dir) = engine("rename-first", &[("front", false)]);
+        let short = engine.lock().containers[&id].short_id().to_owned();
+        let bridge = engine.lock_networks().find("front").unwrap().bridge.clone();
+        {
+            let mut st = engine.lock();
+            let c = st.containers.get_mut(&id).unwrap();
+            c.pid = 4242;
+            c.status = Status::Running;
+            c.ip = Some([10, 98, 0, 7]);
+            c.spec.network_mode = "front".into();
+            c.spec.aliases = vec!["db".into()];
+        }
+        engine.rename(&id, "first").unwrap();
+        assert_eq!(engine.dns_names_after_rename(&id), [(bridge.clone(), [10, 98, 0, 7], None, true, vec!["first".to_owned(), short, "db".to_owned()])]);
+        engine.lock().containers.get_mut(&id).unwrap().spec.hostname = "box".into();
+        engine.rename(&id, "second").unwrap();
+        assert_eq!(engine.dns_names_after_rename(&id), [(bridge, [10, 98, 0, 7], None, true, vec!["second".to_owned(), "box".to_owned(), "db".to_owned()])]);
+        engine.lock().containers.get_mut(&id).unwrap().spec.network_mode = "bridge".into();
+        assert!(engine.dns_names_after_rename(&id).is_empty(), "nothing for the default bridge");
+        done(engine, dir);
+    }
+
+    /// The names sent with a rename are each there once, and never more than
+    /// the guest takes in one frame: the container's own name stays first.
+    #[test]
+    fn a_renames_names_are_deduplicated_and_bounded() {
+        let mut names = vec!["web".to_owned(), "abc123".to_owned(), "WEB".to_owned(), String::new()];
+        names.extend((0..400).map(|i| format!("alias{}", i % 300)));
+        let sent = super::rename_names(names);
+        assert_eq!(sent.len(), kiri_proto::MAX_DNS_NAMES);
+        assert_eq!(sent[..3], ["web", "abc123", "alias0"]);
+        let unique: std::collections::HashSet<_> = sent.iter().map(|n| n.to_ascii_lowercase()).collect();
+        assert_eq!(unique.len(), sent.len());
+        let (engine, id, dir) = engine("rename-many", &[("front", false)]);
+        {
+            let mut st = engine.lock();
+            let c = st.containers.get_mut(&id).unwrap();
+            c.pid = 4242;
+            c.status = Status::Running;
+            c.ip = Some([10, 98, 0, 8]);
+            c.spec.network_mode = "front".into();
+            c.spec.aliases = (0..300).map(|i| format!("a{i}")).collect();
+        }
+        engine.rename(&id, "many").unwrap();
+        let sent = engine.dns_names_after_rename(&id);
+        assert_eq!(sent[0].4.len(), kiri_proto::MAX_DNS_NAMES);
+        assert_eq!(sent[0].4[0], "many");
+        let short = engine.lock().containers[&id].short_id().to_owned();
+        assert_eq!(sent[0].4[1], short, "the hostname survives the cap");
+        // The frame the guest gets decodes.
+        let mut buf = Vec::new();
+        kiri_proto::encode_dns_rename(&mut buf, &id, &sent[0].0, sent[0].1, sent[0].2, sent[0].3, &sent[0].4);
+        assert!(kiri_proto::decode(&buf).is_ok());
+        done(engine, dir);
+    }
+
+    /// A rename waits for the container's lifecycle lock, which a start holds
+    /// from reading the name until its pid is set (and a stop, kill or
+    /// remove holds too): a start never registers the name a rename replaced.
+    #[test]
+    fn a_rename_waits_for_a_start_or_stop_under_way() {
+        let (engine, id, dir) = engine("order-life", &[]);
+        let lifecycle = engine.lifecycle(&id).unwrap();
+        let held = lifecycle.lock().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (e2, id2) = (engine.clone(), id.clone());
+        let t = std::thread::spawn(move || {
+            e2.rename(&id2, "later").unwrap();
+            tx.send(()).unwrap();
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "renamed while a start held the lifecycle");
+        assert_eq!(engine.lock().containers[&id].name, "probe");
+        drop(held);
+        rx.recv_timeout(Duration::from_secs(5)).expect("renamed once the start was done");
+        t.join().unwrap();
+        assert_eq!(engine.lock().containers[&id].name, "later");
+        done(engine, dir);
+    }
+
+    /// A rename waits for a change of the same container's guest names under
+    /// way (a network joined or left), and for a start: it is never told to
+    /// the guest in the middle of one, or over it.
+    #[test]
+    fn a_rename_waits_for_the_names_change_under_way() {
+        let (engine, id, dir) = engine("order", &[]);
+        let sync = engine.names_sync(&id).unwrap();
+        let held = sync.lock().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (e2, id2) = (engine.clone(), id.clone());
+        let t = std::thread::spawn(move || {
+            e2.rename(&id2, "later").unwrap();
+            tx.send(()).unwrap();
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err(), "renamed while a names change held the order");
+        assert_eq!(engine.lock().containers[&id].name, "probe");
+        drop(held);
+        rx.recv_timeout(Duration::from_secs(5)).expect("renamed once the change was done");
+        t.join().unwrap();
+        assert_eq!(engine.lock().containers[&id].name, "later");
+        done(engine, dir);
+    }
+
+    /// A container name starts with a letter or digit, as Docker's does.
+    #[test]
+    fn a_container_name_starts_with_a_letter_or_digit() {
+        for ok in ["a", "db", "0db", "my_db-1.x", "DB"] {
+            assert!(valid_container_name(ok), "{ok}");
+        }
+        for bad in ["", ".db", "-db", "_db", "d b", "d/b", "dé"] {
+            assert!(!valid_container_name(bad), "{bad}");
+        }
+        let (engine, id, dir) = engine("badname", &[]);
+        assert!(matches!(engine.rename(&id, "_x"), Err(Error::BadRequest(_))));
+        done(engine, dir);
     }
 
     /// The .NET Aspire sequence: created on bridge, connected to a session
@@ -6549,5 +7814,28 @@ mod leave_first_network_tests {
         }))
         .unwrap();
         assert!(!s.left_all_networks);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod cpu_tests {
+    /// The CPUs `Cpus_allowed_list` of /proc/self/status lists.
+    fn allowed() -> usize {
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        let list = status.lines().find_map(|l| l.strip_prefix("Cpus_allowed_list:")).unwrap().trim().to_owned();
+        list.split(',')
+            .map(|r| match r.split_once('-') {
+                Some((a, b)) => b.parse::<usize>().unwrap() - a.parse::<usize>().unwrap() + 1,
+                None => 1,
+            })
+            .sum()
+    }
+
+    /// On Linux there is no VM: `docker info`'s NCPU is the CPUs the engine
+    /// may run on, as dockerd counts them (Go's runtime.NumCPU, the affinity
+    /// mask), not the Mac VM's default of 2.
+    #[test]
+    fn on_linux_the_engine_has_the_cpus_it_may_run_on() {
+        assert_eq!(super::vm_cpus(), allowed());
     }
 }

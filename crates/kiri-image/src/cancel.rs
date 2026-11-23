@@ -102,6 +102,11 @@ pub(crate) fn watch(stream: &Arc<TcpStream>) -> io::Result<()> {
     })
 }
 
+/// Whether the pull this thread works for, if one, has been cancelled.
+pub(crate) fn current_cancelled() -> bool {
+    CURRENT.with(|c| c.borrow().as_ref().is_some_and(Cancel::is_cancelled))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

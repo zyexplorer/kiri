@@ -20,7 +20,7 @@ if [ -d /run/systemd/system ]; then
   cat > /etc/systemd/system/kiri.service <<UNIT
 [Unit]
 Description=Kiri container engine
-After=network-online.target
+After=network-online.target docker.service
 [Service]
 ExecStart=/usr/local/bin/kiri daemon
 Environment=HOME=/var/lib/kiri-daemon

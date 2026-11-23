@@ -104,6 +104,12 @@ pub struct Process {
     /// daemon's `AwaitStart` with it and tears the container down, with no
     /// `Exited`, as a start that fails within `ROOT_READY_WAIT` is.
     ended_before_ready: Option<String>,
+    /// Its child said it is filling a new volume (`FILLING`): from then on
+    /// until its root is in place it is never killed (see `wait_root`).
+    filling: bool,
+    /// Its start was cancelled while it was filling a volume (see `cancel`):
+    /// killed as soon as its root is in place.
+    cancelled: bool,
 }
 
 /// Where a container's root stands (see [`Process::root`]).
@@ -125,12 +131,51 @@ impl Process {
         self.settle(Some(std::time::Duration::ZERO))
     }
 
-    /// Waits, as long as it takes, for the child to say its root is in
-    /// place or to end. Called before the agent kills a container: a child
-    /// still filling a new volume must finish first, or the volume is left
-    /// half full and, no longer empty, is never filled again.
+    /// Called before the agent kills a container: a child filling a new
+    /// volume must finish first, or the volume is left half full and, no
+    /// longer empty, is never filled again; so it waits, as long as it
+    /// takes, for that child's root. A child that has not begun filling
+    /// (it says so first, see `FILLING`) is not waited for: nothing it does
+    /// before is left half done, and one stuck there would hold up the
+    /// agent's loop for good.
     pub fn wait_root(&mut self) -> Root {
-        self.settle(None)
+        match self.root() {
+            Root::Starting if self.filling => self.settle(None),
+            r => r,
+        }
+    }
+
+    /// `CancelStart`: a container stopped or removed before its root is in
+    /// place. A child still making its root is killed now (its start then
+    /// fails, see `settle_roots`); one filling a volume is marked, and
+    /// killed once the fill is done (`take_cancel`). Frozen while it is
+    /// looked at, so it cannot begin a fill between the look and the kill.
+    /// Nothing happens to a process whose root is in place, or an exec.
+    pub fn cancel(&mut self) {
+        if self.container.is_some() || self.root() != Root::Starting {
+            return;
+        }
+        let cgroup = self.teardown.as_ref().map(|t| t.cgroup.clone());
+        let frozen = cgroup.as_ref().is_some_and(|c| super::cgroup::freeze(c, true).is_ok());
+        match self.root() {
+            Root::Starting if self.filling => self.cancelled = true,
+            Root::Starting => {
+                // SAFETY: SIGKILL to our own unreaped child (`Ended` is not
+                // settled yet, so it has not been reaped).
+                unsafe { libc::kill(self.pid, libc::SIGKILL) };
+            }
+            _ => {}
+        }
+        if frozen && let Some(c) = &cgroup {
+            // Not waited for: a fill goes on as soon as the kernel lets it.
+            let _ = fs::write(c.join("cgroup.freeze"), "0");
+        }
+    }
+
+    /// Whether its start was cancelled during a fill that is now done: the
+    /// caller kills it. True once.
+    pub fn take_cancel(&mut self) -> bool {
+        self.entered() && std::mem::take(&mut self.cancelled)
     }
 
     fn settle(&mut self, wait: Option<std::time::Duration>) -> Root {
@@ -138,7 +183,7 @@ impl Process {
             return Root::Ended;
         }
         let Some(fd) = &self.starting else { return Root::Ready };
-        match root_word(fd.as_raw_fd(), wait) {
+        match root_word(fd.as_raw_fd(), wait, &mut self.filling) {
             Ok(RootWord::NotYet) => Root::Starting,
             Ok(RootWord::Ready) => {
                 self.starting = None;
@@ -206,6 +251,8 @@ impl Process {
             teardown: None,
             starting: None,
             ended_before_ready: None,
+            filling: false,
+            cancelled: false,
         }
     }
 
@@ -255,6 +302,9 @@ struct Prepared {
     profile: Vec<u8>,
     no_new_privs: bool,
     readonly_rootfs: bool,
+    /// The root is remounted `nodev`: the device filter could not be
+    /// attached, so a device node an image's layers bring must not open.
+    nodev_root: bool,
     shm_size: u64,
     /// `--init`: PID 1 supervises the program instead of being it.
     init: bool,
@@ -301,6 +351,11 @@ enum ParentStdio {
 /// this, the start is answered `starting` and the daemon asks again.
 const ROOT_READY_WAIT: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// What a child writes on its "root ready" pipe before it begins filling a
+/// new volume; `READY` follows once its root is in place.
+const FILLING: u8 = b'f';
+const READY: u8 = b'r';
+
 /// What the child's "root ready" pipe says.
 #[derive(Debug, PartialEq, Eq)]
 enum RootWord {
@@ -311,8 +366,8 @@ enum RootWord {
 }
 
 /// Reads the child's word on its root, waiting at most `wait` (None: as long
-/// as it takes).
-fn root_word(fd: RawFd, wait: Option<std::time::Duration>) -> io::Result<RootWord> {
+/// as it takes). Sets `filling` when the child says it began a fill.
+fn root_word(fd: RawFd, wait: Option<std::time::Duration>, filling: &mut bool) -> io::Result<RootWord> {
     let deadline = wait.map(|w| std::time::Instant::now() + w);
     loop {
         let timeout = deadline.map_or(-1, |d| {
@@ -325,26 +380,26 @@ fn root_word(fd: RawFd, wait: Option<std::time::Duration>) -> io::Result<RootWor
         if n == 0 {
             return Ok(RootWord::NotYet);
         }
-        if n > 0 {
-            break;
+        if n < 0 {
+            let e = io::Error::last_os_error();
+            if e.kind() != io::ErrorKind::Interrupted {
+                return Err(e);
+            }
+            continue;
         }
-        let e = io::Error::last_os_error();
-        if e.kind() != io::ErrorKind::Interrupted {
-            return Err(e);
-        }
-    }
-    let mut ready = [0u8; 1];
-    loop {
+        let mut word = [0u8; 1];
         // SAFETY: reading one byte into a local buffer from a pipe that has
         // data or is closed, so this does not wait.
-        let n = unsafe { libc::read(fd, ready.as_mut_ptr().cast(), 1) };
+        let n = unsafe { libc::read(fd, word.as_mut_ptr().cast(), 1) };
         match n {
+            // Then the wait goes on for `READY`, or the end.
+            1 if word[0] == FILLING => *filling = true,
             1 => return Ok(RootWord::Ready),
             0 => return Ok(RootWord::Ended),
             _ => {
                 let e = io::Error::last_os_error();
                 match e.kind() {
-                    io::ErrorKind::Interrupted => continue,
+                    io::ErrorKind::Interrupted => {}
                     io::ErrorKind::WouldBlock => return Ok(RootWord::NotYet),
                     _ => return Err(e),
                 }
@@ -460,6 +515,9 @@ pub fn spawn(spec: &RunSpec<'_>, paths: &Paths, net: NetCtx<'_>) -> io::Result<P
     let mut prepared = prepare(spec.argv, spec.env, spec.cwd, spec.user, Some(spec.hostname), spec.flags, spec.caps).map_err(cleanup)?;
     if !device_filtered {
         prepared.caps &= !(1 << super::devices::CAP_MKNOD);
+        // Nodes an image's layers bring (unpacked as devices) are not
+        // filtered either: the root's are made unusable.
+        prepared.nodev_root = true;
     }
     // Looked at now, so a program the kernel would refuse fails the start
     // with a message rather than the child.
@@ -489,7 +547,7 @@ pub fn spawn(spec: &RunSpec<'_>, paths: &Paths, net: NetCtx<'_>) -> io::Result<P
     // Small, short-lived files: kept in memory (/run is tmpfs), not on the data disk.
     let etc_dir = PathBuf::from("/run/kiri").join(spec.id);
     let embedded_dns = embedded_dns(spec, net.upstream_dns, net.dns.relay);
-    let nameserver = embedded_dns.then(|| embedded_address(spec, net.dns.relay));
+    let nameserver = embedded_dns.then(|| embedded_address(spec));
     prepared.etc_files = write_etc_files(spec, &etc_dir, net.upstream_dns, nameserver).map_err(cleanup)?;
     prepared.mounts = parse_mounts(spec.mounts).map_err(cleanup)?;
     // A network namespace of its own gets Docker's two defaults: any port
@@ -537,10 +595,12 @@ pub fn spawn(spec: &RunSpec<'_>, paths: &Paths, net: NetCtx<'_>) -> io::Result<P
         }
         None => None,
     };
+    // Worked out here, so the child's first step allocates nothing.
+    let close_first = sys::close_ranges(&child_fds(&prepared, &child_io));
     // SAFETY: the agent is single-threaded, as clone3 without CLONE_VM needs.
     let cloned = unsafe { sys::clone3(&args) };
     if let Ok(0) = cloned {
-        container_child(&prepared, &rootfs_c, &child_io);
+        container_child(&prepared, &rootfs_c, &child_io, &close_first);
     }
     let restored = own_pid_ns.map_or(Ok(()), |own| sys::setns(own.as_raw_fd(), libc::CLONE_NEWPID));
     drop(pid_join);
@@ -573,14 +633,21 @@ pub fn spawn(spec: &RunSpec<'_>, paths: &Paths, net: NetCtx<'_>) -> io::Result<P
     };
     // Set once the start goes on without the child's root (see below).
     let starting = std::cell::Cell::new(false);
+    // Set once the child says it began filling a volume (`FILLING`).
+    let filling = std::cell::Cell::new(false);
     // The child never becomes a Process, so nothing else tears it down:
     // its root goes back here, with its cgroup and runtime files.
     let kill_child = |e: io::Error| {
-        // A child still filling a new volume finishes first, as it did when
-        // the start always waited for it: killed half-way, the volume would
-        // stay half full and, no longer empty, never be filled again.
+        // A child filling a new volume finishes first, as it did when the
+        // start always waited for it: killed half-way, the volume would stay
+        // half full and, no longer empty, never be filled again. One that
+        // has not begun a fill is not waited for (see `Process::wait_root`).
         if starting.get() {
-            let _ = root_word(root_ready.as_raw_fd(), None);
+            let mut f = filling.get();
+            let word = root_word(root_ready.as_raw_fd(), Some(std::time::Duration::ZERO), &mut f);
+            if f && matches!(word, Ok(RootWord::NotYet)) {
+                let _ = root_word(root_ready.as_raw_fd(), None, &mut f);
+            }
         }
         let own = child_report(report);
         // SAFETY: killing the child we just cloned.
@@ -606,10 +673,13 @@ pub fn spawn(spec: &RunSpec<'_>, paths: &Paths, net: NetCtx<'_>) -> io::Result<P
     // A start with a terminal (`-t`) is the exception: its master comes from
     // the child only once its root and network are in place
     // (`finish_stdio` waits for it), so it waits for the root as before.
-    match root_word(root_ready.as_raw_fd(), Some(ROOT_READY_WAIT)) {
+    let mut began_fill = false;
+    let word = root_word(root_ready.as_raw_fd(), Some(ROOT_READY_WAIT), &mut began_fill);
+    filling.set(began_fill);
+    match word {
         Ok(RootWord::Ready) => {}
         Ok(RootWord::Ended) => return Err(kill_child(io::Error::other(NOT_READY))),
-        Ok(RootWord::NotYet) if prepared.tty => match root_word(root_ready.as_raw_fd(), None) {
+        Ok(RootWord::NotYet) if prepared.tty => match root_word(root_ready.as_raw_fd(), None, &mut began_fill) {
             Ok(RootWord::Ready) => {}
             Ok(_) => return Err(kill_child(io::Error::other(NOT_READY))),
             Err(e) => return Err(kill_child(e)),
@@ -650,30 +720,46 @@ pub fn spawn(spec: &RunSpec<'_>, paths: &Paths, net: NetCtx<'_>) -> io::Result<P
             }
             // An IPv6-only network's bridge has no IPv4 address to serve on,
             // and its containers no A records.
-            if !plug.no_ipv4 {
-                net.dns.serve(spec.net.bridge, spec.net.gateway).map_err(|e| kill_child(io::Error::new(e.kind(), format!("dns: {e}"))))?;
-            }
-            // 127.0.0.11 in the container, when its resolv.conf names it. Not
-            // when it names the gateway (the default bridge in the VM): the
-            // listener would only hold port 53, and a DNS server in the
-            // container could not bind it.
-            if nameserver == Some(super::dns::EMBEDDED) {
+            // A gateway that won't take the listener doesn't stop the start
+            // (dns.rs `serve_or_warn`, #477).
+            let gateway = (!plug.no_ipv4 && net.dns.serve_or_warn(spec.net.bridge, spec.net.gateway)).then_some(spec.net.gateway);
+            // 127.0.0.11 in the container, when it is the resolver. Not when
+            // the gateway is (the default bridge in the VM, or on a host
+            // whose resolver is one of its own addresses): the listener would
+            // only hold port 53, and a DNS server in the container could not
+            // bind it.
+            let wanted = nameserver.unwrap_or(super::dns::EMBEDDED);
+            let (resolver, in_err) = settle_resolver(wanted, gateway, || {
                 // `pid` is this new child's, so a server already kept under
                 // it belonged to a process that exited and was reaped, still
                 // waiting for its output to be read (see `admit`): it must
                 // not stand in for this container's own.
                 net.dns.drop_container(pid);
-                std::fs::File::open(format!("/proc/{pid}/ns/net"))
-                    .and_then(|ns| {
-                        net.dns.serve_in(&ns, pid, spec.net.ip, spec.net.bridge)?;
-                        // User networks it joins once it runs: their names
-                        // answer from its first lookup (#449).
-                        for b in net_opts::values(spec.net.opts, net_opts::DNS_BRIDGE) {
-                            net.dns.serve_in(&ns, pid, spec.net.ip, b)?;
-                        }
-                        Ok(())
-                    })
-                    .map_err(|e| kill_child(io::Error::new(e.kind(), format!("dns: {e}"))))?;
+                std::fs::File::open(format!("/proc/{pid}/ns/net")).and_then(|ns| {
+                    net.dns.serve_in(&ns, pid, spec.net.ip, spec.net.bridge)?;
+                    // User networks it joins once it runs: their names
+                    // answer from its first lookup (#449).
+                    for b in net_opts::values(spec.net.opts, net_opts::DNS_BRIDGE) {
+                        net.dns.serve_in(&ns, pid, spec.net.ip, b)?;
+                    }
+                    Ok(())
+                })
+            });
+            if let Some(e) = in_err {
+                net.dns.drop_container(pid);
+                match resolver {
+                    Some(at) => eprintln!("kiri-init: dns: {}: no resolver in its own network ({e}); it asks Kiri's at the gateway, {}", spec.id, net::ip_str(at)),
+                    None => eprintln!(
+                        "kiri-init: dns: {}: no resolver of Kiri's could listen for it ({e}); it asks the host's resolvers directly, so names of other containers on its network will not resolve",
+                        spec.id
+                    ),
+                }
+            }
+            // Not what resolv.conf was written with: written again, in place
+            // (the child hasn't run anything yet, and binds this inode).
+            if resolver != nameserver {
+                fs::write(etc_dir.join("resolv.conf"), resolv_conf(spec, net.upstream_dns, resolver))
+                    .map_err(|e| kill_child(io::Error::new(e.kind(), format!("dns: resolv.conf: {e}"))))?;
             }
             // `--dns`: names the network does not know go to these instead.
             let servers: Vec<[u8; 4]> = net_opts::values(spec.net.opts, net_opts::NAMESERVER).filter_map(net::parse_ip).collect();
@@ -716,6 +802,8 @@ pub fn spawn(spec: &RunSpec<'_>, paths: &Paths, net: NetCtx<'_>) -> io::Result<P
         teardown: Some(Teardown { base, cgroup, remove }),
         starting: starting.get().then_some(root_ready),
         ended_before_ready: None,
+        filling: filling.get(),
+        cancelled: false,
     })
 }
 
@@ -769,7 +857,7 @@ pub(super) fn mount_rootfs(paths: &Paths, id: &str, image_layers: &[&str]) -> io
     }
     // Lower dirs are relative to the agent's working directory (the layer
     // store), which keeps the option string short enough for many layers.
-    let mut lower = String::with_capacity(image_layers.len() * 65);
+    let mut lower = Vec::with_capacity(image_layers.len());
     let mut seen = Vec::new();
     for digest in image_layers.iter() {
         if !layers::present(&paths.layers, digest) {
@@ -783,13 +871,18 @@ pub(super) fn mount_rootfs(paths: &Paths, id: &str, image_layers: &[&str]) -> io
             continue;
         }
         seen.push(digest);
-        if !lower.is_empty() {
-            lower.push(':');
-        }
-        lower.push_str(layers::hex(digest)?);
+        lower.push(layers::hex(digest)?.to_owned());
     }
-    let opts = format!("lowerdir={lower},upperdir={},workdir={},{}", upper.display(), work.display(), overlay_features(plain_upper(&base)?));
-    sys::mount(c"overlay", &sys::cstr(&rootfs)?, c"overlay", 0, Some(&CString::new(opts)?))?;
+    // An image with no layers (FROM scratch and only settings): an empty
+    // folder stands in, as an overlay needs a lower; the container then
+    // fails at exec, as Docker's does, instead of failing to mount.
+    if lower.is_empty() {
+        let empty = base.join("empty");
+        fs::create_dir_all(&empty)?;
+        lower.push(empty.to_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "container folder is not UTF-8"))?.to_owned());
+    }
+    let rest = format!(",upperdir={},workdir={},{}", upper.display(), work.display(), overlay_features(plain_upper(&base)?));
+    sys::mount_overlay(&rootfs, &lower, &rest, 0)?;
     Ok(rootfs)
 }
 
@@ -878,6 +971,8 @@ pub fn exec(spec: &ExecSpec<'_>, target_pid: libc::pid_t, paths: &Paths, profile
         teardown: None,
         starting: None,
         ended_before_ready: None,
+        filling: false,
+        cancelled: false,
     })
 }
 
@@ -1108,6 +1203,7 @@ fn prepare(argv: StrList<'_>, env: StrList<'_>, cwd: &str, user: &str, hostname:
         profile: Vec::new(),
         no_new_privs: flags & run_flags::NO_NEW_PRIVS != 0,
         readonly_rootfs: flags & run_flags::READONLY_ROOTFS != 0,
+        nodev_root: false,
         shm_size: 64 << 20,
         init: flags & run_flags::INIT != 0,
         host: HostApplied::default(),
@@ -1182,32 +1278,68 @@ fn write_etc_files(spec: &RunSpec<'_>, base: &std::path::Path, upstream: &[[u8; 
 /// at 127.0.0.11 is the only nameserver, as with Docker (it forwards to
 /// `--dns` servers); elsewhere `--dns` servers replace the VM's.
 /// `--dns-search` and `--dns-option` apply either way.
-/// Whether the container's DNS goes to the agent's resolver (127.0.0.11):
+/// Whether the container's DNS goes to the agent's resolver (see embedded_address):
 /// on a user network, as Docker's embedded DNS; and on the default bridge
 /// when the host's resolver is one of its own addresses (net::local_resolver)
 /// or, in the VM (`relay`), so that lookups the Mac's gateway resolver fails
 /// can go through the host (dns.rs), unless the container names its own
 /// servers (`--dns`).
 fn embedded_dns(spec: &RunSpec<'_>, upstream: &[[u8; 4]], relay: bool) -> bool {
+    embedded_dns_if(spec, || relay || net::local_resolver(upstream))
+}
+
+/// `embedded_dns`, with `through_agent` saying whether the default bridge's
+/// lookups go through the agent (asked only when it matters).
+fn embedded_dns_if(spec: &RunSpec<'_>, through_agent: impl FnOnce() -> bool) -> bool {
     if spec.flags & run_flags::DNS_GATEWAY != 0 {
         return true;
     }
     let bridged = !spec.net.bridge.is_empty()
         && spec.flags & (run_flags::NET_HOST | run_flags::NET_NONE) == 0
         && net_opts::values(spec.net.opts, net_opts::NETNS).next().is_none();
-    bridged && net_opts::values(spec.net.opts, net_opts::NAMESERVER).next().is_none() && (relay || net::local_resolver(upstream))
+    bridged && net_opts::values(spec.net.opts, net_opts::NAMESERVER).next().is_none() && through_agent()
 }
 
 /// The address a container that uses the agent's resolver names in its
 /// resolv.conf: 127.0.0.11 on a user network, as Docker's embedded DNS;
-/// on the default bridge in the VM, the bridge's gateway, where the agent
-/// answers too. Not a loopback address there, because what runs builds
-/// in a container takes loopback nameservers out of the copy it gives
-/// each step and puts Google's in their place (BuildKit does, for every
-/// step that isn't `--network=host`): those steps would ask 8.8.8.8, not
-/// the Mac's resolver, and VPN and company names would stop resolving.
-fn embedded_address(spec: &RunSpec<'_>, relay: bool) -> [u8; 4] {
-    if relay && spec.flags & run_flags::DNS_GATEWAY == 0 && spec.net.gateway != [0; 4] { spec.net.gateway } else { super::dns::EMBEDDED }
+/// on the default bridge (in the VM, and on a host whose resolver is one
+/// of its own addresses, as WSL's 10.255.255.254 on `lo`), the bridge's
+/// gateway, where the agent answers too. Not a loopback address there,
+/// because what runs builds in a container takes loopback nameservers out
+/// of the copy it gives each step and puts Google's in their place
+/// (BuildKit does, for every step that isn't `--network=host`): those
+/// steps would ask 8.8.8.8, not the host's resolver, and VPN and company
+/// names would stop resolving. Nor does the agent then hold anything in
+/// the container's namespace.
+fn embedded_address(spec: &RunSpec<'_>) -> [u8; 4] {
+    if spec.flags & run_flags::DNS_GATEWAY == 0 && spec.net.gateway != [0; 4] { spec.net.gateway } else { super::dns::EMBEDDED }
+}
+
+/// Where a container that uses the agent's resolver sends its lookups,
+/// once the agent has tried to listen for it: `wanted` (embedded_address),
+/// unless that listener could not be made. `gateway` is the bridge's
+/// gateway when the agent listens there; `serve_in` makes the listener at
+/// 127.0.0.11 in the container's own network, and is called only when
+/// that is the one needed.
+///
+/// - The default bridge names the gateway. When the gateway refused (WSL 2
+///   under Consomme, #477), 127.0.0.11 in the container instead, as that
+///   bridge had on such a host before the gateway was named (#624): binds
+///   in a container's own namespace are not refused there.
+/// - A user network names 127.0.0.11, and a refused gateway changes
+///   nothing: its names answer there.
+/// - When 127.0.0.11 can't be made either: the gateway if the agent listens
+///   there, else None, the host's resolvers as on a plain Linux host, so
+///   the container still starts (names of other containers then don't
+///   resolve). Also the error, for the log.
+fn settle_resolver(wanted: [u8; 4], gateway: Option<[u8; 4]>, serve_in: impl FnOnce() -> io::Result<()>) -> (Option<[u8; 4]>, Option<io::Error>) {
+    if wanted != super::dns::EMBEDDED && gateway == Some(wanted) {
+        return (Some(wanted), None);
+    }
+    match serve_in() {
+        Ok(()) => (Some(super::dns::EMBEDDED), None),
+        Err(e) => (gateway, Some(e)),
+    }
 }
 
 fn resolv_conf(spec: &RunSpec<'_>, upstream: &[[u8; 4]], embedded: Option<[u8; 4]>) -> String {
@@ -1669,6 +1801,7 @@ fn child_fds(p: &Prepared, io: &ChildStdio) -> Vec<RawFd> {
         profile: _,
         no_new_privs: _,
         readonly_rootfs: _,
+        nodev_root: _,
         shm_size: _,
         init: _,
         // Paths, numbers and names only.
@@ -1691,14 +1824,18 @@ fn child_fds(p: &Prepared, io: &ChildStdio) -> Vec<RawFd> {
 
 /// Runs in the cloned child: PID 1 of the container, in its own namespaces
 /// and cgroup. Never returns: it execs or exits 127 with a message.
-fn container_child(p: &Prepared, rootfs: &CStr, io: &ChildStdio) -> ! {
+fn container_child(p: &Prepared, rootfs: &CStr, io: &ChildStdio, close_first: &[(libc::c_uint, libc::c_uint)]) -> ! {
     // First of all: the clone gave this child a copy of every descriptor
     // the agent had open, and filling a new volume can take seconds while
     // the agent goes on. Held here, a network's DNS socket keeps its
     // address bound after the network is removed (created again, it cannot
     // bind it), and other containers' stdin and relayed connections never
-    // see their end. Only what this child uses is kept.
-    sys::close_now(&sys::close_ranges(&child_fds(p, io)));
+    // see their end; nor does the daemon see the end of its connection to
+    // an agent that is gone, and the agent's lock on the data directory
+    // stays taken, so no agent can start after it. Only what this child
+    // uses is kept, before it does anything else (the ranges were worked
+    // out before the clone): a child that hangs later holds none of them.
+    sys::close_now(close_first);
     let err = report_fd(io);
     let fail = |what: &str, e: io::Error| -> ! { child_fail(err, what, e) };
 
@@ -1721,6 +1858,15 @@ fn container_child(p: &Prepared, rootfs: &CStr, io: &ChildStdio) -> ! {
     // The image's tree without the mounts made on it, for filling new
     // volumes; closed (and so unmounted) once they are all in place.
     let image = if p.mounts.iter().any(|m| m.copy_up) { image_tree() } else { None };
+    if p.mounts.iter().any(|m| m.copy_up)
+        && let Some(done) = &p.root_ready
+    {
+        // SAFETY: one byte to a pipe we own: a fill may begin now, and from
+        // here on this child is not killed until its root is in place.
+        if unsafe { libc::write(done.as_raw_fd(), [FILLING].as_ptr().cast(), 1) } != 1 {
+            fail("ready", io::Error::last_os_error());
+        }
+    }
     for m in &p.mounts {
         apply_mount(root, image.as_ref().map(|f| f.as_fd()), m).unwrap_or_else(|e| fail(&format!("mount {}", m.target.to_string_lossy()), e));
     }
@@ -1741,9 +1887,9 @@ fn container_child(p: &Prepared, rootfs: &CStr, io: &ChildStdio) -> ! {
     // before it switches user and before the root goes read-only, so both
     // `-u 1000 -w /missing` and `--read-only -w /missing` start (#370).
     make_workdir(root, &p.cwd);
-    if p.readonly_rootfs {
+    if let Some(flags) = root_remount_flags(p.readonly_rootfs, p.nodev_root) {
         // Only the root itself: volumes, tmpfs and /dev stay as they are.
-        sys::mount(c"none", c"/", c"none", libc::MS_REMOUNT | libc::MS_BIND | libc::MS_RDONLY, None).unwrap_or_else(|e| fail("read-only root", e));
+        sys::mount(c"none", c"/", c"none", flags, None).unwrap_or_else(|e| fail(if p.readonly_rootfs { "read-only root" } else { "nodev root" }, e));
     }
     if let Some(h) = &p.hostname {
         sys::sethostname(h).unwrap_or_else(|e| fail("hostname", e));
@@ -1757,7 +1903,7 @@ fn container_child(p: &Prepared, rootfs: &CStr, io: &ChildStdio) -> ! {
     if let Some(done) = &p.root_ready {
         // SAFETY: one byte to a pipe we own: root, mounts and namespaces
         // are in place, so an exec can join them now.
-        if unsafe { libc::write(done.as_raw_fd(), b"r".as_ptr().cast(), 1) } != 1 {
+        if unsafe { libc::write(done.as_raw_fd(), [READY].as_ptr().cast(), 1) } != 1 {
             fail("ready", io::Error::last_os_error());
         }
     }
@@ -1956,6 +2102,26 @@ fn finish_child(p: &Prepared, io: &ChildStdio, console: bool) -> ! {
     sys::exec_fail(2, &exe, io::Error::last_os_error(), false)
 }
 
+/// How the container's root is remounted once it is `/`, if at all:
+/// read-only for `--read-only`, and `nodev` when the device filter could not
+/// be attached. Without the filter, a block or character device node that an
+/// image's layers bring would open (CAP_MKNOD is dropped, but the node is
+/// already there), so the root's nodes are made unusable. The container's
+/// /dev is its own tmpfs and keeps its nodes.
+fn root_remount_flags(readonly: bool, nodev: bool) -> Option<libc::c_ulong> {
+    if !readonly && !nodev {
+        return None;
+    }
+    let mut flags = libc::MS_REMOUNT | libc::MS_BIND;
+    if readonly {
+        flags |= libc::MS_RDONLY;
+    }
+    if nodev {
+        flags |= libc::MS_NODEV;
+    }
+    Some(flags)
+}
+
 /// The container's /proc, /sys, /dev (with the standard device nodes),
 /// /dev/pts, /dev/shm, /dev/mqueue and a read-only cgroup view. Relative
 /// paths: the current directory is the container root. A privileged
@@ -2002,13 +2168,8 @@ fn mount_container_filesystems(privileged: bool, shm_size: u64) -> io::Result<()
         // SAFETY: valid NUL-terminated path.
         unsafe { libc::chmod(name.as_ptr(), 0o666) };
     }
-    for (target, link) in [
-        (c"/proc/self/fd", c"dev/fd"),
-        (c"/proc/self/fd/0", c"dev/stdin"),
-        (c"/proc/self/fd/1", c"dev/stdout"),
-        (c"/proc/self/fd/2", c"dev/stderr"),
-        (c"pts/ptmx", c"dev/ptmx"),
-    ] {
+    // The host's /proc still, before the pivot.
+    for (target, link) in dev_links(Path::new("/proc/kcore").exists()) {
         // SAFETY: valid NUL-terminated strings; the host copy may have some.
         unsafe {
             libc::unlink(link.as_ptr());
@@ -2028,6 +2189,22 @@ fn mount_container_filesystems(privileged: bool, shm_size: u64) -> io::Result<()
         harden_proc()?;
     }
     Ok(())
+}
+
+/// The links runc makes in a container's /dev (relative to its root):
+/// /dev/core only when the host has /proc/kcore, as runc checks.
+fn dev_links(kcore: bool) -> Vec<(&'static CStr, &'static CStr)> {
+    let mut links = vec![
+        (c"/proc/self/fd", c"dev/fd"),
+        (c"/proc/self/fd/0", c"dev/stdin"),
+        (c"/proc/self/fd/1", c"dev/stdout"),
+        (c"/proc/self/fd/2", c"dev/stderr"),
+        (c"pts/ptmx", c"dev/ptmx"),
+    ];
+    if kcore {
+        links.push((c"/proc/kcore", c"dev/core"));
+    }
+    links
 }
 
 /// Recreates the host's character and block devices under `to` (the
@@ -2181,7 +2358,9 @@ fn resolve_user(user: &str) -> io::Result<(libc::uid_t, libc::gid_t)> {
     };
     let not_found = |what: &str| io::Error::new(io::ErrorKind::NotFound, format!("unknown {what} {user}"));
     let (uid, primary_gid) = match u.parse::<u32>() {
-        Ok(id) => (id, lookup_gid_for_uid(id).unwrap_or(id)),
+        // A uid /etc/passwd does not list runs with group 0, as Docker and
+        // BuildKit give it (moby/sys/user's default gid).
+        Ok(id) => (id, lookup_gid_for_uid(id).unwrap_or(0)),
         Err(_) => lookup("/etc/passwd", u).ok_or_else(|| not_found("user"))?,
     };
     let gid = match g {
@@ -2356,10 +2535,12 @@ mod tests {
         use std::os::fd::AsRawFd;
         let (r, w) = super::sys::pipe().unwrap();
         let mut p = Process::starting_for_test("c1", 100, r, None);
+        // SAFETY: one byte to a pipe we own: a fill begins.
+        unsafe { libc::write(w.as_raw_fd(), [super::FILLING].as_ptr().cast(), 1) };
         let writer = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(100));
             // SAFETY: one byte to a pipe we own.
-            unsafe { libc::write(w.as_raw_fd(), b"r".as_ptr().cast(), 1) };
+            unsafe { libc::write(w.as_raw_fd(), [super::READY].as_ptr().cast(), 1) };
             w
         });
         let t = std::time::Instant::now();
@@ -2369,6 +2550,8 @@ mod tests {
         // Ended while waited for.
         let (r, w) = super::sys::pipe().unwrap();
         let mut p = Process::starting_for_test("c2", 101, r, None);
+        // SAFETY: as above.
+        unsafe { libc::write(w.as_raw_fd(), [super::FILLING].as_ptr().cast(), 1) };
         let closer = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(50));
             drop(w);
@@ -2377,20 +2560,79 @@ mod tests {
         closer.join().unwrap();
     }
 
+    /// A child that has not said it began a fill is not waited for: one
+    /// stuck before its root is in place (it never says anything) held up
+    /// the agent's loop for good when it was killed or stopped.
+    #[test]
+    fn a_child_not_filling_is_not_waited_for() {
+        use super::{Process, Root};
+        let (r, w) = super::sys::pipe().unwrap();
+        let mut p = Process::starting_for_test("c1", 100, r, None);
+        let t = std::time::Instant::now();
+        assert_eq!(p.wait_root(), Root::Starting);
+        assert!(t.elapsed() < std::time::Duration::from_secs(1), "waited {:?}", t.elapsed());
+        drop(w);
+    }
+
+    /// `CancelStart`: a child still making its root is killed at once; one
+    /// filling a volume is left to finish, and killed once its root is in
+    /// place (`take_cancel`).
+    #[test]
+    fn a_cancelled_start_kills_a_child_not_filling_and_waits_for_a_fill() {
+        use super::{Process, Root};
+        use std::os::fd::AsRawFd;
+        // A real child that never says anything, as one stuck before its
+        // root is in place. It only waits: nothing to allocate after fork.
+        let (r, w) = super::sys::pipe().unwrap();
+        // SAFETY: the child only pauses until it is killed.
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            loop {
+                // SAFETY: plain pause in the child.
+                unsafe { libc::pause() };
+            }
+        }
+        assert!(pid > 0);
+        let mut p = Process::starting_for_test("c1", pid, r, None);
+        p.cancel();
+        let mut status = 0;
+        // SAFETY: reaping the child forked above.
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(libc::WIFSIGNALED(status) && libc::WTERMSIG(status) == libc::SIGKILL, "status {status:#x}");
+        assert!(!p.take_cancel());
+        drop(w);
+
+        // Filling: marked, not killed (the pid is a stand-in); the caller
+        // kills it once its root is in place.
+        let (r, w) = super::sys::pipe().unwrap();
+        let mut p = Process::starting_for_test("c2", i32::MAX, r, None);
+        // SAFETY: one byte to a pipe we own.
+        unsafe { libc::write(w.as_raw_fd(), [super::FILLING].as_ptr().cast(), 1) };
+        p.cancel();
+        assert_eq!(p.root(), Root::Starting);
+        assert!(!p.take_cancel(), "not before the fill is done");
+        // SAFETY: as above.
+        unsafe { libc::write(w.as_raw_fd(), [super::READY].as_ptr().cast(), 1) };
+        assert_eq!(p.root(), Root::Ready);
+        assert!(p.take_cancel(), "killed once its root is in place");
+        assert!(!p.take_cancel(), "once");
+        drop(w);
+    }
+
     #[test]
     fn a_start_waits_for_the_root_only_briefly() {
         use std::os::fd::AsRawFd;
         let (r, w) = super::sys::pipe().unwrap();
         let t = std::time::Instant::now();
-        assert_eq!(super::root_word(r.as_raw_fd(), Some(super::ROOT_READY_WAIT)).unwrap(), super::RootWord::NotYet);
+        assert_eq!(super::root_word(r.as_raw_fd(), Some(super::ROOT_READY_WAIT), &mut false).unwrap(), super::RootWord::NotYet);
         let waited = t.elapsed();
         assert!(waited >= super::ROOT_READY_WAIT && waited < super::ROOT_READY_WAIT * 10, "waited {waited:?}");
         // SAFETY: one byte to a pipe we own.
         assert_eq!(unsafe { libc::write(w.as_raw_fd(), b"r".as_ptr().cast(), 1) }, 1);
-        assert_eq!(super::root_word(r.as_raw_fd(), Some(super::ROOT_READY_WAIT)).unwrap(), super::RootWord::Ready);
+        assert_eq!(super::root_word(r.as_raw_fd(), Some(super::ROOT_READY_WAIT), &mut false).unwrap(), super::RootWord::Ready);
         drop(w);
         wait_all_writers_gone(r.as_raw_fd());
-        assert_eq!(super::root_word(r.as_raw_fd(), Some(super::ROOT_READY_WAIT)).unwrap(), super::RootWord::Ended);
+        assert_eq!(super::root_word(r.as_raw_fd(), Some(super::ROOT_READY_WAIT), &mut false).unwrap(), super::RootWord::Ended);
     }
 
     use kiri_proto::{Limits, Msg, Net, decode, encode_run, run_flags};
@@ -2941,11 +3183,92 @@ mod tests {
         spec_with(run_flags::NET_HOST, &[], &|s| assert!(!super::embedded_dns(s, &gateway, true), "host networking keeps the VM's resolv.conf"));
         // Named by the bridge's gateway, not 127.0.0.11: builders keep it
         // for their steps rather than swapping in 8.8.8.8.
-        spec_with(0, &[], &|s| assert_eq!(super::embedded_address(s, true), [172, 17, 0, 1]));
-        spec_with(0, &[], &|s| assert_eq!(super::resolv_conf(s, &gateway, Some(super::embedded_address(s, true))), "nameserver 172.17.0.1\n"));
+        spec_with(0, &[], &|s| assert_eq!(super::embedded_address(s), [172, 17, 0, 1]));
+        spec_with(0, &[], &|s| assert_eq!(super::resolv_conf(s, &gateway, Some(super::embedded_address(s))), "nameserver 172.17.0.1\n"));
         // A user network keeps Docker's 127.0.0.11, as does a Linux host.
-        spec_with(run_flags::DNS_GATEWAY, &[], &|s| assert_eq!(super::embedded_address(s, true), super::super::dns::EMBEDDED));
-        spec_with(0, &[], &|s| assert_eq!(super::embedded_address(s, false), super::super::dns::EMBEDDED));
+        spec_with(run_flags::DNS_GATEWAY, &[], &|s| assert_eq!(super::embedded_address(s), super::super::dns::EMBEDDED));
+    }
+
+    /// WSL 2: the host's resolver is 10.255.255.254, an address on `lo`.
+    /// The default bridge's lookups go through the agent, which the
+    /// container finds at the bridge's gateway, as in the VM: a loopback
+    /// nameserver (127.0.0.11) was swapped for 8.8.8.8 in build steps, and
+    /// its socket held port 53 in the container, so a DNS server there
+    /// could not start.
+    #[test]
+    fn a_resolver_on_the_hosts_loopback_interface_is_named_by_the_gateway() {
+        let wsl = [[10, 255, 255, 254]];
+        assert!(super::net::local_resolver_among(&wsl, &[[192, 168, 5, 15], [10, 255, 255, 254]]), "an address of this machine's");
+        assert!(!super::net::local_resolver_among(&[[192, 168, 5, 2]], &[[192, 168, 5, 15], [10, 255, 255, 254]]), "a LAN resolver is asked directly");
+        let mut buf = Vec::new();
+        let net = Net { bridge: "kiri0", ip: [172, 17, 0, 2], prefix: 16, gateway: [172, 17, 0, 1], extra_hosts: &[], dns_names: &[], opts: &[] };
+        encode_run(&mut buf, "c1", &[], &["sh"], &[], "/", "", "c1", 0, net, &[], &Limits::default(), 0, &[] as &[&str], &[]);
+        let Ok(Msg::Run(spec)) = decode(&buf) else { panic!() };
+        assert!(super::embedded_dns_if(&spec, || true));
+        assert_eq!(super::embedded_address(&spec), [172, 17, 0, 1]);
+        assert_eq!(super::resolv_conf(&spec, &wsl, Some(super::embedded_address(&spec))), "nameserver 172.17.0.1\n");
+        assert!(!super::embedded_dns_if(&spec, || false), "a resolver elsewhere is named itself");
+        assert_eq!(super::resolv_conf(&spec, &[[192, 168, 5, 2]], None), "nameserver 192.168.5.2\n");
+    }
+
+    /// #477: a WSL 2 host under Consomme answers EINVAL to a fixed-port bind
+    /// on a bridge's gateway. The start goes on: the default bridge falls
+    /// back to 127.0.0.11 in the container (what it named on such a host
+    /// before #624), a user network keeps 127.0.0.11, and only with no
+    /// listener at all does a container ask the host's resolvers.
+    #[test]
+    fn a_gateway_that_refuses_the_dns_listener_does_not_stop_the_start() {
+        use super::super::dns::{Dns, EMBEDDED};
+        let gw = [172, 17, 0, 1];
+        let refused = || Err::<(), _>(std::io::Error::from_raw_os_error(libc::EINVAL));
+        let wsl = [[10, 255, 255, 254]];
+        // The real listener, at a gateway no interface has: the bind fails
+        // (EADDRNOTAVAIL, before any port check, so also without root),
+        // as #477's EINVAL does, and the start does not.
+        let mut dns = Dns::default();
+        let doc = [192, 0, 2, 1];
+        assert!(!dns.serve_or_warn("kiri0", doc));
+        assert!(!dns.serves_at(doc));
+        assert!(!dns.serve_or_warn("kiri0", doc), "asked again by the next container; warned once");
+        let gateway = dns.serves_at(doc).then_some(doc);
+
+        let mut buf = Vec::new();
+        let net = Net { bridge: "kiri0", ip: [172, 17, 0, 2], prefix: 16, gateway: gw, extra_hosts: &[], dns_names: &[], opts: &[] };
+        encode_run(&mut buf, "c1", &[], &["sh"], &[], "/", "", "c1", 0, net, &[], &Limits::default(), 0, &[] as &[&str], &[]);
+        let Ok(Msg::Run(bridge)) = decode(&buf) else { panic!() };
+        // Default bridge, WSL shape: wanted the gateway; it refused.
+        let wanted = super::embedded_address(&bridge);
+        assert_eq!(wanted, gw);
+        let mut asked = false;
+        let (at, err) = super::settle_resolver(wanted, gateway, || {
+            asked = true;
+            Ok(())
+        });
+        assert!(asked && err.is_none());
+        assert_eq!(at, Some(EMBEDDED), "the resolver in the container, as before #624");
+        assert_eq!(super::resolv_conf(&bridge, &wsl, at), "nameserver 127.0.0.11\n");
+        // Where the gateway listens: unchanged, and nothing in the container.
+        let (at, err) = super::settle_resolver(gw, Some(gw), || panic!("no listener in the container"));
+        assert_eq!((at, err.is_none()), (Some(gw), true));
+
+        // A user network: 127.0.0.11, refused gateway or not.
+        let mut buf = Vec::new();
+        let net = Net { bridge: "kiri1", ip: [172, 18, 0, 2], prefix: 16, gateway: [172, 18, 0, 1], extra_hosts: &[], dns_names: &[], opts: &[] };
+        encode_run(&mut buf, "c2", &[], &["sh"], &[], "/", "", "c2", run_flags::DNS_GATEWAY, net, &[], &Limits::default(), 0, &[] as &[&str], &[]);
+        let Ok(Msg::Run(user)) = decode(&buf) else { panic!() };
+        let wanted = super::embedded_address(&user);
+        assert_eq!(wanted, EMBEDDED);
+        assert_eq!(super::settle_resolver(wanted, None, || Ok(())).0, Some(EMBEDDED));
+        assert_eq!(super::settle_resolver(wanted, Some([172, 18, 0, 1]), || Ok(())).0, Some(EMBEDDED));
+        // No listener in the container either: the gateway's if there is
+        // one, else the host's resolvers, and the container still starts.
+        let (at, err) = super::settle_resolver(wanted, Some([172, 18, 0, 1]), refused);
+        assert_eq!((at, err.map(|e| e.raw_os_error())), (Some([172, 18, 0, 1]), Some(Some(libc::EINVAL))));
+        let (at, err) = super::settle_resolver(wanted, None, refused);
+        assert_eq!((at, err.is_some()), (None, true));
+        assert_eq!(super::resolv_conf(&user, &[[192, 0, 2, 53]], at), "nameserver 192.0.2.53\n");
+        // The same on the default bridge with both refused.
+        assert_eq!(super::settle_resolver(gw, None, refused).0, None);
     }
 
     #[test]
@@ -2954,6 +3277,25 @@ mod tests {
         assert_eq!(super::net::mac_for([172, 17, 0, 2]), [2, 0x42, 0xac, 0x11, 0, 2]);
         assert_eq!(super::net::parse_mac("02:42:ac:11:00"), None);
         assert_eq!(super::net::parse_mac("02:42:ac:11:00:02:03"), None);
+    }
+
+    #[test]
+    fn a_numeric_user_with_no_passwd_entry_runs_with_group_0() {
+        // As Docker gives it (moby/sys/user's default gid): `docker run -u
+        // 48213` is uid=48213 gid=0, not gid=48213.
+        if super::lookup_gid_for_uid(48_213).is_none() {
+            assert_eq!(super::resolve_user("48213").unwrap(), (48_213, 0));
+        }
+        assert_eq!(super::resolve_user("48213:7").unwrap(), (48_213, 7), "a group given is kept");
+    }
+
+    /// runc's /dev links, /dev/core with them when the host has /proc/kcore
+    /// (Docker's containers have it).
+    #[test]
+    fn dev_has_runcs_links_and_core_when_the_host_has_kcore() {
+        let names = |kcore| super::dev_links(kcore).iter().map(|(t, l)| format!("{} -> {}", l.to_str().unwrap(), t.to_str().unwrap())).collect::<Vec<_>>();
+        assert_eq!(names(false), ["dev/fd -> /proc/self/fd", "dev/stdin -> /proc/self/fd/0", "dev/stdout -> /proc/self/fd/1", "dev/stderr -> /proc/self/fd/2", "dev/ptmx -> pts/ptmx"]);
+        assert_eq!(names(true).last().unwrap(), "dev/core -> /proc/kcore");
     }
 
     /// A mount line is three fields, or seven with a volume's driver options.
@@ -2983,5 +3325,20 @@ mod tests {
         assert!(mounts[0].ro);
         assert_eq!(mounts[0].target.to_bytes(), b"scratch");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Without the device filter a device node an image's layers bring
+    /// (now unpacked as a device) would open, so the root is remounted
+    /// nodev; with the filter, it is left alone unless it is read-only.
+    #[test]
+    fn the_root_is_nodev_when_the_device_filter_is_missing() {
+        assert_eq!(super::root_remount_flags(false, false), None);
+        let nodev = super::root_remount_flags(false, true).expect("remounted");
+        assert_eq!(nodev & (libc::MS_REMOUNT | libc::MS_BIND | libc::MS_NODEV), libc::MS_REMOUNT | libc::MS_BIND | libc::MS_NODEV);
+        assert_eq!(nodev & libc::MS_RDONLY, 0, "not read-only");
+        let ro = super::root_remount_flags(true, false).expect("remounted");
+        assert_eq!((ro & libc::MS_RDONLY, ro & libc::MS_NODEV), (libc::MS_RDONLY, 0));
+        let both = super::root_remount_flags(true, true).expect("remounted");
+        assert_eq!(both & (libc::MS_RDONLY | libc::MS_NODEV), libc::MS_RDONLY | libc::MS_NODEV);
     }
 }

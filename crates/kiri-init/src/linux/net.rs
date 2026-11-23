@@ -6,6 +6,7 @@ use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::time::{Duration, Instant};
 
+use super::firewall;
 use super::netlink::{self, Netlink};
 use super::sys;
 
@@ -125,8 +126,64 @@ pub fn host_uplink() -> io::Result<()> {
     // let containers reach the real machine's 127.0.0.1 services. host.docker
     // .internal maps to the bridge gateway instead (write_etc_files).
     let _ = HOST_UPLINK_INDEX.set(index);
+    let uplink6 = std::fs::read_to_string("/proc/net/ipv6_route").ok().and_then(|r| default_route6_iface(&r));
+    firewall::set_uplinks(iface.clone(), uplink6.unwrap_or(iface));
+    through_firewall(firewall::Why::Start);
     install_nat(Nat { uplink: index, redirect: false, dnat: Vec::new(), gateway: [0; 4] })
 }
+
+/// The interface of the IPv6 default route in /proc/net/ipv6_route (dest
+/// `::/0`), but not `lo`, which holds the unreachable default.
+fn default_route6_iface(routes: &str) -> Option<String> {
+    routes.lines().find_map(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        (f.len() == 10 && f[0].bytes().all(|b| b == b'0') && f[1] == "00" && f[9] != "lo").then(|| f[9].to_owned())
+    })
+}
+
+/// Linux host: a socket that hears of every nf_tables change, so a firewall
+/// started, reloaded or flushed after the engine (Docker's, ufw, firewalld,
+/// nftables.service) is brought in line at once. None if the kernel refuses it.
+pub fn firewall_events() -> Option<OwnedFd> {
+    netlink::nftables_events().inspect_err(|e| eprintln!("kiri-init: not watching the host's firewall: {e}")).ok()
+}
+
+/// `firewall_events` heard of a change: reads it and brings the host's
+/// firewall, and Kiri's own tables, in line.
+pub fn firewall_changed(events: &OwnedFd) {
+    netlink::drain(events);
+    through_firewall(firewall::Why::Event);
+}
+
+/// `firewall::sync`, with Kiri's own tables built again as last built when
+/// it asks: a flush of the whole ruleset (`nft flush ruleset`, as
+/// nftables.service runs it) took them, and containers had no masquerade,
+/// no published ports and no forward filter keeping the LAN off their
+/// unpublished ports; or the forward chain's firewalld guard changed.
+fn through_firewall(why: firewall::Why) {
+    firewall::sync(why, |[v4, v6]| {
+        // Built before (`refresh_nat` takes the lock itself).
+        let built = NAT.lock().unwrap_or_else(|e| e.into_inner()).is_some();
+        if v4
+            && built
+            && let Err(e) = refresh_nat()
+        {
+            eprintln!("kiri-init: NAT: {e}");
+        }
+        let nat6 = NAT6.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if v6
+            && !nat6.0.is_empty()
+            && let Err(e) = netlink::install_nat6(&nat6.0, &nat6.1)
+        {
+            eprintln!("kiri-init: IPv6 NAT: {e}");
+        }
+    });
+}
+
+/// What Kiri's IPv6 table was last built from (`install_nat6`), to build it
+/// again after a flush.
+#[allow(clippy::type_complexity)]
+static NAT6: std::sync::Mutex<(Vec<([u8; 16], u8)>, Vec<String>)> = std::sync::Mutex::new((Vec::new(), Vec::new()));
 
 /// What Kiri's IPv4 table was last built from, so it can be rebuilt when a
 /// bridge comes or goes (the forward filter has a rule per bridge).
@@ -187,13 +244,15 @@ fn refresh_nat() -> io::Result<()> {
 /// DNS forwarder is (10.255.255.254, on `lo`). Containers on a bridge can't
 /// count on such a resolver: under WSL a third of the queries from a
 /// container's namespace go unanswered, while the host's own are fine. Their
-/// queries then go through the agent's resolver (127.0.0.11), which asks it
-/// from the host's side.
+/// queries then go through the agent's resolver, at the bridge's gateway
+/// (container.rs embedded_address), which asks it from the host's side.
 pub fn local_resolver(servers: &[[u8; 4]]) -> bool {
-    !servers.is_empty() && {
-        let local = local_addrs();
-        servers.iter().any(|s| local.contains(s))
-    }
+    !servers.is_empty() && local_resolver_among(servers, &local_addrs())
+}
+
+/// `local_resolver`, given this machine's addresses.
+pub fn local_resolver_among(servers: &[[u8; 4]], local: &[[u8; 4]]) -> bool {
+    servers.iter().any(|s| local.contains(s))
 }
 
 /// This machine's IPv4 addresses but loopback, what `fib daddr type local`
@@ -515,6 +574,9 @@ impl Bridges {
             // DNATed from 127.0.0.1, so the bridge needs no `route_localnet`;
             // an older engine set it on bridges that may still exist.
             let _ = sys::write_file(&format!("/proc/sys/net/ipv4/conf/{name}/route_localnet"), "0");
+            // A firewall started after the engine, in iptables-legacy
+            // (which makes no nf_tables event) too.
+            through_firewall(firewall::Why::Bridge);
         }
         // The forward filter's rule for this bridge.
         refresh_nat()?;
@@ -558,6 +620,9 @@ impl Bridges {
             ipv6_forwarding(true)?;
         }
         let r = netlink::install_nat6(&subnets, &names);
+        if r.is_ok() {
+            *NAT6.lock().unwrap_or_else(|e| e.into_inner()) = (subnets.clone(), names.clone());
+        }
         if subnets.is_empty() {
             let _ = ipv6_forwarding(false);
         }
@@ -627,6 +692,7 @@ pub fn remove_host_network() {
     }
     let _ = netlink::install_nat6(&[], &[]);
     let _ = ipv6_forwarding(false);
+    through_firewall(firewall::Why::Stop);
 }
 
 /// Gives a freshly cloned container its network: a veth pair whose peer
@@ -760,5 +826,17 @@ mod tests {
         kiri_proto::encode_net_attach::<&str>(&mut buf, "c1", "eth1", "kiri2", [10, 5, 0, 2], 24, [10, 5, 0, 1], &[], &[]);
         let Ok(kiri_proto::Msg::NetAttach { net, .. }) = kiri_proto::decode(&buf) else { panic!() };
         assert_eq!(Ip6::from_opts(net.opts), None);
+    }
+
+    #[test]
+    fn the_ipv6_uplink_is_the_default_routes_interface() {
+        let routes = "\
+fd00000000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001     eth0
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000002 00000000 00000003    wlan0
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 ffffffff 00000001 00000000 00200200       lo
+";
+        assert_eq!(default_route6_iface(routes).as_deref(), Some("wlan0"));
+        // Only the unreachable default on lo: no IPv6 uplink.
+        assert_eq!(default_route6_iface(&routes.lines().skip(2).collect::<Vec<_>>().join("\n")), None);
     }
 }

@@ -46,6 +46,20 @@ pub struct Vm {
     events: Receiver<Event>,
     closing: Arc<AtomicBool>,
     retired: bool,
+    stopped: Arc<Mutex<OnStop>>,
+}
+
+/// See `Vm::on_stop`.
+#[derive(Default)]
+struct OnStop {
+    stopped: bool,
+    hook: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl std::fmt::Debug for OnStop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OnStop").field("stopped", &self.stopped).field("hook", &self.hook.is_some()).finish()
+    }
 }
 
 fn runtime_directory(root: &Path) -> PathBuf {
@@ -65,6 +79,31 @@ pub type Handler = Box<dyn Fn(VsockStream) + Send + Sync>;
 /// Rosetta is a macOS feature.
 pub fn rosetta_installed() -> bool {
     false
+}
+
+/// Watches the agent process: says when it exits, then runs the hook given
+/// to `Vm::on_stop`.
+fn watch(waiter: Arc<Mutex<Child>>, tx: mpsc::Sender<Event>, on_stop: Arc<Mutex<OnStop>>) -> io::Result<()> {
+    std::thread::Builder::new().name("kiri-agent-wait".into()).spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(100));
+        let status = waiter.lock().unwrap_or_else(|e| e.into_inner()).try_wait();
+        let event = match status {
+            Ok(Some(s)) => Event::Stopped((!s.success()).then(|| format!("the agent exited: {s}"))),
+            Ok(None) => continue,
+            Err(e) => Event::Stopped(Some(e.to_string())),
+        };
+        let _ = tx.send(event);
+        let hook = {
+            let mut g = on_stop.lock().unwrap_or_else(|e| e.into_inner());
+            g.stopped = true;
+            g.hook.take()
+        };
+        if let Some(hook) = hook {
+            hook();
+        }
+        return;
+    })?;
+    Ok(())
 }
 
 impl Vm {
@@ -99,27 +138,33 @@ impl Vm {
             cmd.stdout(std::process::Stdio::null());
         }
         let child = Arc::new(Mutex::new(cmd.spawn().map_err(|e| io::Error::new(e.kind(), format!("starting {}: {e}", cfg.initrd.display())))?));
-        let (waiter, tx) = (child.clone(), sender);
-        std::thread::Builder::new().name("kiri-agent-wait".into()).spawn(move || loop {
-            std::thread::sleep(Duration::from_millis(100));
-            let status = waiter.lock().unwrap_or_else(|e| e.into_inner()).try_wait();
-            match status {
-                Ok(Some(s)) => {
-                    let _ = tx.send(Event::Stopped((!s.success()).then(|| format!("the agent exited: {s}"))));
-                    return;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    let _ = tx.send(Event::Stopped(Some(e.to_string())));
-                    return;
-                }
-            }
-        })?;
-        Ok(Vm { dir, child, events, closing: Arc::new(AtomicBool::new(false)), retired: false })
+        let stopped = Arc::new(Mutex::new(OnStop::default()));
+        watch(child.clone(), sender, stopped.clone())?;
+        Ok(Vm { dir, child, events, closing: Arc::new(AtomicBool::new(false)), retired: false, stopped })
+    }
+
+    /// The folder of the agent's sockets, private to root, where it also
+    /// leaves notes for the engine.
+    pub fn agent_dir(&self) -> &Path {
+        &self.dir
     }
 
     pub fn next_event(&self, timeout: Duration) -> Option<Event> {
         self.events.recv_timeout(timeout).ok()
+    }
+
+    /// Runs `hook` once the agent process has exited (at once if it has).
+    /// Its connection can outlive it: a child it started holds a copy until
+    /// it closes it, and one that hung before then kept it open for good,
+    /// so the host never heard the agent was gone.
+    pub fn on_stop(&self, hook: Box<dyn FnOnce() + Send>) {
+        let mut g = self.stopped.lock().unwrap_or_else(|e| e.into_inner());
+        if g.stopped {
+            drop(g);
+            hook();
+        } else {
+            g.hook = Some(hook);
+        }
     }
 
     pub fn force_stop(&self) {
@@ -241,7 +286,7 @@ mod tests {
             let dir = self.0.join(name);
             std::fs::create_dir(&dir).unwrap();
             let (_, events) = mpsc::channel();
-            Vm { dir, child: Arc::new(Mutex::new(child)), events, closing: Arc::new(AtomicBool::new(false)), retired: false }
+            Vm { dir, child: Arc::new(Mutex::new(child)), events, closing: Arc::new(AtomicBool::new(false)), retired: false, stopped: Default::default() }
         }
     }
     impl Drop for Fixture {
@@ -297,6 +342,34 @@ mod tests {
         std::fs::create_dir(&vm.dir).unwrap();
         vm.retire(Duration::ZERO, Duration::from_secs(2)).unwrap();
         assert!(vm.retired);
+    }
+
+    /// The hook runs once the agent process exits, whatever still holds its
+    /// connection; given after the exit, it runs at once.
+    #[test]
+    fn the_stop_hook_runs_when_the_agent_exits() {
+        let child = Arc::new(Mutex::new(Command::new("/bin/sleep").arg("0.3").spawn().unwrap()));
+        let (tx, events) = mpsc::channel();
+        let on_stop = Arc::new(Mutex::new(OnStop::default()));
+        watch(child.clone(), tx, on_stop.clone()).unwrap();
+        let (ran, seen) = mpsc::channel();
+        let vm_like = |hook: Box<dyn FnOnce() + Send>| {
+            let mut g = on_stop.lock().unwrap();
+            assert!(!g.stopped);
+            g.hook = Some(hook);
+        };
+        let t = std::time::Instant::now();
+        let r = ran.clone();
+        vm_like(Box::new(move || r.send(t.elapsed()).unwrap()));
+        let after = seen.recv_timeout(Duration::from_secs(5)).expect("the hook ran");
+        assert!(after >= Duration::from_millis(250), "not before the agent exited: {after:?}");
+        assert!(matches!(events.recv_timeout(Duration::from_secs(1)), Ok(Event::Stopped(None))));
+        // Given after the exit: at once.
+        let fixture = Fixture::new();
+        let mut vm = fixture.vm("late", Command::new("/bin/sh").args(["-c", "true"]).spawn().unwrap());
+        vm.stopped = on_stop;
+        vm.on_stop(Box::new(move || ran.send(Duration::ZERO).unwrap()));
+        assert_eq!(seen.try_recv(), Ok(Duration::ZERO));
     }
 
     #[test]

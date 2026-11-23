@@ -24,6 +24,7 @@ pub fn load(store: &Store, archive: impl Read) -> io::Result<Vec<Image>> {
     let before: Vec<Image> = store.images()?;
     let existed = |d: &str| before.iter().any(|i| i.config_digest == d || i.layers.iter().any(|l| l.digest == d));
     let mut ingested: Vec<String> = Vec::new();
+    let mut pins = Vec::new();
     for entry in tar.entries()? {
         let mut entry = entry?;
         if !entry.header().entry_type().is_file() {
@@ -41,7 +42,10 @@ pub fn load(store: &Store, archive: impl Read) -> io::Result<Vec<Image>> {
         // `<hex>.json`. Files no image names are removed after the manifest.
         let mut w = store.ingest()?;
         io::copy(&mut entry, &mut w)?;
-        let (digest, size) = w.finish()?;
+        // Held until its image is recorded: a removal of another image
+        // that shares the blob must not delete it meanwhile.
+        let (digest, size, pin) = w.finish_pinned()?;
+        pins.push(pin);
         if !existed(&digest) {
             ingested.push(digest.clone());
         }
@@ -78,16 +82,37 @@ pub fn load(store: &Store, archive: impl Read) -> io::Result<Vec<Image>> {
     }
     // Files no image uses (OCI index blobs and the like) do not stay.
     let used = |d: &str| loaded.iter().any(|i| i.config_digest == d || i.layers.iter().any(|l| l.digest == d));
+    // The images are recorded: what they name is safe, and what nothing
+    // names goes unless another image or writer has it now.
+    drop(pins);
     for d in ingested.iter().filter(|d| !used(d)) {
-        if let Ok(path) = store.blob_path(d) {
-            let _ = std::fs::remove_file(path);
-        }
+        store.remove_if_unused(d)?;
     }
     Ok(loaded)
 }
 
+/// Holds every blob `images` name ([`Store::pin`]) and checks each is
+/// there, for a save or a push: an image removed while it is still being
+/// sent (another client's `rmi` of it or of an image sharing its blobs, a
+/// slow reader) must not lose a blob under it. Pinned first, then checked,
+/// so a removal in between is seen. A caller that streams calls this before
+/// it starts, so a missing blob is an error reply, not a cut archive.
+pub fn hold(store: &Store, images: &[Image]) -> io::Result<Vec<crate::store::Pin>> {
+    let mut pins = Vec::new();
+    for i in images {
+        for d in std::iter::once(&i.config_digest).chain(i.layers.iter().map(|l| &l.digest)) {
+            pins.push(store.pin(d));
+            if !store.blob_path(d)?.is_file() {
+                return Err(io::Error::new(io::ErrorKind::NotFound, format!("not found: blob {d} of {}", i.name)));
+            }
+        }
+    }
+    Ok(pins)
+}
+
 /// Writes `images` as one archive `docker load` reads back.
 pub fn save(store: &Store, images: &[Image], out: impl Write) -> io::Result<()> {
+    let _held = hold(store, images)?;
     let mut tar = tar::Builder::new(out);
     let mut written: Vec<String> = Vec::new();
     let mut manifest = Vec::new();
@@ -157,7 +182,7 @@ pub fn from_config(name: String, config_digest: &str, config: &Value, layers: Ve
     // A config that names no architecture was made for this machine.
     let host = crate::registry::Platform::host_linux();
     let arch = config["architecture"].as_str().unwrap_or(&host.architecture);
-    Image {
+    Image { mirror: None,
         name,
         // Loaded images have no registry manifest; the config names them.
         digest: config_digest.to_owned(),
@@ -189,6 +214,93 @@ mod tests {
         let d = std::env::temp_dir().join(format!("kiri-archive-test-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// An image removed while its save is still streaming (a slow client,
+    /// another client's `rmi`): the archive still comes out whole, its
+    /// blobs held until the save ends.
+    #[test]
+    fn a_save_keeps_its_blobs_while_the_image_is_removed() {
+        let dir = scratch();
+        let store = Store::open(&dir).unwrap();
+        let put = |bytes: &[u8]| {
+            let mut w = store.ingest().unwrap();
+            w.write_all(bytes).unwrap();
+            w.finish().unwrap()
+        };
+        let config = json!({"os": "linux", "architecture": "amd64", "config": {}, "rootfs": {"type": "layers", "diff_ids": []}});
+        let (cfg, _) = put(&serde_json::to_vec(&config).unwrap());
+        let (a, sa) = put(&[1u8; 4096]);
+        let (b, sb) = put(&[2u8; 4096]);
+        let gz = "application/vnd.docker.image.rootfs.diff.tar.gzip";
+        let image = from_config("solo:1".into(), &cfg, &config, vec![Layer { digest: a, size: sa, media_type: gz.into() }, Layer { digest: b, size: sb, media_type: gz.into() }]);
+        store.put_image(image.clone()).unwrap();
+        // A writer that lets the image go once the first bytes are out.
+        struct Slow<'a> {
+            out: Vec<u8>,
+            store: &'a Store,
+            removed: bool,
+        }
+        impl Write for Slow<'_> {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                if !self.removed {
+                    self.removed = true;
+                    self.store.remove_image("solo:1").unwrap();
+                }
+                self.out.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut w = Slow { out: Vec::new(), store: &store, removed: false };
+        save(&store, &[image], &mut w).unwrap();
+        let other = Store::open(dir.join("other")).unwrap();
+        let loaded = load(&other, w.out.as_slice()).unwrap();
+        assert_eq!(loaded[0].layers.len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Two archives sharing a layer, loaded and removed at once over and
+    /// over: a removal of one never deletes a blob the other's load wrote
+    /// or found, between the write and the image being recorded.
+    #[test]
+    fn loads_and_removals_of_images_sharing_a_layer_do_not_race() {
+        let dir = scratch();
+        let store = Store::open(&dir).unwrap();
+        let archive = |name: &str, cmd: &str| {
+            let src = Store::open(dir.join(format!("src-{name}"))).unwrap();
+            let put = |bytes: &[u8]| {
+                let mut w = src.ingest().unwrap();
+                w.write_all(bytes).unwrap();
+                w.finish().unwrap()
+            };
+            let config = json!({"os": "linux", "architecture": "amd64", "created": "2026-01-01T00:00:00Z", "config": {"Cmd": [cmd]}, "rootfs": {"type": "layers", "diff_ids": []}});
+            let (cfg, _) = put(&serde_json::to_vec(&config).unwrap());
+            let (layer, size) = put(&vec![7u8; 64 * 1024]);
+            let image = from_config(name.into(), &cfg, &config, vec![Layer { digest: layer, size, media_type: "application/vnd.oci.image.layer.v1.tar".into() }]);
+            src.put_image(image.clone()).unwrap();
+            let mut tarball = Vec::new();
+            save(&src, &[image], &mut tarball).unwrap();
+            tarball
+        };
+        let (a, b) = (archive("a:1", "a"), archive("b:1", "b"));
+        std::thread::scope(|s| {
+            for (tarball, name) in [(&a, "a:1"), (&b, "b:1")] {
+                let store = &store;
+                s.spawn(move || {
+                    for round in 0..300 {
+                        let loaded = load(store, tarball.as_slice()).unwrap_or_else(|e| panic!("{name} round {round}: {e}"));
+                        for l in &loaded[0].layers {
+                            assert!(store.blob_path(&l.digest).unwrap().exists(), "{name} round {round}: its layer is gone");
+                        }
+                        store.remove_image(name).unwrap();
+                    }
+                });
+            }
+        });
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

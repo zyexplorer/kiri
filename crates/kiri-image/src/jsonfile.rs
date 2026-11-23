@@ -19,6 +19,23 @@ use serde::de::DeserializeOwned;
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
+thread_local! {
+    /// Files this thread has synced to disk ([`syncs_here`]).
+    static SYNCS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many files this thread has synced to disk through this module: a
+/// caller that must never wait for the disk (the daemon's container saves)
+/// can be checked for it, whatever the disk's speed.
+pub fn syncs_here() -> u64 {
+    SYNCS.with(std::cell::Cell::get)
+}
+
+fn synced(f: &File) -> io::Result<()> {
+    SYNCS.with(|n| n.set(n.get() + 1));
+    f.sync_all()
+}
+
 /// When [`replace`] makes the new file durable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Durable {
@@ -44,7 +61,7 @@ pub fn replace(path: &Path, bytes: &[u8], durable: Durable) -> io::Result<()> {
     let result = File::create(&tmp).and_then(|mut f| {
         f.write_all(bytes)?;
         if durable == Durable::Now {
-            f.sync_all()?;
+            synced(&f)?;
         }
         fs::rename(&tmp, path)
     });
@@ -61,7 +78,7 @@ pub fn replace(path: &Path, bytes: &[u8], durable: Durable) -> io::Result<()> {
 /// file (yet).
 pub fn sync(path: &Path) -> io::Result<()> {
     match File::open(path) {
-        Ok(f) => f.sync_all()?,
+        Ok(f) => synced(&f)?,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e),
     }

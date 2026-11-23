@@ -35,6 +35,70 @@ pub fn mount(src: &CStr, target: &CStr, fstype: &CStr, flags: libc::c_ulong, dat
     check(ret as _, &format!("mount {}", target.to_string_lossy())).map(drop)
 }
 
+/// Most of a page: the kernel copies mount options into one page and cuts
+/// the rest, so an overlay of many layers would lose its lowest ones.
+const MAX_OPTIONS: usize = 4000;
+
+/// An overlay of `lowers` (top first, each a folder path, relative to the
+/// working directory or absolute, with no `:` or `,`) at `target`, `rest`
+/// the options after the lower list (absolute paths). When the options do
+/// not fit in a page (some 60 layers by digest), the lowers are named by
+/// short links in a folder beside `target` and the mount is made from a
+/// child working in that folder: the same overlay, the agent's own working
+/// directory untouched (BuildKit's snapshotter does the same with short
+/// snapshot ids). The links go once the overlay holds its folders.
+pub fn mount_overlay(target: &Path, lowers: &[String], rest: &str, flags: libc::c_ulong) -> io::Result<()> {
+    let opts = format!("lowerdir={}{rest}", lowers.join(":"));
+    if opts.len() <= MAX_OPTIONS {
+        return mount(c"overlay", &cstr(target)?, c"overlay", flags, Some(&CString::new(opts)?));
+    }
+    let mut links = target.as_os_str().to_owned();
+    links.push(".lowers");
+    let links = std::path::PathBuf::from(links);
+    let _ = std::fs::remove_dir_all(&links);
+    std::fs::create_dir_all(&links)?;
+    let here = std::env::current_dir()?;
+    for (i, l) in lowers.iter().enumerate() {
+        std::os::unix::fs::symlink(here.join(l), links.join(i.to_string()))?;
+    }
+    let short: Vec<String> = (0..lowers.len()).map(|i| i.to_string()).collect();
+    let opts = CString::new(format!("lowerdir={}{rest}", short.join(":")))?;
+    let dir = cstr(&links)?;
+    let target_c = cstr(target)?;
+    let result = (|| {
+        if opts.as_bytes().len() > MAX_OPTIONS {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{} layers are more than one overlay can stack", lowers.len())));
+        }
+        // SAFETY: the child only calls chdir, mount and _exit, all
+        // async-signal-safe, on strings made before the fork.
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            // SAFETY: as above, in the child.
+            unsafe {
+                if libc::chdir(dir.as_ptr()) != 0 {
+                    libc::_exit(*libc::__errno_location());
+                }
+                let r = libc::mount(c"overlay".as_ptr(), target_c.as_ptr(), c"overlay".as_ptr(), flags, opts.as_ptr().cast());
+                libc::_exit(if r == 0 { 0 } else { *libc::__errno_location() });
+            }
+        }
+        check(pid as _, "fork")?;
+        let mut status = 0;
+        // SAFETY: waits for the child just made, into a local int.
+        check(unsafe { libc::waitpid(pid, &mut status, 0) } as _, "waitpid")?;
+        match (libc::WIFEXITED(status), libc::WEXITSTATUS(status)) {
+            (true, 0) => Ok(()),
+            (true, e) => {
+                let err = io::Error::from_raw_os_error(e);
+                Err(io::Error::new(err.kind(), format!("mount {}: {err}", target.display())))
+            }
+            _ => Err(io::Error::other(format!("mount {}: the mounting child died", target.display()))),
+        }
+    })();
+    let _ = std::fs::remove_dir_all(&links);
+    result
+}
+
 /// Mounts with no source or type, for changing propagation (`MS_PRIVATE` …).
 pub fn remount(target: &CStr, flags: libc::c_ulong) -> io::Result<()> {
     // SAFETY: `target` is a valid NUL-terminated string; the rest may be null.
@@ -363,6 +427,34 @@ pub fn resize_pty(fd: RawFd, rows: u16, cols: u16) {
 #[cfg(test)]
 mod tests {
     use std::io;
+
+    /// 131 layers by digest make options longer than a
+    /// page: the overlay still stacks them all, the lowest one included.
+    #[test]
+    fn an_overlay_of_more_layers_than_one_page_names() {
+        // SAFETY: a plain getter.
+        if unsafe { libc::geteuid() } != 0 {
+            eprintln!("skipped: needs root to mount");
+            return;
+        }
+        let d = std::env::temp_dir().join(format!("kiri-many-lowers-{}", std::process::id()));
+        let layers = d.join("layers");
+        let mut lowers = Vec::new();
+        for i in 0..131 {
+            let name = format!("{i:064x}");
+            std::fs::create_dir_all(layers.join(&name)).unwrap();
+            std::fs::write(layers.join(&name).join(format!("f{i}")), b"x").unwrap();
+            lowers.insert(0, layers.join(&name).to_str().unwrap().to_owned());
+        }
+        let target = d.join("root");
+        std::fs::create_dir_all(&target).unwrap();
+        super::mount_overlay(&target, &lowers, ",index=off", libc::MS_RDONLY).unwrap();
+        let seen = target.join("f0").exists() && target.join("f130").exists();
+        let _ = super::umount_lazy(&target);
+        assert!(seen, "every layer is in the overlay");
+        assert!(!d.join("root.lowers").exists(), "the links are gone");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     /// A value over several lines never starts a line of its own in the log.
     #[test]

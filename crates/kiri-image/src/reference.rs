@@ -1,25 +1,10 @@
 //! Image references like `alpine`, `nginx:1.27`, `ghcr.io/o/r@sha256:…`.
 
 use std::fmt;
-use std::net::IpAddr;
-use std::sync::OnceLock;
 
 /// Docker Hub's name for itself in references, and the host its API lives on.
 const DOCKER_HUB: &str = "docker.io";
 const DOCKER_HUB_API: &str = "registry-1.docker.io";
-
-/// Hosts and CIDRs from `daemon.json`'s `insecure-registries`.
-pub type InsecureSource = fn() -> Vec<String>;
-static INSECURE_SOURCE: OnceLock<InsecureSource> = OnceLock::new();
-
-/// Called once by the daemon, so every pull and push honours insecure registries.
-pub fn set_insecure_source(f: InsecureSource) {
-    let _ = INSECURE_SOURCE.set(f);
-}
-
-fn insecure_list() -> Vec<String> {
-    INSECURE_SOURCE.get().map(|f| f()).unwrap_or_default()
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Reference {
@@ -99,14 +84,26 @@ impl Reference {
         if self.registry == DOCKER_HUB { DOCKER_HUB_API } else { &self.registry }
     }
 
-    /// `https://host`, or `http://host` for a local registry or one listed
-    /// in `insecure-registries`, as Docker's daemon does.
+    /// `https://host`, or `http://host` for a registry on this machine,
+    /// which Docker also treats as insecure by default.
     pub fn api_base(&self) -> String {
-        format!("{}://{}", if is_insecure(self.api_host()) { "http" } else { "https" }, self.api_host())
+        format!("{}://{}", if is_local(self.api_host()) { "http" } else { "https" }, self.api_host())
     }
 
     pub fn is_digest(&self) -> bool {
         self.reference.starts_with("sha256:")
+    }
+
+    /// The same image, served by `host`: a mirror of this reference's
+    /// registry. `prefix` goes before the repository for mirrors that keep
+    /// the upstream registry in the path (`mirror.example.com/docker.io`); the
+    /// tag or digest is kept as it is.
+    pub fn via(&self, host: &str, prefix: Option<&str>) -> Reference {
+        let repository = match prefix.map(str::trim).filter(|p| !p.is_empty()) {
+            Some(prefix) => format!("{}/{}", prefix.trim_matches('/'), self.repository),
+            None => self.repository.clone(),
+        };
+        Reference { registry: host.to_owned(), repository, reference: self.reference.clone() }
     }
 
     /// The short form people type and `docker images` shows: `alpine:latest`,
@@ -122,99 +119,13 @@ impl Reference {
     }
 }
 
-/// Host name without a port (`localhost:5000` → `localhost`, `[::1]:5000` → `::1`).
-pub fn host_name(host: &str) -> &str {
-    if host.starts_with('[') {
-        host.split(']').next().unwrap_or(host).trim_start_matches('[')
-    } else {
-        host.split(':').next().unwrap_or(host)
-    }
-}
-
-/// `localhost:5000`, `127.0.0.1:5000`, `[::1]:5000`, `registry.localhost`.
+/// `localhost:5000`, `127.0.0.1:5000`, `[::1]:5000`: this machine by address
+/// or as `localhost` itself, which resolves here without asking a name
+/// server, as Docker's loopback set has it. A name under `.localhost` is not:
+/// a resolver may send it to DNS.
 pub fn is_local(host: &str) -> bool {
-    let name = host_name(host);
-    name == "localhost" || name.ends_with(".localhost") || name.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
-}
-
-/// A `daemon.json` `insecure-registries` entry: `host`, `host:port`, or a
-/// CIDR. Empty or unreadable → none.
-pub fn normalize_insecure(raw: &str) -> Option<String> {
-    let s = raw.trim();
-    if s.is_empty() {
-        return None;
-    }
-    // A CIDR has no scheme; `http://host/` is a host, not a CIDR.
-    if s.contains('/') && !s.contains("://") {
-        return valid_cidr(s).then(|| s.to_owned());
-    }
-    let s = s.strip_prefix("https://").or_else(|| s.strip_prefix("http://")).unwrap_or(s);
-    let s = s.split('/').next().unwrap_or(s).trim_end_matches('/');
-    if s.is_empty() {
-        return None;
-    }
-    Some(s.to_ascii_lowercase())
-}
-
-fn valid_cidr(s: &str) -> bool {
-    let Some((ip, bits)) = s.split_once('/') else {
-        return false;
-    };
-    let Ok(bits) = bits.parse::<u8>() else {
-        return false;
-    };
-    match ip.parse::<IpAddr>() {
-        Ok(IpAddr::V4(_)) => bits <= 32,
-        Ok(IpAddr::V6(_)) => bits <= 128,
-        Err(_) => false,
-    }
-}
-
-fn ip_in_cidr(ip: IpAddr, cidr: &str) -> bool {
-    let Some((net, bits)) = cidr.split_once('/') else {
-        return false;
-    };
-    let Ok(bits) = bits.parse::<u32>() else {
-        return false;
-    };
-    match (ip, net.parse::<IpAddr>()) {
-        (IpAddr::V4(ip), Ok(IpAddr::V4(net))) if bits <= 32 => {
-            let mask = if bits == 0 { 0 } else { u32::MAX << (32 - bits) };
-            (u32::from(ip) & mask) == (u32::from(net) & mask)
-        }
-        (IpAddr::V6(ip), Ok(IpAddr::V6(net))) if bits <= 128 => {
-            let mask = if bits == 0 { 0 } else { u128::MAX << (128 - bits) };
-            (u128::from(ip) & mask) == (u128::from(net) & mask)
-        }
-        _ => false,
-    }
-}
-
-/// Loopback, or listed in `insecure-registries` (host, host:port, or CIDR).
-pub fn is_insecure(host: &str) -> bool {
-    if is_local(host) {
-        return true;
-    }
-    let host = host.to_ascii_lowercase();
-    let name = host_name(&host);
-    for entry in insecure_list() {
-        if entry.contains('/') {
-            if let Ok(ip) = name.parse::<IpAddr>()
-                && ip_in_cidr(ip, &entry)
-            {
-                return true;
-            }
-            continue;
-        }
-        if host == entry {
-            return true;
-        }
-        // An entry without a port matches that host on any port, as Docker does.
-        if !entry.contains(':') && name == entry {
-            return true;
-        }
-    }
-    false
+    let name = if host.starts_with('[') { host.split(']').next().unwrap_or(host).trim_start_matches('[') } else { host.split(':').next().unwrap_or(host) };
+    name.eq_ignore_ascii_case("localhost") || name.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 impl fmt::Display for Reference {
@@ -278,34 +189,30 @@ mod tests {
     }
 
     #[test]
+    fn a_mirror_keeps_the_image_and_its_tag() {
+        let nginx = Reference::parse("nginx:1.27").unwrap();
+        let mirrored = nginx.via("mirror.example.com", None);
+        assert_eq!(mirrored.registry, "mirror.example.com");
+        assert_eq!(mirrored.repository, "library/nginx");
+        assert_eq!(mirrored.reference, "1.27");
+        assert_eq!(nginx.short(), "nginx:1.27", "the name people see is unchanged");
+
+        let prefixed = nginx.via("mirror.example.net", Some("docker.io"));
+        assert_eq!(prefixed.repository, "docker.io/library/nginx");
+
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let pinned = Reference::parse(&format!("alpine@{digest}")).unwrap();
+        assert_eq!(pinned.via("127.0.0.1:5000", None).reference, digest);
+    }
+
+    #[test]
     fn only_real_loopback_registries_are_local() {
-        for host in ["localhost", "localhost:5000", "registry.localhost", "127.0.0.1", "127.1.2.3:5000", "[::1]:5000"] {
+        for host in ["localhost", "localhost:5000", "LocalHost:5000", "127.0.0.1", "127.1.2.3:5000", "[::1]:5000"] {
             assert!(is_local(host), "{host}");
         }
-        for host in ["127.evil.com", "127.0.0.1.evil.com", "example.com", "[::2]:5000"] {
+        for host in ["127.evil.com", "127.0.0.1.evil.com", "example.com", "[::2]:5000", "registry.localhost", "evil.localhost:5000"] {
             assert!(!is_local(host), "{host}");
         }
         assert_eq!(Reference::parse("127.evil.com/owner/image").unwrap().api_base(), "https://127.evil.com");
-    }
-
-    #[test]
-    fn normalize_insecure_accepts_hosts_and_cidrs() {
-        assert_eq!(normalize_insecure("Registry.Example:5000").as_deref(), Some("registry.example:5000"));
-        assert_eq!(normalize_insecure("http://registry.example/").as_deref(), Some("registry.example"));
-        assert_eq!(normalize_insecure("10.0.0.0/8").as_deref(), Some("10.0.0.0/8"));
-        assert_eq!(normalize_insecure("  ").as_deref(), None);
-        assert_eq!(normalize_insecure("10.0.0.0/99").as_deref(), None);
-    }
-
-    #[test]
-    fn insecure_list_matches_hosts_and_cidrs() {
-        set_insecure_source(|| vec!["registry.example".into(), "corp:5000".into(), "10.1.0.0/16".into()]);
-        assert!(is_insecure("registry.example"));
-        assert!(is_insecure("registry.example:443"));
-        assert!(is_insecure("corp:5000"));
-        assert!(!is_insecure("corp:5001"));
-        assert!(is_insecure("10.1.2.3:5000"));
-        assert!(!is_insecure("10.2.0.1"));
-        assert!(is_insecure("localhost:5000"), "loopback stays insecure");
     }
 }

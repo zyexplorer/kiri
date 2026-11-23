@@ -788,6 +788,8 @@ dependencies = [
 name = "kiri-image"
 version = "0.2.0"
 dependencies = [
+ "rcgen",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
