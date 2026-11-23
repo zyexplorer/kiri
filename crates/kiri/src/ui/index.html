@@ -17,7 +17,8 @@
   --text: #F2F0EB; --muted: #98A1AC; --faint: #66707C;
   --row-hover: rgba(255, 255, 255, .035);
   --ui-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-  --mono-font: ui-monospace, "SF Mono", Menlo, monospace;
+  /* Cascadia / Consolas first on Windows (SF Mono / Menlo are macOS-only). */
+  --mono-font: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
   font: var(--fs)/1.4 var(--ui-font);
   color-scheme: dark;
 }
@@ -321,6 +322,11 @@ h2 .beta { vertical-align: 3px; }
 .proj-tree-tools.locked .btn.ic.with-plus::after,
 .proj-tree-tools.locked .btn.ic.with-up::after { color: var(--faint); }
 .dialog .ask-field { width: 100%; margin: 0; }
+.dialog .head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dialog .head h3 { margin: 0; flex: 1; min-width: 0; }
+.dialog .xclose { width: 30px; height: 30px; flex: none; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; padding: 0; }
+.dialog .xclose:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.dialog .xclose svg { width: 14px; height: 14px; fill: currentColor; }
 .proj-tree { flex: 1; min-height: 0; overflow: hidden; font-size: var(--fs-small); display: flex; flex-direction: column; gap: 2px; }
 .proj-tree-root { flex: none; }
 .proj-tree-body { flex: 1; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 1px; }
@@ -436,10 +442,12 @@ h2 .beta { vertical-align: 3px; }
 .proj-tabs::-webkit-scrollbar-track { background: color-mix(in srgb, var(--text) 6%, transparent); border-radius: 99px; margin: 0 4px; }
 .proj-tabs::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text) 28%, transparent); border-radius: 99px; }
 .proj-tabs::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text) 40%, transparent); }
-.proj-tab { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-small); font-weight: 500; cursor: pointer; white-space: nowrap; margin-bottom: -1px; opacity: .72; flex: none; height: 34px; box-sizing: border-box; }
+/* padding 0 + fixed height: vertical center via align-items (8px pad was cramped on Win). */
+.proj-tab { display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-small); font-weight: 500; cursor: pointer; white-space: nowrap; margin-bottom: -1px; opacity: .72; flex: none; height: 34px; box-sizing: border-box; max-width: min(280px, 55vw); }
 .proj-tab:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); opacity: 1; }
 .proj-tab.on { color: var(--text); font-weight: 650; background: var(--panel); border-bottom-color: var(--blue); box-shadow: inset 0 -2px 0 var(--blue); opacity: 1; }
-.proj-tab .x { width: 16px; height: 16px; display: grid; place-items: center; border-radius: 4px; opacity: .4; font-size: 14px; line-height: 1; }
+.proj-tab .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.25; }
+.proj-tab .x { width: 16px; height: 16px; flex: none; display: grid; place-items: center; border-radius: 4px; opacity: .4; font-size: 14px; line-height: 1; }
 .proj-tab:hover .x, .proj-tab.on .x { opacity: .7; }
 .proj-tab .x:hover { opacity: 1; background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text); }
 .proj-tab-add { flex: none; width: 30px; height: 30px; margin: 3px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: 600 16px/1 var(--ui-font); cursor: pointer; display: grid; place-items: center; }
@@ -582,11 +590,49 @@ h2 .beta { vertical-align: 3px; }
 .proj-term-wrap > .proj-tabs .proj-tab .x:hover { background: color-mix(in srgb, var(--term-fg) 12%, transparent); color: var(--term-fg); }
 .proj-term-wrap > .proj-tabs .proj-tab-add { color: color-mix(in srgb, var(--term-fg) 72%, transparent); }
 .proj-term-wrap > .proj-tabs .proj-tab-add:hover { color: var(--term-fg); background: color-mix(in srgb, var(--term-fg) 10%, transparent); }
+/* IDEA-like terminal tools (top-right of the tab strip). */
+.proj-term-wrap > .proj-tabs { align-items: center; }
+.proj-term-tools {
+  display: inline-flex; align-items: center; gap: 2px; flex: none; margin-inline-start: auto;
+  padding: 0 4px 0 8px;
+}
+.proj-term-tools button {
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px;
+  display: grid; place-items: center; cursor: pointer;
+  background: transparent; color: color-mix(in srgb, var(--term-fg) 72%, transparent);
+}
+.proj-term-tools button:hover { color: var(--term-fg); background: color-mix(in srgb, var(--term-fg) 10%, transparent); }
+.proj-term-tools button[aria-pressed=true] {
+  color: var(--term-fg);
+  background: color-mix(in srgb, var(--term-fg) 14%, transparent);
+}
+.proj-term-tools button svg { width: 15px; height: 15px; fill: currentColor; }
 .proj-term-body { flex: 1; min-height: 0; position: relative; }
-.proj-htx { position: absolute; inset: 0; padding: 4px 0 0 8px; }
+/* xterm 6: real bars are VS Code .xterm-scrollable-element (overviewRuler.width).
+   .xterm-viewport still has overflow-y:scroll in xterm.css — on Windows that paints
+   a fat native gutter even though scrolling moved off it; hide it. */
+.proj-term-wrap,
+.proj-htx,
+.proj-htx .xterm,
+.proj-htx .xterm-viewport { background: var(--term-bg); color: var(--term-fg); }
+.proj-htx { position: absolute; inset: 0; padding: 0; border: 0; outline: none; overflow: hidden; }
 .proj-htx[hidden] { display: none !important; }
-.proj-htx .xterm { height: 100%; }
-.proj-htx .xterm-viewport { scrollbar-width: thin; }
+.proj-htx .xterm { height: 100%; width: 100%; box-sizing: border-box; padding: 0; border: 0; outline: none; }
+/* Kill native viewport gutter; keep it behind the scrollable clip port. */
+.proj-htx .xterm-viewport,
+.htx .xterm-viewport {
+  overflow: hidden !important; pointer-events: none; z-index: 0;
+}
+.proj-htx .xterm-scrollable-element,
+.htx .xterm-scrollable-element {
+  position: relative; overflow: hidden !important; z-index: 1;
+}
+.proj-htx .xterm-scrollable-element > .scrollbar.vertical,
+.htx .xterm-scrollable-element > .scrollbar.vertical { width: 5px !important; }
+.proj-htx .xterm-scrollable-element > .scrollbar.horizontal,
+.htx .xterm-scrollable-element > .scrollbar.horizontal { height: 5px !important; }
+.proj-htx .xterm-scrollable-element > .scrollbar > .slider,
+.htx .xterm-scrollable-element > .scrollbar > .slider { border-radius: 99px; }
 @media (max-width: 900px) {
   #content:has(> .proj-ide) { overflow: auto; }
   .proj-ide { grid-template-columns: 1fr; flex: none; min-height: 520px; }
@@ -3014,7 +3060,7 @@ body.beat { --beat: ring 1.6s ease-out; }
 .rp-id .btn { margin-left: auto; }
 .rp-dialog .err { font-size: var(--fs); color: var(--red-text); }
 /* --- The built-in terminal: a panel under the page (tests/ui/terminal.js) ----------- */
-:root { --term-bg: #0B0F13; --term-fg: #D7DCE1; }
+:root { --term-bg: #0B0F13; --term-fg: #CDD6F4; }
 @media (prefers-color-scheme: light) { :root { --term-bg: #FFFFFF; --term-fg: #1F2328; } }
 main { position: relative; }
 /* Raised above the page: a shadow up onto it, a lighter top edge and a lifted
@@ -3073,9 +3119,9 @@ main { position: relative; }
 .htbody.zoomed .htsplit > .htdiv, .htbody.zoomed .htcell:not(:has(.htpane.focus)), .htbody.zoomed .htpane:not(.focus) { display: none; }
 /* xterm measures the page in pixels: the window's text size (zoom on the
    body) is undone here, and the terminal has its own size instead. */
-.htx { flex: 1; min-height: 0; min-width: 0; padding: 4px 0 0 10px; zoom: var(--ht-unzoom, 1); }
-.htx .xterm { height: 100%; }
-.htx .xterm-viewport { scrollbar-width: thin; }
+.htx { flex: 1; min-height: 0; min-width: 0; padding: 0; overflow: hidden; zoom: var(--ht-unzoom, 1); background: var(--term-bg); }
+.htx .xterm { height: 100%; width: 100%; box-sizing: border-box; padding: 0; border: 0; outline: none; background: var(--term-bg); color: var(--term-fg); }
+.htx .xterm-viewport { background: var(--term-bg); }
 .htmsg { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 80%; text-align: center; color: var(--muted); }
 .htmsg b { display: block; color: var(--text); margin-bottom: 4px; }
 .htpop, .htmenu { position: absolute; z-index: 30; top: 30px; background: var(--raised); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 14px 40px rgb(0 0 0 / .45); }
@@ -4664,6 +4710,11 @@ const ZH = {
   "Terminal": "终端",
   "New terminal": "新建终端",
   "Terminal {n}": "终端 {n}",
+  "Scroll to top": "滚动到顶部",
+  "Scroll to bottom": "滚动到底部",
+  "Soft wrap": "自动换行",
+  "Scroll to end": "跟随输出",
+  "Clear terminal": "清空终端",
   "Close Others": "关闭其他",
   "Close to the Left": "关闭左侧",
   "Close to the Right": "关闭右侧",
@@ -6242,6 +6293,11 @@ const ZH_TW = {
   "Terminal": "終端",
   "New terminal": "新建終端",
   "Terminal {n}": "終端 {n}",
+  "Scroll to top": "捲動到頂部",
+  "Scroll to bottom": "捲動到底部",
+  "Soft wrap": "自動換行",
+  "Scroll to end": "跟隨輸出",
+  "Clear terminal": "清空終端",
   "Close Others": "關閉其他",
   "Close to the Left": "關閉左側",
   "Close to the Right": "關閉右側",
@@ -9063,8 +9119,11 @@ const proj = {
   // Editor find/replace (Ctrl/Cmd+F / H): q, repl, case, open, replace, i, hits.
   find: { open: false, replace: false, q: "", repl: "", case: false, i: 0, hits: [] },
   // Real PTY terminals (same protocol as the bottom bar); multiple tabs per project.
-  pty: { n: 0, projectId: null, sessions: [], at: 0, pending: null, wantShells: false, _ro: null },
+  // follow: auto-scroll to end (IDEA "Scroll to End"); wrap: soft-wrap to view width.
+  pty: { n: 0, projectId: null, sessions: [], at: 0, pending: null, wantShells: false, _ro: null, follow: true, wrap: false },
 };
+/** Thin xterm-6 scrollbar lane (VS Code default is 14; FitAddon reads overviewRuler.width). */
+const TERM_SB = 5;
 function projAsk() {
   if (Date.now() - (proj.asked || 0) < 400) return;
   proj.asked = Date.now();
@@ -10026,13 +10085,11 @@ function projPaintEditorChrome() {
     md?.remove();
   }
   const kind = projFileKind(proj.active);
+  // Scripts / Dockerfile: no Run/Build in the editor — use the project terminal.
+  // Compose keeps Open (jumps into the Compose view).
   const actBtn = kind === "compose"
     ? `<button class="btn" data-projact="compose" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Open")}</button>`
-    : kind === "dockerfile"
-      ? `<button class="btn" data-projact="build" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Build")}</button>`
-      : kind === "script"
-        ? `<button class="btn" data-projact="run" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Run")}</button>`
-        : "";
+    : "";
   const save = proj.pane === "editor" && tab && !tab.loading
     ? `<button class="btn primary" data-projsavefile>${tr("Save")}</button>` : "";
   const acts = proj.pane === "editor" ? `${save}${actBtn}` : "";
@@ -10550,11 +10607,55 @@ function projShellQuote(s) {
   if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(t)) return t;
   return `'${t.replace(/'/g, `'\\''`)}'`;
 }
+/** Quote a path for cmd.exe / PowerShell -File (Windows). */
+function projWinQuote(s) {
+  const t = String(s ?? "").replace(/\//g, "\\");
+  if (/^[A-Za-z0-9_.:\\/@%+=,-]+$/.test(t)) return t;
+  return `"${t.replace(/"/g, '""')}"`;
+}
+/** PowerShell single-quoted literal (only '' needs escaping). */
+function projPsSingle(s) {
+  return `'${String(s ?? "").replace(/'/g, "''")}'`;
+}
+/** Build the line typed into the project terminal to run a script. */
+function projScriptRunLine(path, args) {
+  const a = String(args || "").trim();
+  const lower = String(path || "").toLowerCase();
+  if (WIN && /\.(cmd|bat)$/.test(lower)) {
+    // Short PATH helper (contrib/windows/kiri-run-cmd.*) strips UTF-8 BOM and
+    // runs via ComSpec — avoids dumping a long PowerShell one-liner into the tty.
+    const p = String(path).replace(/\//g, "\\");
+    return a ? `kiri-run-cmd ${projWinQuote(p)} ${a}` : `kiri-run-cmd ${projWinQuote(p)}`;
+  }
+  if (WIN && /\.ps1$/.test(lower)) {
+    return `& powershell.exe -NoProfile -ExecutionPolicy Bypass -File ${projWinQuote(path)}${a ? ` ${a}` : ""}`;
+  }
+  return `bash ${projShellQuote(path)}${a ? ` ${a}` : ""}`;
+}
 function projTermActive() { return proj.pty.sessions[proj.pty.at] || null; }
 function projTermById(id) { return (proj.pty.sessions || []).find((s) => s.id === id) || null; }
+/** Project terminal tabs: always "Terminal 1 / 2 / …" (same as macOS), never ConPTY OSC titles. */
 function projTermLabel(s, i) {
-  if (s?.title) return s.title;
-  return tr("Terminal {n}", { n: (i ?? proj.pty.sessions.indexOf(s)) + 1 });
+  const n = s?.num ?? (i ?? proj.pty.sessions.indexOf(s)) + 1;
+  return tr("Terminal {n}", { n });
+}
+/** Clean ConPTY / PowerShell window titles for the bottom terminal strip. */
+function termPrettyTitle(raw, { shell, cwd, fallback } = {}) {
+  let t = String(raw || "").trim();
+  if (!t) return fallback || "";
+  // Elevated Windows console: "管理员: …" / "Administrator: …"
+  t = t.replace(/^(管理员|Administrator|Admin)\s*:\s*/i, "");
+  t = t.replace(/^\\\\\?\\/, "").replace(/^Microsoft\.PowerShell\.Core\\FileSystem::/i, "");
+  // Default title is the shell exe path — show shell label · cwd folder instead.
+  if (/\\(?:WindowsPowerShell\\v[\d.]+\\)?powershell\.exe$/i.test(t)
+      || /\\pwsh\.exe$/i.test(t)
+      || /\\cmd\.exe$/i.test(t)
+      || /^C:\\Windows\\System32\\WindowsPowerShell/i.test(t)) {
+    const label = shell ? htShellLabel(shell) : "";
+    const folder = cwd ? String(cwd).replace(/^.*[/\\]/, "") : "";
+    return [label, folder].filter(Boolean).join(" · ") || fallback || t;
+  }
+  return t;
 }
 function projTermCloseSession(sess) {
   if (!sess) return;
@@ -10571,9 +10672,155 @@ function projTermCloseAll() {
   proj.pty.pending = null;
   proj.pty.wantShells = false;
 }
+/** Keep host chrome the same colour as the xterm canvas (avoids black strips). */
+function projTermSyncBg(sess) {
+  const { background: bg, foreground: fg } = htTheme();
+  document.documentElement.style.setProperty("--term-bg", bg);
+  document.documentElement.style.setProperty("--term-fg", fg);
+  const paint = (el) => { if (el) el.style.background = bg; };
+  paint(sess?.el?.closest?.(".proj-term-wrap"));
+  paint(sess?.el);
+  paint(sess?.el?.querySelector?.(".xterm"));
+  paint(sess?.el?.querySelector?.(".xterm-viewport"));
+}
+/** xterm 6 SmoothScrollableElement (ScrollbarVisibility: Auto=1, Hidden=2). */
+function termScrollable(term) {
+  return term?._core?._viewport?._scrollableElement || null;
+}
+/** Thin V-bar always; H-bar only when soft-wrap is off (wide PTY cols). */
+function termBindScrollUi(term, { wide = false } = {}) {
+  const se = termScrollable(term);
+  if (!se?.updateOptions) return;
+  se.updateOptions({
+    verticalScrollbarSize: TERM_SB,
+    horizontalScrollbarSize: TERM_SB,
+    horizontal: wide ? 1 : 2,
+  });
+}
+/** Keep host/xterm/scrollable at scrollLeft 0 — focus / scrollIntoView on the
+ *  caret otherwise nudges these (even with overflow:hidden) and clips the left
+ *  while our VS Code H-bar still reads as "at start". */
+function projTermLockScrollLeft(sess) {
+  const term = sess?.term;
+  const se = termScrollable(term);
+  const nodes = [sess?.el, term?.element, se?.getDomNode?.()].filter(Boolean);
+  for (const el of nodes) {
+    if (el.scrollLeft) el.scrollLeft = 0;
+    if (el._projHLockScroll) continue;
+    el._projHLockScroll = true;
+    el.addEventListener("scroll", () => { if (el.scrollLeft) el.scrollLeft = 0; }, { passive: true });
+  }
+}
+/** Feed width/scrollWidth so the VS Code H-bar appears, and pan .xterm-screen
+ *  on scrollLeft. SmoothScrollableElement only moves the thumb — vertical
+ *  scrolling works via buffer ydisp; horizontal has no built-in offset. */
+function projTermSyncHScroll(sess) {
+  const term = sess?.term;
+  const se = termScrollable(term);
+  if (!se?.setScrollDimensions) return;
+  const screen = term.element?.querySelector?.(".xterm-screen");
+  const wide = !proj.pty.wrap;
+  termBindScrollUi(term, { wide });
+  projTermLockScrollLeft(sess);
+  const applyX = () => {
+    projTermLockScrollLeft(sess);
+    const el = term.element?.querySelector?.(".xterm-screen");
+    const host = se.getDomNode?.();
+    if (!el) return;
+    if (proj.pty.wrap) {
+      el.style.transform = "translate3d(0,0,0)";
+      return;
+    }
+    const x = Math.max(0, Number(se.getScrollPosition?.()?.scrollLeft) || 0);
+    // Keep screen in-flow (absolute would collapse the scrollable height).
+    el.style.transform = `translate3d(${-x}px,0,0)`;
+    // At the start: if anything still nudges the canvas left of the clip port
+    // (focus scrollIntoView, subpixel, stale translate), push it back flush.
+    if (x < 1 && host) {
+      const gap = host.getBoundingClientRect().left - el.getBoundingClientRect().left;
+      if (gap > 0.5) el.style.transform = `translate3d(${gap}px,0,0)`;
+    }
+  };
+  sess._projHScrollApply = applyX;
+  // Bind once per scrollable: thumb / wheel → pan canvases. Also re-apply after
+  // xterm refreshes (it can redraw without preserving our transform intent).
+  if (!se._projHBound) {
+    se._projHBound = true;
+    if (typeof se.onScroll === "function") se.onScroll(() => applyX());
+    if (typeof se.onWillScroll === "function") se.onWillScroll(() => applyX());
+    // Slider drag: onScroll can lag a frame behind pointer; sync while held.
+    const node = se.getDomNode?.();
+    const hbar = node?.querySelector?.(".scrollbar.horizontal");
+    if (hbar && !hbar._projHPointer) {
+      hbar._projHPointer = true;
+      let dragging = false, raf = 0;
+      const tick = () => { applyX(); if (dragging) raf = requestAnimationFrame(tick); };
+      hbar.addEventListener("pointerdown", () => { dragging = true; tick(); }, true);
+      const stop = () => { dragging = false; cancelAnimationFrame(raf); applyX(); };
+      hbar.addEventListener("pointerup", stop, true);
+      hbar.addEventListener("pointercancel", stop, true);
+      window.addEventListener("pointerup", stop, true);
+    }
+    try { term.onRender?.(() => applyX()); } catch { /* */ }
+    // Caret focus often scrollIntoView's a parent; pin scrollLeft back to 0.
+    term.textarea?.addEventListener("focus", () => {
+      requestAnimationFrame(() => { projTermLockScrollLeft(sess); applyX(); });
+    });
+  }
+  if (!wide) {
+    try { se.setScrollPosition?.({ scrollLeft: 0 }); } catch { /* */ }
+    if (screen) screen.style.transform = "translate3d(0,0,0)";
+    return;
+  }
+  const css = term._core?._renderService?.dimensions?.css;
+  const cellW = css?.cell?.width || 0;
+  const canvas = term.element?.querySelector?.(".xterm-screen canvas");
+  const contentW = Math.max(
+    cellW > 0 ? Math.ceil(term.cols * cellW) : 0,
+    css?.canvas?.width || 0,
+    canvas?.offsetWidth || 0,
+    1
+  );
+  const node = se.getDomNode?.() || term.element;
+  // Use the real clipped width (don't subtract sb again — V-bar overlays).
+  const viewW = Math.max(1, node?.clientWidth || term.element?.clientWidth || contentW);
+  se.setScrollDimensions({
+    width: viewW,
+    scrollWidth: Math.max(contentW, viewW),
+  });
+  // Snap to true start so a previous caret scrollIntoView can't leave us mid-line.
+  if ((se.getScrollPosition?.()?.scrollLeft || 0) < 1) {
+    try { se.setScrollPosition?.({ scrollLeft: 0 }); } catch { /* */ }
+  }
+  applyX();
+}
 function projTermFit(sess = projTermActive()) {
   if (!sess?.term || !sess.el?.isConnected || sess.el.hidden || !sess.el.offsetWidth) return;
-  try { sess.fit.fit(); } catch { /* not laid out yet */ }
+  try {
+    const core = sess.term._core;
+    const cell = core?._renderService?.dimensions?.css?.cell;
+    const cellW = cell?.width || 0, cellH = cell?.height || 0;
+    // Thin scrollbar lane so the last column / row isn't under the thumb.
+    const sb = TERM_SB;
+    let cols, rows;
+    if (cellW > 0 && cellH > 0) {
+      // Reserve a lane for the horizontal bar when soft-wrap is off.
+      const hSb = proj.pty.wrap ? 0 : sb;
+      rows = Math.max(1, Math.floor((sess.el.clientHeight - 2 - hSb) / cellH));
+      const viewCols = Math.max(2, Math.floor((sess.el.clientWidth - sb) / cellW));
+      // Soft wrap on → fit view width; off → wide buffer (scroll sideways, no wrap).
+      cols = proj.pty.wrap ? viewCols : Math.max(viewCols, 240);
+    } else {
+      const dim = sess.fit.proposeDimensions?.();
+      if (!dim || isNaN(dim.cols) || isNaN(dim.rows)) { sess.fit.fit(); projTermSyncBg(sess); return; }
+      cols = proj.pty.wrap ? Math.max(2, dim.cols) : Math.max(2, dim.cols, 240);
+      rows = Math.max(1, dim.rows);
+    }
+    if (sess.term.cols !== cols || sess.term.rows !== rows) sess.term.resize(cols, rows);
+    projTermSyncBg(sess);
+    projTermSyncHScroll(sess);
+    if (proj.pty.follow !== false) sess.term.scrollToBottom?.();
+  } catch { /* not laid out yet */ }
 }
 function projTermFitAll() { for (const s of proj.pty.sessions) if (!s.el?.hidden) projTermFit(s); }
 function projTermSend(text) {
@@ -10582,10 +10829,15 @@ function projTermSend(text) {
   send("term", { name: "input", id: s.id, value: htB64(text) });
   return true;
 }
-/** Clear any half-typed line (Ctrl+U) then run `cmd` — avoids `./foo` + `bash foo up` gluing together. */
+/** Clear any half-typed line then run `cmd` — avoids `./foo` + `bash foo up` gluing together. */
 function projTermRunLine(cmd) {
   const line = String(cmd || "").trim();
   if (!line) return false;
+  if (WIN) {
+    // No Ctrl+U (\x15 → visible ^U) and no bare ESC (\x1b + first char of the
+    // command becomes a VT sequence). Type the line + Enter only.
+    return projTermSend(`${line}\r`);
+  }
   // \x15 = kill-to-start-of-line in bash/zsh/fish bindkey defaults.
   return projTermSend(`\x15${line}\r`);
 }
@@ -10636,20 +10888,22 @@ function projTermBoot(sess) {
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon.WebLinksAddon((ev, uri) => { ev.preventDefault?.(); send("term", { name: "link", value: uri }); }));
   term.open(sess.el);
-  term.onData((d) => { const cur = projTermById(id); if (cur && !cur.exited) send("term", { name: "input", id, value: htB64(d) }); });
-  term.onBinary((d) => { const cur = projTermById(id); if (cur && !cur.exited) send("term", { name: "input", id, value: btoa(d) }); });
-  term.onResize(({ cols, rows }) => { const cur = projTermById(id); if (cur?.opened) send("term", { name: "resize", id, value: { cols, rows } }); });
-  term.onTitleChange((t) => {
+  term.onData((d) => {
     const cur = projTermById(id);
-    if (!cur) return;
-    const next = String(t || "").trim().slice(0, 40);
-    if (next) cur.title = next;
-    const btn = document.querySelector(`[data-projtermtab="${CSS.escape(id)}"] .nm`);
-    if (btn) btn.textContent = projTermLabel(cur);
-    else projSyncTermTabs();
+    if (cur && !cur.exited) send("term", { name: "input", id, value: htB64(d) });
   });
+  term.onBinary((d) => { const cur = projTermById(id); if (cur && !cur.exited) send("term", { name: "input", id, value: btoa(d) }); });
+  term.onResize(({ cols, rows }) => {
+    const cur = projTermById(id);
+    if (cur?.opened) send("term", { name: "resize", id, value: { cols, rows } });
+    // Keep H-bar scrollWidth in sync after every col change.
+    if (cur) projTermSyncHScroll(cur);
+  });
+  // Ignore OSC titles from Windows PowerShell / ConPTY — keep "Terminal n" like macOS.
+  term.onTitleChange(() => {});
   sess.term = term; sess.fit = fit; sess.shell = shell;
   sess.exited = false; sess.opened = false;
+  termBindScrollUi(term, { wide: !proj.pty.wrap });
   projTermFit(sess);
   send("term", { name: "open", id, value: { shell, cols: term.cols, rows: term.rows, cwd: sess.cwd } });
   sess.opened = true;
@@ -10705,6 +10959,24 @@ function projTermCloseTab(id) {
   if (ui.view === "projects" && proj.pane === "term") render();
   else projMountTerm();
 }
+/** IDEA-style terminal tools (scroll / wrap / follow). Clear is a shell command. */
+const PROJ_TERM_IC = {
+  top: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.2 3.2 8h3v4.8h3.6V8h3Z"/></svg>',
+  bottom: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.8 12.8 8h-3V3.2H6.2V8h-3Z"/></svg>',
+  wrap: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v1.5h-11zm0 3.5h7.2a2.8 2.8 0 0 1 0 5.6H7.2v1.4L4.2 11l3-2.9V9.6h2.5a1.3 1.3 0 0 0 0-2.6H2.5z"/></svg>',
+  follow: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.2h10v1.4H3zm0 3h10v1.4H3zm2.2 3H8V7.8h1.4V9.6h2.4L8.7 13.2 5.2 9.6z"/></svg>',
+};
+function projTermToolsHtml() {
+  const wrapOn = !!proj.pty.wrap, followOn = proj.pty.follow !== false;
+  const b = (id, title, ic, pressed) =>
+    `<button type="button" data-projtermtool="${id}" title="${tr(title)}" aria-label="${tr(title)}"${pressed != null ? ` aria-pressed="${pressed}"` : ""}>${ic}</button>`;
+  return `<div class="proj-term-tools" role="toolbar" aria-label="${tr("Terminal")}">
+    ${b("top", "Scroll to top", PROJ_TERM_IC.top)}
+    ${b("bottom", "Scroll to bottom", PROJ_TERM_IC.bottom)}
+    ${b("wrap", "Soft wrap", PROJ_TERM_IC.wrap, wrapOn)}
+    ${b("follow", "Scroll to end", PROJ_TERM_IC.follow, followOn)}
+  </div>`;
+}
 function projTermTabsHtml() {
   const tabs = proj.pty.sessions.map((s, i) => {
     const on = i === proj.pty.at ? " on" : "";
@@ -10712,7 +10984,24 @@ function projTermTabsHtml() {
       <span class="nm">${esc(projTermLabel(s, i))}</span>
       <span class="x" data-projtermclose="${esc(s.id)}" title="${tr("Close")}">×</span></button>`;
   }).join("");
-  return `<div class="proj-tabs">${tabs}<button type="button" class="proj-tab-add" data-projtermnew title="${tr("New terminal")}" aria-label="${tr("New terminal")}">+</button></div>`;
+  return `<div class="proj-tabs">${tabs}<button type="button" class="proj-tab-add" data-projtermnew title="${tr("New terminal")}" aria-label="${tr("New terminal")}">+</button>${projTermToolsHtml()}</div>`;
+}
+function projTermTool(action) {
+  const sess = projTermActive();
+  if (action === "top") { sess?.term?.scrollToTop?.(); return; }
+  if (action === "bottom") { sess?.term?.scrollToBottom?.(); return; }
+  if (action === "wrap") {
+    proj.pty.wrap = !proj.pty.wrap;
+    projSyncTermTabs();
+    projTermFitAll();
+    return;
+  }
+  if (action === "follow") {
+    proj.pty.follow = !(proj.pty.follow !== false);
+    if (proj.pty.follow) sess?.term?.scrollToBottom?.();
+    projSyncTermTabs();
+    return;
+  }
 }
 /* Keep the term tab strip in sync after ensureOne/boot (first open used to leave only "+"). */
 function projSyncTermTabs() {
@@ -10739,6 +11028,13 @@ function projSyncTermTabs() {
       if (nm && s) nm.textContent = projTermLabel(s, i);
       if (s) btn.title = projTermLabel(s, i);
     });
+    const wrapBtn = strip.querySelector('[data-projtermtool="wrap"]');
+    const followBtn = strip.querySelector('[data-projtermtool="follow"]');
+    if (wrapBtn) wrapBtn.setAttribute("aria-pressed", String(!!proj.pty.wrap));
+    if (followBtn) followBtn.setAttribute("aria-pressed", String(proj.pty.follow !== false));
+    if (!strip.querySelector(".proj-term-tools")) {
+      strip.insertAdjacentHTML("beforeend", projTermToolsHtml());
+    }
   }
 }
 function projMountTerm(then) {
@@ -10766,11 +11062,13 @@ function projFocusTerm() {
   projMountTerm();
   projTermActive()?.term?.focus();
 }
-function projRunInTerm(line) {
+function projRunInTerm(line, opts = {}) {
   const cmd = String(line || "").trim();
   if (!cmd || !proj.open) return;
   proj.pane = "term";
   if (ui.view === "projects") render();
+  // opts.label kept for callers; kiri-run-cmd itself prints "middleware.cmd up".
+  void opts;
   projMountTerm(() => projTermRunLine(cmd));
 }
 /** Run a project script; ask for optional args (remembered per path). Empty = no args. */
@@ -10785,8 +11083,8 @@ function projRunScript(path) {
       proj.scriptArgs = proj.scriptArgs || {};
       proj.scriptArgs[path] = args;
       const a = String(args || "").trim();
-      // Append raw argv text (user-typed flags); do not quote the whole string.
-      projRunInTerm(`bash ${projShellQuote(path)}${a ? ` ${a}` : ""}`);
+      const label = a ? `${name} ${a}` : name;
+      projRunInTerm(projScriptRunLine(path, args), { label });
     },
     last,
     { allowEmpty: true, allowSlash: true, ok: tr("Run") },
@@ -11144,13 +11442,10 @@ function renderProjectPage() {
   setHTML($("title"), `<span class="crumb"><button data-projback>${tr("Projects")}</button><span class="sep">›</span><span title="${esc(p.name)}">${esc(p.name)}</span></span>`);
   const tab = projTab(proj.active);
   const kind = projFileKind(proj.active);
+  // Scripts / Dockerfile: no editor Run/Build — same as projPaintEditorChrome.
   const actBtn = kind === "compose"
     ? `<button class="btn" data-projact="compose" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Open")}</button>`
-    : kind === "dockerfile"
-      ? `<button class="btn" data-projact="build" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Build")}</button>`
-      : kind === "script"
-        ? `<button class="btn" data-projact="run" data-id="${esc(p.id)}" data-path="${esc(proj.active)}">${tr("Run")}</button>`
-        : "";
+    : "";
   const tabs = (proj.tabs || []).map((t) => {
     const on = t.path === proj.active ? " on" : "";
     const mark = t.dirty || t.loading ? "• " : "";
@@ -11335,7 +11630,11 @@ function projEvent(e) {
     proj.pane = "term";
     if (ui.view === "projects") render();
     projMountTerm();
-    const write = (t) => projTermActive()?.term?.write(String(t).replace(/\r?\n/g, "\r\n"));
+    const sess = projTermActive();
+    const write = (t) => {
+      if (!sess?.term) return;
+      termWritePainted(sess.term, sess, String(t).replace(/\r?\n/g, "\r\n"));
+    };
     if (e.phase === "start") write(`\r\n\x1b[2m$ ${String(e.path || "").replace(/[\r\n]/g, " ")}\x1b[0m\r\n`);
     else if (e.phase === "log") write(e.text || "");
     else if (e.phase === "done" && e.code != null) write(`\r\n\x1b[2m[exit ${e.code}]\x1b[0m\r\n`);
@@ -11385,6 +11684,7 @@ function projClick(t) {
   }
   else if ((el = t("[data-projtermclose]"))) { evStop(el); projTermCloseTab(el.dataset.projtermclose); }
   else if (t("[data-projtermnew]")) { evStop(t("[data-projtermnew]")); projTermNew(); }
+  else if ((el = t("[data-projtermtool]"))) { evStop(el); projTermTool(el.dataset.projtermtool); }
   else if ((el = t("[data-projtermtab]"))) { if (!t("[data-projtermclose]")) projTermSelect(el.dataset.projtermtab); }
   else if ((el = t("[data-projtabclose]"))) { evStop(el); projCloseTab(el.dataset.projtabclose); }
   else if ((el = t("[data-projtab]"))) {
@@ -11443,15 +11743,14 @@ function projClick(t) {
       projRunInTerm(`docker build -f ${projShellQuote(path)} .`);
     } else {
       if (proj.open !== id) projOpen(id);
-      const a = String(args || "").trim();
-      projRunInTerm(`bash ${projShellQuote(path)}${a ? ` ${a}` : ""}`);
+      projRunInTerm(projScriptRunLine(path, args));
     }
   } else if ((el = t("[data-projact]"))) {
     const act = el.dataset.projact, path = el.dataset.path;
     if (act === "compose") send("projectcompose", { name: el.dataset.id, value: { path } });
     else if (act === "build") projRunInTerm(`docker build -f ${projShellQuote(path)} .`);
     else if (act === "run") projRunScript(path);
-    else projRunInTerm(`bash ${projShellQuote(path)}`);
+    else projRunInTerm(projScriptRunLine(path));
   } else return false;
   return true;
 }
@@ -12342,7 +12641,10 @@ function askText(title, placeholder, go, initial = "", opts = {}) {
   const scrim = document.createElement("div");
   scrim.className = "scrim";
   scrim.innerHTML = `<div class="dialog" role="dialog" aria-modal="true" aria-label="${esc(title)}">
-    <h3>${esc(title)}</h3>
+    <div class="head">
+      <h3>${esc(title)}</h3>
+      <button type="button" class="xclose" data-close title="${tr("Close")}" aria-label="${tr("Close")}">${CROSS}</button>
+    </div>
     <input class="field ask-field" id="ask-text" type="text" placeholder="${esc(placeholder)}" value="${esc(initial)}" autocomplete="off" spellcheck="false" />
     <div class="row-end"><span></span><span>
       <button type="button" class="btn" data-close>${tr("Cancel")}</button>
@@ -18978,36 +19280,192 @@ const htFs = () => Math.max(HT_FS.min, Math.min(HT_FS.max, Number(prefs.termFs) 
 const htFont = () => prefs.termFont || getComputedStyle(document.documentElement).getPropertyValue("--mono-font").trim() || "monospace";
 function htTheme() {
   const dark = darkNow();
-  // ANSI 16: PowerShell / PSReadLine paint commands yellow, strings cyan, etc.
-  // Dark: mid-tone hues so ls(1) colour-on-colour (e.g. white on cyan) stays readable;
-  // neon brights like #A5F3FC wash out as backgrounds. Light: inkier hues so yellow/
-  // cyan don't disappear on white.
-  // Prefer darkNow() over CSS vars: prefs can flip before prefers-color-scheme catches up.
+  // ANSI 16 tuned for Kiri's terminal bg (#0B0F13 / white): Catppuccin-ish
+  // on dark, GitHub ink on light — readable logs without neon glare.
   const ansi = dark
-    ? { black: "#0B0F13", red: "#E06C75", green: "#6BCB8B", yellow: "#D4A84B",
-        blue: "#6BA3E8", magenta: "#B894E8", cyan: "#2F9E98", white: "#D7DCE1",
-        brightBlack: "#6B7280", brightRed: "#F08080", brightGreen: "#86D9A5",
-        brightYellow: "#E6C36A", brightBlue: "#8BB8F0", brightMagenta: "#CDB0F0",
-        brightCyan: "#3AABA5", brightWhite: "#F2F0EB" }
+    ? { black: "#11151C", red: "#F38BA8", green: "#A6E3A1", yellow: "#F9E2AF",
+        blue: "#89B4FA", magenta: "#CBA6F7", cyan: "#89DCEB", white: "#CDD6F4",
+        brightBlack: "#6C7086", brightRed: "#FFA0B4", brightGreen: "#B8F0B3",
+        brightYellow: "#FFE6A0", brightBlue: "#A6C8FF", brightMagenta: "#D9B8FF",
+        brightCyan: "#A8E8F0", brightWhite: "#FFFFFF" }
     : { black: "#1F2328", red: "#CF222E", green: "#1A7F37", yellow: "#9A6700",
-        blue: "#0550AE", magenta: "#8250DF", cyan: "#0550AE", white: "#6E7781",
+        blue: "#0969DA", magenta: "#8250DF", cyan: "#0550AE", white: "#6E7781",
         brightBlack: "#656D76", brightRed: "#A40E26", brightGreen: "#116329",
-        brightYellow: "#7D4E00", brightBlue: "#0A66C2", brightMagenta: "#6639BA",
-        brightCyan: "#0A66C2", brightWhite: "#1F2328" };
+        brightYellow: "#7D4E00", brightBlue: "#0550AE", brightMagenta: "#6639BA",
+        brightCyan: "#0550AE", brightWhite: "#1F2328" };
   const bg = dark ? "#0B0F13" : "#FFFFFF";
-  const fg = dark ? "#D7DCE1" : "#1F2328";
+  const fg = dark ? "#CDD6F4" : "#1F2328";
+  // Thin VS Code bars: mid opacity so they read on both themes without a fat track.
+  const sb = dark ? "rgba(205,214,244,.28)" : "rgba(31,35,40,.28)";
+  const sbH = dark ? "rgba(205,214,244,.45)" : "rgba(31,35,40,.42)";
+  const sbA = dark ? "rgba(205,214,244,.6)" : "rgba(31,35,40,.55)";
   return { background: bg, foreground: fg,
     cursor: fg, cursorAccent: bg,
-    selectionBackground: dark ? "rgba(110,168,254,.35)" : "rgba(13,110,253,.22)",
+    selectionBackground: dark ? "rgba(137,180,250,.35)" : "rgba(13,110,253,.22)",
+    scrollbarSliderBackground: sb, scrollbarSliderHoverBackground: sbH, scrollbarSliderActiveBackground: sbA,
+    overviewRulerBorder: bg,
     ...ansi };
 }
-/** Shared xterm options: bump fg against coloured backgrounds (ls executables, etc.). */
+/** Shared xterm options. Contrast floor kept low so ANSI hues stay vivid
+ *  (4.5 washed docker/compose reds/greens toward grey). */
 function htTermOpts() {
   return {
     fontFamily: htFont(), fontSize: htFs(), theme: htTheme(), cursorBlink: true, scrollback: 10000,
     allowProposedApi: true, macOptionIsMeta: false, rightClickSelectsWord: false,
-    drawBoldTextInBrightColors: true, minimumContrastRatio: 4.5,
+    drawBoldTextInBrightColors: true, minimumContrastRatio: 1,
+    overviewRuler: { width: TERM_SB },
   };
+}
+/** Pick a stable ANSI colour for a token (docker-compose-style). */
+function termHueFor(name) {
+  let h = 2166136261;
+  for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 16777619);
+  // Avoid 30 (black) / 37 (white) — low contrast on both themes.
+  const codes = [31, 32, 33, 34, 35, 36, 91, 92, 93, 94, 95, 96];
+  return codes[(h >>> 0) % codes.length];
+}
+function termSoftPaintBody(s) {
+  if (!s) return s;
+  // Never rewrite text that already carries SGR / OSC.
+  if (s.includes("\x1b")) return s;
+  // Whole-line banners / separators — very common in .cmd/.sh scripts.
+  if (/^\s*[-=*#]{3,}\s*$/.test(s) || /^\s*[-=*]{3,}.*[-=*]{3,}\s*$/.test(s)) {
+    return `\x1b[36m${s}\x1b[0m`;
+  }
+  return s
+    .replace(/\[(ERROR|FATAL|FAIL(?:ED|URE)?|Exception|PANIC|错误)\]/gi, "[\x1b[1;31m$1\x1b[0m]")
+    .replace(/\[(WARN(?:ING)?|警告)\]/gi, "[\x1b[1;33m$1\x1b[0m]")
+    .replace(/\[(INFO|NOTICE|成功)\]/gi, "[\x1b[32m$1\x1b[0m]")
+    .replace(/\[(DEBUG|TRACE)\]/gi, "[\x1b[90m$1\x1b[0m]")
+    .replace(/\b(ERROR|FATAL|FAIL(?:ED|URE)?|Exception|PANIC|失败|错误)\b/gi, "\x1b[1;31m$1\x1b[0m")
+    .replace(/\b(WARN(?:ING)?|警告)\b/gi, "\x1b[1;33m$1\x1b[0m")
+    .replace(/\b(INFO|NOTICE|成功|Success|DONE)\b/gi, "\x1b[32m$1\x1b[0m")
+    .replace(/\b(DEBUG|TRACE)\b/gi, "\x1b[90m$1\x1b[0m")
+    // Chinese script chatter (middleware / deploy .cmd files).
+    .replace(/(失败|错误|异常|中断|崩溃)/g, "\x1b[1;31m$1\x1b[0m")
+    .replace(/(警告|注意|跳过)/g, "\x1b[1;33m$1\x1b[0m")
+    .replace(/(成功|完成|就绪|已启动|已创建|开始|正在|部署|构建|打包|推送|拉取|安装)/g, "\x1b[32m$1\x1b[0m")
+    .replace(/\b(Created|Started|Running|Healthy|Pulled|Built|Building|Pulling|Container|Network|Volume|Image)\b/g, "\x1b[32m$1\x1b[0m")
+    .replace(/\b(Stopped|Exited|Removed|Dead|Restarting|Unhealthy)\b/g, "\x1b[33m$1\x1b[0m")
+    .replace(/\b(docker|compose|kubectl|helm|gradle|maven|npm|pnpm|yarn)\b/gi, "\x1b[35m$1\x1b[0m")
+    .replace(/("[^"\r\n]{1,120}"|'[^'\r\n]{1,120}')/g, "\x1b[36m$1\x1b[0m")
+    .replace(/\b((?:[A-Za-z]:)?[\\/][^\s"'<>]{2,}|[A-Za-z0-9_.-]+\.(?:yml|yaml|json|xml|properties|conf|cmd|sh|ps1|jar|war))\b/g, "\x1b[34m$1\x1b[0m")
+    .replace(/\b(https?:\/\/[^\s"'<>]+)/g, "\x1b[34m$1\x1b[0m")
+    .replace(/:(\d{2,5})\b/g, ":\x1b[33m$1\x1b[0m")
+    .replace(/\b(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\b/g, "\x1b[90m$1\x1b[0m");
+}
+/** Length of a complete VT escape at `i`, or 0 if incomplete. */
+function termEscLen(s, i) {
+  if (s.charCodeAt(i) !== 0x1b || i + 1 >= s.length) return 0;
+  const n = s.charCodeAt(i + 1);
+  // CSI: ESC [ params/intermediates final
+  if (n === 0x5b /* [ */) {
+    let j = i + 2;
+    while (j < s.length) {
+      const c = s.charCodeAt(j++);
+      if (c >= 0x40 && c <= 0x7e) return j - i;
+    }
+    return 0;
+  }
+  // OSC: ESC ] … BEL or ESC \
+  if (n === 0x5d /* ] */) {
+    let j = i + 2;
+    while (j < s.length) {
+      if (s.charCodeAt(j) === 0x07) return j + 1 - i;
+      if (s.charCodeAt(j) === 0x1b && s.charCodeAt(j + 1) === 0x5c) return j + 2 - i;
+      j++;
+    }
+    return 0;
+  }
+  return 2;
+}
+/** After a CSI, decide start-of-line: true/false, or null = leave as-is (SGR etc.). */
+function termEscBol(seq) {
+  if (seq.length < 3 || seq[1] !== "[") return false;
+  const final = seq[seq.length - 1], params = seq.slice(2, -1);
+  if (final === "m" || final === "h" || final === "l" || final === "n" || final === "t") return null;
+  if (final === "G") {
+    const col = params ? parseInt(params, 10) : 1;
+    return !params || col === 1;
+  }
+  if (final === "H" || final === "f") {
+    const parts = params.split(";");
+    const col = parts.length > 1 && parts[1] !== "" ? parseInt(parts[1], 10) : 1;
+    return !Number.isFinite(col) || col <= 1;
+  }
+  if (final === "J") return true; // cleared — next text is a fresh line
+  return false;
+}
+/** Colourise plain text in PTY output. ConPTY often mixes CSI into the same
+ *  chunk as logs — pass escapes through, paint only the plain spans. */
+function termSoftPaint(state, chunk) {
+  if (!chunk) return chunk;
+  let s = (state._paintHold || "") + chunk;
+  state._paintHold = "";
+  let out = "";
+  if (state._paintBol == null) state._paintBol = true;
+  for (let i = 0; i < s.length; ) {
+    if (s.charCodeAt(i) === 0x1b) {
+      const n = termEscLen(s, i);
+      if (!n) {
+        // Incomplete sequence: hold, unless it is absurdly long (then flush).
+        if (s.length - i > 256) { out += s.slice(i); state._paintBol = false; break; }
+        state._paintHold = s.slice(i);
+        break;
+      }
+      const seq = s.slice(i, i + n);
+      out += seq;
+      i += n;
+      const bol = termEscBol(seq);
+      if (bol != null) state._paintBol = bol;
+      continue;
+    }
+    if (state._paintBol) {
+      const rest = s.slice(i);
+      // docker compose / logging drivers: "service_name  | message"
+      const pipe = rest.match(/^([A-Za-z0-9][A-Za-z0-9_.-]{0,62})(\s+\|\s)/);
+      if (pipe) {
+        out += `\x1b[${termHueFor(pipe[1])}m${pipe[1]}\x1b[0m${pipe[2]}`;
+        i += pipe[0].length;
+        state._paintBol = false;
+        continue;
+      }
+      // Leading [TAG] or ALLCAPS label — common in middleware.cmd echoes.
+      const tag = rest.match(/^(\[[^\]]{1,40}\]|[A-Z][A-Z0-9_/.-]{1,31})(\s+)/);
+      if (tag) {
+        out += `\x1b[${termHueFor(tag[1])}m${tag[1]}\x1b[0m${tag[2]}`;
+        i += tag[0].length;
+        state._paintBol = false;
+        continue;
+      }
+    }
+    let j = i;
+    while (j < s.length && s.charCodeAt(j) !== 0x1b && s[j] !== "\n" && s[j] !== "\r") j++;
+    out += termSoftPaintBody(s.slice(i, j));
+    if (j >= s.length) { state._paintBol = false; break; }
+    if (s.charCodeAt(j) === 0x1b) { i = j; continue; }
+    out += s[j];
+    if (s[j] === "\r" && s[j + 1] === "\n") { out += "\n"; j++; }
+    state._paintBol = true;
+    i = j + 1;
+  }
+  return out;
+}
+function termWritePainted(term, state, raw) {
+  if (!term) return;
+  if (state._paintBol == null) state._paintBol = true;
+  let text;
+  if (typeof raw === "string") text = raw;
+  else {
+    // Stream UTF-8 across chunks so split Chinese bytes don't become U+FFFD.
+    if (!state._utf8 && typeof TextDecoder === "function") {
+      state._utf8 = new TextDecoder("utf-8", { fatal: false });
+    }
+    text = state._utf8
+      ? state._utf8.decode(raw, { stream: true })
+      : String.fromCharCode.apply(null, raw);
+  }
+  term.write(termSoftPaint(state, text));
 }
 let htToastT;
 function htToast(text) {
@@ -19058,7 +19516,10 @@ function htStart(p) {
   term.onData((d) => !p.exited && send("term", { name: "input", id: p.id, value: htB64(d) }));
   term.onBinary((d) => !p.exited && send("term", { name: "input", id: p.id, value: btoa(d) }));
   term.onResize(({ cols, rows }) => p.opened && send("term", { name: "resize", id: p.id, value: { cols, rows } }));
-  term.onTitleChange((t) => { p.title = t; htTitles(); });
+  term.onTitleChange((t) => {
+    p.title = termPrettyTitle(t, { shell: p.shell, fallback: htShellLabel(p.shell) });
+    htTitles();
+  });
   term.textarea?.addEventListener("focus", () => htSetFocus(p.id, false));
   p.search.onDidChangeResults?.(({ resultIndex, resultCount }) => { if (p.id === ht.focus) htQ(".htcount").textContent = resultCount ? `${resultIndex + 1} of ${resultCount}` : ht.findQ ? "No results" : ""; });
   htFitOne(p);
@@ -19067,7 +19528,17 @@ function htStart(p) {
 }
 function htFitOne(p) {
   if (!p.term || !p.el.isConnected || !p.el.offsetWidth) return;
-  try { p.fit.fit(); } catch { /* not laid out yet */ }
+  try {
+    // Bottom drawer: fit the visible pane (TUIs need real width). No rows-1 gap.
+    const dim = p.fit.proposeDimensions?.();
+    if (dim && !isNaN(dim.cols) && !isNaN(dim.rows)) {
+      const cols = Math.max(2, dim.cols);
+      const rows = Math.max(1, dim.rows);
+      if (p.term.cols !== cols || p.term.rows !== rows) p.term.resize(cols, rows);
+    } else {
+      p.fit.fit();
+    }
+  } catch { /* not laid out yet */ }
 }
 function htFitAll() { for (const id of htTab() ? htLeaves(htTab().tree) : []) htFitOne(htPane(id)); }
 let htFitQueued = false;
@@ -19240,6 +19711,11 @@ const htStep = (step) => htSetFs(step === 0 ? HT_FS.def : htFs() + step);
 function htApply() {
   htEl.style.setProperty("--ht-h", `${Math.max(120, Number(prefs.termH) || 300)}px`);
   htEl.style.setProperty("--ht-unzoom", String(1 / (Number(prefs.scale) || 1)));
+  // Keep CSS --term-* aligned with prefs (not only prefers-color-scheme).
+  const dark = darkNow();
+  const root = document.documentElement.style;
+  root.setProperty("--term-bg", dark ? "#0B0F13" : "#FFFFFF");
+  root.setProperty("--term-fg", dark ? "#CDD6F4" : "#1F2328");
   const theme = htTheme(), font = htFont();
   for (const p of ht.panes.values()) if (p.term) { p.term.options.theme = theme; p.term.options.fontFamily = font; }
   // Project IDE PTYs share htTheme(); keep them in sync when appearance flips.
@@ -19502,8 +19978,13 @@ function htOn(e) {
   // Project detail terminals share the same term protocol.
   const ps = projTermById(e.id);
   if (ps?.term) {
-    if (e.ev === "data") ps.term.write(htUnB64(e.b64));
-    else if (e.ev === "paste") {
+    if (e.ev === "data") {
+      termWritePainted(ps.term, ps, htUnB64(e.b64));
+      if (proj.pty.follow !== false) {
+        // IDEA "Scroll to End": only stick to the bottom when follow is on.
+        ps.term.scrollToBottom?.();
+      }
+    } else if (e.ev === "paste") {
       if (e.text) send("term", { name: "input", id: ps.id, value: htB64(e.text) });
     } else if (e.ev === "exit") {
       ps.exited = true;
@@ -19515,7 +19996,7 @@ function htOn(e) {
   }
   const p = htPane(e.id);
   if (!p?.term) return;
-  if (e.ev === "data") p.term.write(htUnB64(e.b64));
+  if (e.ev === "data") termWritePainted(p.term, p, htUnB64(e.b64));
   else if (e.ev === "paste") htPaste(e.id, e.text || "");
   else if (e.ev === "exit") {
     p.exited = true;
