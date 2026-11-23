@@ -221,7 +221,11 @@ fn shells() -> Vec<Shell> {
 fn command_line(id: &str) -> String {
     let quoted = |p: PathBuf| format!("\"{}\"", p.display());
     match id {
-        "pwsh" => pwsh().map_or_else(|| quoted(system32(r"WindowsPowerShell\v1.0\powershell.exe")), quoted) + " -NoLogo",
+        // Keep ANSI decorations in the host (PS 7.2+ $PSStyle); then stay interactive.
+        "pwsh" => match pwsh() {
+            Some(p) => format!("{} -NoLogo -NoExit -Command \"$PSStyle.OutputRendering='Ansi'\"", quoted(p)),
+            None => quoted(system32(r"WindowsPowerShell\v1.0\powershell.exe")) + " -NoLogo",
+        },
         "powershell" => quoted(system32(r"WindowsPowerShell\v1.0\powershell.exe")) + " -NoLogo",
         // Distro names were checked to be plain in shells().
         _ if id.starts_with("wsl:") => format!("{} -d {} --cd ~", quoted(system32("wsl.exe")), &id[4..]),
@@ -229,21 +233,82 @@ fn command_line(id: &str) -> String {
     }
 }
 
+/// Install `kiri-run-cmd` into `%LOCALAPPDATA%\Kiri\bin` so the page can type a
+/// short `kiri-run-cmd middleware.cmd up` instead of a BOM-strip one-liner.
+fn ensure_run_cmd_helper() {
+    let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(r"Kiri\bin")) else { return };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("kiri-run-cmd: create bin dir: {e}");
+        return;
+    }
+    for (name, body) in [
+        ("kiri-run-cmd.ps1", include_str!("../../../contrib/windows/kiri-run-cmd.ps1")),
+        ("kiri-run-cmd.cmd", include_str!("../../../contrib/windows/kiri-run-cmd.cmd")),
+    ] {
+        let path = dir.join(name);
+        if let Err(e) = std::fs::write(&path, body) {
+            eprintln!("kiri-run-cmd: write {}: {e}", path.display());
+        }
+    }
+}
+
 /// This process's environment with Kiri's tools first on the PATH, as a
 /// CreateProcessW block: `name=value` UTF-16 strings, sorted, each ending
 /// in a NUL, and one more NUL at the end.
 fn environment() -> Vec<u16> {
+    ensure_run_cmd_helper();
     let ours = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(r"Kiri\bin")).filter(|d| d.is_dir());
     let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()));
     let mut vars: Vec<(String, String)> = std::env::vars_os().map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned())).collect();
+    // Drop vars that force plain text — ConPTY is a real TTY and can show ANSI.
+    // Also drop COMPOSE_PROGRESS/BUILDKIT_PROGRESS: `plain` + COMPOSE_ANSI=always
+    // makes `docker compose up` fail with "can't use --progress plain while ANSI
+    // support is forced".
+    vars.retain(|(k, _)| {
+        !k.eq_ignore_ascii_case("NO_COLOR")
+            && !k.eq_ignore_ascii_case("CI")
+            && !k.eq_ignore_ascii_case("COMPOSE_PROGRESS")
+            && !k.eq_ignore_ascii_case("BUILDKIT_PROGRESS")
+    });
     let path_at = vars.iter().position(|(k, _)| k.eq_ignore_ascii_case("PATH"));
     let old = path_at.map(|i| vars[i].1.clone()).unwrap_or_default();
-    let dirs: Vec<PathBuf> = ours.into_iter().chain(exe_dir.map(|d| d.join("bin")).filter(|d| d.is_dir())).chain(std::env::split_paths(&old)).collect();
+    // Keep System32 near the front so `cmd` / `powershell` resolve even when
+    // the parent process PATH is odd (otherwise script Run fails with ^Ucmd…).
+    let system32 = std::env::var_os("SystemRoot").map(|r| PathBuf::from(r).join("System32"));
+    let dirs: Vec<PathBuf> = ours
+        .into_iter()
+        .chain(exe_dir.map(|d| d.join("bin")).filter(|d| d.is_dir()))
+        .chain(system32)
+        .chain(std::env::split_paths(&old))
+        .collect();
     let path = std::env::join_paths(dirs).map(|p| p.to_string_lossy().into_owned()).unwrap_or(old);
     match path_at {
         Some(i) => vars[i].1 = path,
         None => vars.push(("PATH".into(), path)),
     }
+    // Same as macOS/Linux (ui/term.rs): without TERM / FORCE_COLOR, many CLIs stay mono.
+    let set = |vars: &mut Vec<(String, String)>, key: &str, val: &str| {
+        if let Some((_, v)) = vars.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(key)) {
+            *v = val.into();
+        } else {
+            vars.push((key.into(), val.into()));
+        }
+    };
+    set(&mut vars, "TERM", "xterm-256color");
+    set(&mut vars, "COLORTERM", "truecolor");
+    set(&mut vars, "TERM_PROGRAM", "Kiri");
+    set(&mut vars, "FORCE_COLOR", "3");
+    set(&mut vars, "CLICOLOR", "1");
+    set(&mut vars, "CLICOLOR_FORCE", "1");
+    // Prefer ANSI when the console is a TTY; `always` fights compose `--progress plain`
+    // (error: can't use --progress plain while ANSI support is forced).
+    set(&mut vars, "COMPOSE_ANSI", "auto");
+    set(&mut vars, "DOCKER_CLI_HINTS", "false");
+    // Git / npm: prefer colour when stdout is our ConPTY.
+    set(&mut vars, "GIT_CONFIG_COUNT", "1");
+    set(&mut vars, "GIT_CONFIG_KEY_0", "color.ui");
+    set(&mut vars, "GIT_CONFIG_VALUE_0", "always");
+    set(&mut vars, "npm_config_color", "always");
     vars.sort_by_key(|(k, _)| k.to_uppercase());
     let mut block: Vec<u16> = Vec::new();
     for (k, v) in vars {
