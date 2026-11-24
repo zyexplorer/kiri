@@ -13,8 +13,9 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment, ICoreWebView2NavigationCompletedEventArgs, ICoreWebView2NavigationStartingEventArgs,
-    ICoreWebView2NewWindowRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2WebMessageReceivedEventArgs, ICoreWebView2WebResourceRequestedEventArgs,
+    CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment,
+    ICoreWebView2NavigationCompletedEventArgs, ICoreWebView2NavigationStartingEventArgs, ICoreWebView2NewWindowRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs,
+    ICoreWebView2WebMessageReceivedEventArgs, ICoreWebView2WebResourceRequestedEventArgs,
 };
 use webview2_com::{
     AddScriptToExecuteOnDocumentCreatedCompletedHandler, CoTaskMemPWSTR, CreateCoreWebView2ControllerCompletedHandler,
@@ -30,6 +31,7 @@ use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW};
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_OEM_3, VK_SHIFT};
 use windows::Win32::UI::Shell::{
     FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, ShellExecuteW, Shell_NotifyIconW, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST,
     FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST, FOS_PICKFOLDERS, NIF_GUID, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
@@ -37,11 +39,13 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, BringWindowToTop, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, FindWindowW, GetClientRect,
-    GetCursorPos, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowThreadProcessId, IsWindowVisible, IsZoomed, KillTimer, SM_CXSCREEN, SM_CYSCREEN, SW_MAXIMIZE, SW_SHOWNORMAL, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SendMessageW,
-    SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, TrackPopupMenu, TranslateMessage, HICON, HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL, IDC_ARROW, LR_DEFAULTCOLOR, MF_GRAYED,
-    MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, TPM_RETURNCMD, TPM_RIGHTBUTTON, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_CONTEXTMENU,
-    WM_LBUTTONUP, WM_RBUTTONUP, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    AppendMenuW, BringWindowToTop, CallNextHookEx, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, FindWindowW, GetClientRect,
+    GetCursorPos, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowThreadProcessId, IsWindowVisible, IsZoomed, KillTimer, SetWindowsHookExW, UnhookWindowsHookEx,
+    SM_CXSCREEN, SM_CYSCREEN, SW_MAXIMIZE, SW_SHOWNORMAL, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SendMessageW,
+    SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, TrackPopupMenu, TranslateMessage, HHOOK, HICON, HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL, IDC_ARROW,
+    KBDLLHOOKSTRUCT, LLKHF_UP, LR_DEFAULTCOLOR, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, WH_KEYBOARD_LL, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_LBUTTONUP, WM_RBUTTONUP, WM_SETICON, WM_SIZE, WM_TIMER,
+    WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 
 pub const CLASS: PCWSTR = w!("KiriWindow");
@@ -54,6 +58,12 @@ pub const WM_SHOW: u32 = WM_APP + 3;
 /// Open-file dialog: must not run inside `with_ui` (modal Show nests the
 /// message loop; holding Ui's RefCell then blanks the shell view and freezes).
 const WM_PICK_FILE: u32 = WM_APP + 4;
+/// Open-folder dialog: same nesting rule as [`WM_PICK_FILE`].
+const WM_PICK_FOLDER: u32 = WM_APP + 5;
+/// Ctrl+` terminal toggle from the low-level keyboard hook (focus/IME safe).
+const WM_TERM_TOGGLE: u32 = WM_APP + 6;
+/// Scan code for the physical `` ` `` / `~` key (US/CN layouts).
+const SCAN_BACKQUOTE: u32 = 0x29;
 
 const PAGE: &str = include_str!("../../kiri/src/ui/index.html");
 /// The first-run setup (setup.rs), Windows only.
@@ -119,6 +129,8 @@ type Job = Box<dyn FnOnce(&mut Ui) + Send>;
 
 static JOBS: Mutex<Vec<Job>> = Mutex::new(Vec::new());
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
+/// WH_KEYBOARD_LL handle so Ctrl+` works while the terminal / IME has focus.
+static TERM_HOOK: AtomicIsize = AtomicIsize::new(0);
 
 struct PickFileReq {
     title: String,
@@ -128,6 +140,13 @@ struct PickFileReq {
 }
 
 static PICK_FILE: Mutex<Option<PickFileReq>> = Mutex::new(None);
+
+struct PickFolderReq {
+    title: String,
+    reply: std::sync::mpsc::Sender<Option<std::path::PathBuf>>,
+}
+
+static PICK_FOLDER: Mutex<Option<PickFolderReq>> = Mutex::new(None);
 
 /// What the rest of kiri-win uses to reach the window, from any thread.
 #[derive(Debug, Clone, Copy)]
@@ -538,6 +557,15 @@ pub fn run(show: bool, setup: bool, on_message: impl Fn(String) + 'static, on_tr
     // GUID identity: drop any ghost left by a previous process that was killed
     // mid-rebuild, then add ours. HWND+uID alone cannot remove another process's icon.
     tray_install(hwnd, small);
+    // Ctrl+`: intercept before WebView2 / IME so a focused terminal can still toggle.
+    // SAFETY: hook proc only posts to our window; unhooked when the loop ends.
+    unsafe {
+        if let Ok(hook) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(term_toggle_hook), None, 0) {
+            TERM_HOOK.store(hook.0 as isize, Ordering::SeqCst);
+        } else {
+            crate::serve::log("term hotkey: SetWindowsHookExW(WH_KEYBOARD_LL) failed");
+        }
+    }
     if show {
         self::show();
     }
@@ -550,9 +578,72 @@ pub fn run(show: bool, setup: bool, on_message: impl Fn(String) + 'static, on_tr
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        let hook = TERM_HOOK.swap(0, Ordering::SeqCst);
+        if hook != 0 {
+            let _ = UnhookWindowsHookEx(HHOOK(hook as _));
+        }
     }
     tray(hwnd, None, NIM_DELETE);
     Ok(())
+}
+
+/// True when our top-level window is the foreground one (WebView focus still counts).
+fn kiri_is_foreground() -> bool {
+    let hwnd = WINDOW.load(Ordering::SeqCst);
+    if hwnd == 0 {
+        return false;
+    }
+    // SAFETY: our window handle; GetForegroundWindow is process-wide.
+    unsafe {
+        IsWindowVisible(HWND(hwnd as _)).as_bool() && GetForegroundWindow().0 as isize == hwnd
+    }
+}
+
+/// Low-level keyboard hook: Ctrl+` (backtick / VK_OEM_3 / scan 0x29) → terminal toggle.
+///
+/// Runs before WebView2 and IME see the key, so a focused xterm cannot swallow it.
+/// Only active while Kiri is the foreground window; bare ` still reaches the terminal.
+///
+/// # Safety
+/// Called by Windows on our UI thread's hook chain; must stay fast (only PostMessage).
+unsafe extern "system" fn term_toggle_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // SAFETY: Windows guarantees lparam points at KBDLLHOOKSTRUCT when code >= 0.
+    if code >= 0 {
+        let info = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
+        let backtick = info.vkCode == u32::from(VK_OEM_3.0) || info.scanCode == SCAN_BACKQUOTE;
+        if backtick {
+            thread_local! { static HELD: Cell<bool> = const { Cell::new(false) }; }
+            if info.flags.contains(LLKHF_UP) {
+                HELD.with(|h| h.set(false));
+            } else if kiri_is_foreground() {
+                // SAFETY: async key state is the documented API inside LL hooks.
+                let ctrl = unsafe { GetAsyncKeyState(i32::from(VK_CONTROL.0)) } < 0;
+                let alt = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) } < 0;
+                let shift = unsafe { GetAsyncKeyState(i32::from(VK_SHIFT.0)) } < 0;
+                if ctrl && !alt && !shift {
+                    let first = HELD.with(|h| {
+                        if h.get() {
+                            false
+                        } else {
+                            h.set(true);
+                            true
+                        }
+                    });
+                    if first {
+                        let hwnd = WINDOW.load(Ordering::SeqCst);
+                        // SAFETY: posting to our own window on this process.
+                        let _ = unsafe {
+                            PostMessageW(Some(HWND(hwnd as _)), WM_TERM_TOGGLE, WPARAM(0), LPARAM(0))
+                        };
+                    }
+                    // Swallow so the terminal / page never also handle this chord.
+                    return LRESULT(1);
+                }
+            }
+        }
+    }
+    // SAFETY: continue the hook chain.
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
 /// Whether a kiri-win is running: its window exists, shown or not.
@@ -770,7 +861,12 @@ extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
     match msg {
         WM_RUN => run_jobs(),
         WM_PICK_FILE => run_pick_file(hwnd),
+        WM_PICK_FOLDER => run_pick_folder(hwnd),
         WM_SHOW => show(),
+        WM_TERM_TOGGLE => {
+            // From the LL keyboard hook: Ctrl+` regardless of WebView/IME focus.
+            Handle.eval("typeof htToggle==='function'&&htToggle()".into());
+        }
         WM_TIMER if wparam.0 == TIMER_FOREGROUND => {
             // SAFETY: our window, on its thread.
             unsafe {
@@ -1129,6 +1225,47 @@ fn run_pick_file(hwnd: HWND) {
         }
     });
     let path = unsafe { file_open_dialog(hwnd, &req.title, &req.filter_label, &req.filter_pattern) };
+    with_ui(|ui| {
+        if let Some(c) = ui.controller.as_ref() {
+            // SAFETY: as above.
+            let _ = unsafe { c.SetIsVisible(true) };
+        }
+    });
+    let _ = req.reply.send(path);
+}
+
+/// Modal folder picker on the window thread. Same nesting rules as
+/// [`pick_file_blocking`]: call from a worker, never while holding `Ui`.
+pub fn pick_folder_blocking(title: &str) -> Option<std::path::PathBuf> {
+    let hwnd = WINDOW.load(Ordering::SeqCst);
+    if hwnd == 0 {
+        return None;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    {
+        let mut slot = PICK_FOLDER.lock().unwrap_or_else(PoisonError::into_inner);
+        if slot.is_some() {
+            let _ = tx.send(None);
+            return None;
+        }
+        *slot = Some(PickFolderReq { title: title.to_owned(), reply: tx });
+    }
+    // SAFETY: our window; handler runs on its thread without borrowing Ui.
+    let _ = unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_PICK_FOLDER, WPARAM(0), LPARAM(0)) };
+    rx.recv().ok().flatten()
+}
+
+fn run_pick_folder(hwnd: HWND) {
+    let Some(req) = PICK_FOLDER.lock().unwrap_or_else(PoisonError::into_inner).take() else {
+        return;
+    };
+    with_ui(|ui| {
+        if let Some(c) = ui.controller.as_ref() {
+            // SAFETY: controller for this window, on its thread.
+            let _ = unsafe { c.SetIsVisible(false) };
+        }
+    });
+    let path = unsafe { folder_dialog(hwnd, &HSTRING::from(req.title.as_str())) }.ok().flatten();
     with_ui(|ui| {
         if let Some(c) = ui.controller.as_ref() {
             // SAFETY: as above.
