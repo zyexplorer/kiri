@@ -1850,5 +1850,9 @@
   "Continue anyway": "仍然繼續",
   "One step didn't work. Everything else is ready.": "有一個步驟未成功，其餘均已就緒。",
   "Some steps didn't work. Everything else is ready.": "有些步驟未成功，其餘均已就緒。",
-  "No matches": "沒有相符的項目"
+  "No matches": "沒有相符的項目",
+  "Export image": "匯出鏡像",
+  "Exported": "已匯出",
+  "Exported {name} to {file}": "已將 {name} 匯出為 {file}",
+  "Could not export {name}: {error}": "無法匯出 {name}：{error}"
 }

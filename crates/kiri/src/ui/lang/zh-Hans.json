@@ -1850,5 +1850,9 @@
   "Continue anyway": "仍然继续",
   "One step didn't work. Everything else is ready.": "有一个步骤未成功，其余均已就绪。",
   "Some steps didn't work. Everything else is ready.": "有些步骤未成功，其余均已就绪。",
-  "No matches": "没有匹配项"
+  "No matches": "没有匹配项",
+  "Export image": "导出镜像",
+  "Exported": "已导出",
+  "Exported {name} to {file}": "已将 {name} 导出为 {file}",
+  "Could not export {name}: {error}": "无法导出 {name}：{error}"
 }

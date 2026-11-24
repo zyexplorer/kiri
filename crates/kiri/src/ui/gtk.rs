@@ -291,15 +291,42 @@ pub(super) fn pick_kit_file(title: &str, done: impl FnOnce(Option<std::path::Pat
 }
 
 pub(super) fn pick_kit_save(title: &str, suggested: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
-    let (title, suggested) = (title.to_owned(), suggested.to_owned());
+    pick_save(title, suggested, "Kiri kits", "*.kirikit", done);
+}
+
+pub(super) fn pick_tar_save(title: &str, suggested: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    pick_save(title, suggested, "Tar archive", "*.tar", move |path| {
+        done(path.map(|p| {
+            if p.extension().and_then(|e| e.to_str()) == Some("tar") {
+                p
+            } else {
+                p.with_extension("tar")
+            }
+        }));
+    });
+}
+
+fn pick_save(
+    title: &str,
+    suggested: &str,
+    filter_name: &str,
+    pattern: &str,
+    done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static,
+) {
+    let (title, suggested, filter_name, pattern) = (
+        title.to_owned(),
+        suggested.to_owned(),
+        filter_name.to_owned(),
+        pattern.to_owned(),
+    );
     glib::MainContext::default().invoke(move || {
         let parent = WINDOW.with(|v| v.borrow().clone());
         let dialog = gtk::FileChooserNative::new(Some(&title), parent.as_ref(), gtk::FileChooserAction::Save, None, None);
         dialog.set_current_name(&suggested);
-        let kit = gtk::FileFilter::new();
-        kit.set_name(Some("Kiri kits"));
-        kit.add_pattern("*.kirikit");
-        dialog.add_filter(kit);
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some(&filter_name));
+        filter.add_pattern(&pattern);
+        dialog.add_filter(filter);
         let picked = if dialog.run() == gtk::ResponseType::Accept { dialog.filename() } else { None };
         dialog.destroy();
         done(picked);

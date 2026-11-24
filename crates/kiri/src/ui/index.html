@@ -2029,6 +2029,8 @@ td.actions .acts-row { margin-left: auto; width: max-content; padding-left: 24px
 .toast.error .yard .tick { background: var(--red); animation-delay: .55s; }
 .toast.ok .yard .tick svg, .toast.error .yard .tick svg { width: 10px; height: 10px; }
 .toast.ok .txt, .toast.error .txt { min-width: 0; line-height: 1.35; overflow-wrap: anywhere; }
+.toast.exported b { display: block; font-weight: 600; }
+.toast.exported .sub { display: block; color: var(--muted); font-size: var(--fs); font-weight: 400; overflow-wrap: anywhere; }
 .toast.ok .life, .toast.error .life { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; opacity: .6; transform-origin: left; animation: life var(--life, 3.5s) linear forwards; }
 .toast.ok .life { background: var(--moss); }
 .toast.error .life { background: var(--red); }
@@ -3315,7 +3317,11 @@ const ZH = {
   "Search containers, images…": "搜索容器、镜像…",
   "All": "全部", "Stopped": "已停止", "Failed": "失败", "In use": "使用中", "Unused": "未使用",
   "Untagged": "未标记", "Building": "构建中", "Completed": "已完成", "Canceled": "已取消",
-  "Actions": "操作", "Pull image": "拉取镜像", "Pull": "拉取", "Run": "运行", "Run {image}": "运行 {image}",
+  "Actions": "操作", "Pull image": "拉取镜像", "Pull": "拉取", "Export": "导出", "Export image": "导出镜像",
+  "Exported": "已导出",
+  "Exported {name} to {file}": "已将 {name} 导出为 {file}",
+  "Could not export {name}: {error}": "无法导出 {name}：{error}",
+  "Run": "运行", "Run {image}": "运行 {image}",
   "Restart": "重启", "Pause": "暂停", "Resume": "继续", "Open": "打开",
   "Clear {n} failed": "清理 {n} 个失败项", "Remove {n} untagged": "删除 {n} 个未标记镜像",
   "selected": "已选", "Select all {n}": "全选 {n} 项", "Select all": "全选", "Select none": "取消全选",
@@ -4874,6 +4880,11 @@ const ZH_TW = {
   "Actions": "操作",
   "Pull image": "拉取鏡像",
   "Pull": "拉取",
+  "Export": "匯出",
+  "Export image": "匯出鏡像",
+  "Exported": "已匯出",
+  "Exported {name} to {file}": "已將 {name} 匯出為 {file}",
+  "Could not export {name}: {error}": "無法匯出 {name}：{error}",
   "Run": "運行",
   "Run {image}": "運行 {image}",
   "Restart": "重啟",
@@ -12859,12 +12870,19 @@ function imageCard(i, lit) {
       ${cell("Size", `<span class="num">${size(i.Size)}</span>`)}
       ${cell("Pulled", i.Pulled ? ago(i.Pulled) : "—")}
     </div>
-    <div class="gacts"><span class="gacts-l">${runBtn(name, true)}${ibtn("pull", "Pull", `data-pull="${esc(name)}" ${pulling(name) || untagged(i) ? "disabled" : ""}`)}${imgNoteBtn(name)}</span><span class="spacer"></span>${imgRemoveBtn(name, i)}</div>
+    <div class="gacts"><span class="gacts-l">${runBtn(name, true)}${ibtn("pull", "Pull", `data-pull="${esc(name)}" ${pulling(name) || untagged(i) ? "disabled" : ""}`)}${imgExportBtn(name)}${imgNoteBtn(name)}</span><span class="spacer"></span>${imgRemoveBtn(name, i)}</div>
   </div>`;
 }
 function imgNoteBtn(name) {
   const has = ui.imgNotes.has(name);
   return ibtn("note", "Remark", `data-imgnote="${esc(name)}"`, has ? "has-note" : "");
+}
+function imgExportBtn(name) {
+  return ibtn("cloudarrow", "Export", `data-imgexport="${esc(name)}"`);
+}
+function exportImage(name) {
+  if (!name) return;
+  send("imageexportopen", { name });
 }
 function pullCard(p) {
   const [repo, tag] = split(p.name), failed = p.phase === "failed", warn = failed && p.kind === "network", off = p.phase === "cancelled";
@@ -12917,6 +12935,7 @@ function renderImages() {
       <td class="actions"><div class="acts-row">
         ${runBtn(name, true)}
         ${ibtn("pull", "Pull", `data-pull="${esc(name)}" ${pulling(name) || untagged(i) ? "disabled" : ""}`)}
+        ${imgExportBtn(name)}
         ${imgNoteBtn(name)}
         ${imgRemoveBtn(name, i)}
       </div></td></tr>`);
@@ -12958,7 +12977,7 @@ function renderImageDetail() {
       ${tile(i.icon)}
       <div class="who"><span class="ttl"><b title="${esc(d.name)}">${refHtml(d.name, true)}</b>${copyBtn(d.name, "image name")}</span><span class="muted"><span class="mono sel">${esc(short(i.Id))}</span>${copyBtn(i.Id, "image ID")} · ${size(i.Size)} · ${tr("made {when}", { when: ago(i.Created) })}${users.length ? ` · <span title="${esc(users.map(cname).join(", "))}">${users.length > 2 ? tr("used by {names} +{n} more", { names: users.slice(0, 2).map((u) => esc(cname(u))).join(", "), n: users.length - 2 }) : tr("used by {names}", { names: users.slice(0, 2).map((u) => esc(cname(u))).join(", ") })}</span>` : ""}</span></div>
       <span class="spacer"></span>
-      <div class="acts-row">${runBtn(d.name, false)}${lbtn("pull", "Pull", `data-pull="${esc(d.name)}" ${pulling(d.name) ? "disabled" : ""}`)}${imgNoteBtn(d.name)}${imgRemoveBtn(d.name, i)}</div>
+      <div class="acts-row">${runBtn(d.name, false)}${lbtn("pull", "Pull", `data-pull="${esc(d.name)}" ${pulling(d.name) ? "disabled" : ""}`)}${imgExportBtn(d.name)}${imgNoteBtn(d.name)}${imgRemoveBtn(d.name, i)}</div>
     </div>
     <div class="bl-tabs" role="tablist">
       <button role="tab" data-imgtab="layers" aria-selected="${tab === "layers"}">${tr("Layers")}</button>
@@ -14176,6 +14195,24 @@ function toast(kind, text, op, open, act, why) {
     el.querySelector(".txt").insertAdjacentHTML("beforeend", `<div class="dg-tacts"><button class="lnk" data-trestart>${tr("Restart now")}</button></div>`);
     el.querySelector("[data-trestart]").addEventListener("click", () => { el.remove(); send("restartvm"); });
   }
+  $("toasts").append(el);
+  retire(el, ms);
+}
+/** Image export finished: title is translated; name/file stay as written. */
+function imageExportedToast(e) {
+  if (e.error) {
+    toast("error", tr("Could not export {name}: {error}", { name: e.name || "", error: e.error }));
+    return;
+  }
+  const ms = 4500;
+  const el = document.createElement("div");
+  el.className = "toast ok exported";
+  el.setAttribute("role", "status");
+  el.style.setProperty("--life", `${ms}ms`);
+  el.innerHTML = `<div class="yard" aria-hidden="true"><i></i><i></i><i class="box"></i><span class="tick">${TICK}</span></div>
+    <div class="txt"><b></b><span class="sub"></span></div><div class="life"></div>`;
+  el.querySelector("b").textContent = tr("Exported");
+  el.querySelector(".sub").textContent = `${e.name || ""} → ${e.file || ""}`;
   $("toasts").append(el);
   retire(el, ms);
 }
@@ -15467,6 +15504,9 @@ window.kiri = {
         // A pull not found may now have a "Did you mean".
         if (e.kind === "search" && [...ui.pulls.values()].some((p) => p.kind === "notfound")) pullsChanged();
         break;
+      case "imageexported":
+        imageExportedToast(e);
+        break;
       case "notice":
         // Each pod a batch deletes says so; the batch's own toast already has.
         if (e.kind === "ok" && /^Deleting pod /.test(e.text) && ui.batches.some((b) => b.view === "pods" && b.phase === "going")) break;
@@ -15706,6 +15746,7 @@ $("content").addEventListener("click", (ev) => {
   // A click on a resize edge, or the one that ends a drag, doesn't sort.
   if (t(".col-resize") || Date.now() - (ui.resizedAt || 0) < 300) return;
   if ((el = t("[data-pull]"))) pullRef(el.dataset.pull);
+  else if ((el = t("[data-imgexport]"))) exportImage(el.dataset.imgexport);
   else if ((el = t("[data-pretry]"))) pullRef(el.dataset.pretry);
   else if ((el = t("[data-pcancel]"))) cancelPull(el.dataset.pcancel);
   else if ((el = t("[data-pdismiss]"))) { ui.pulls.delete(el.dataset.pdismiss); ui.signin.delete(`pull:${el.dataset.pdismiss}`); render(); }

@@ -458,7 +458,25 @@ pub(super) fn pick_kit_file(title: &str, done: impl FnOnce(Option<std::path::Pat
 
 /// Export kit: save panel with a suggested name.
 pub(super) fn pick_kit_save(title: &str, suggested: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
-    let (title, suggested) = (title.to_owned(), suggested.to_owned());
+    pick_save(title, suggested, "kirikit", done);
+}
+
+/// Save panel for an image tar (`docker save`).
+pub(super) fn pick_tar_save(title: &str, suggested: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    pick_save(title, suggested, "tar", move |path| {
+        // AppKit usually appends the allowed type; keep a .tar suffix if not.
+        done(path.map(|p| {
+            if p.extension().and_then(|e| e.to_str()) == Some("tar") {
+                p
+            } else {
+                p.with_extension("tar")
+            }
+        }));
+    });
+}
+
+fn pick_save(title: &str, suggested: &str, ext: &str, done: impl FnOnce(Option<std::path::PathBuf>) + Send + 'static) {
+    let (title, suggested, ext) = (title.to_owned(), suggested.to_owned(), ext.to_owned());
     DispatchQueue::main().exec_async(move || {
         // SAFETY: main queue; NSSavePanel messages as AppKit declares.
         let picked = (|| unsafe {
@@ -466,7 +484,7 @@ pub(super) fn pick_kit_save(title: &str, suggested: &str, done: impl FnOnce(Opti
             let words = NSString::from_str(&title);
             let _: () = msg_send![&*panel, setTitle: &*words];
             let _: () = msg_send![&*panel, setNameFieldStringValue: &*NSString::from_str(&suggested)];
-            let kinds = objc2_foundation::NSArray::from_retained_slice(&[NSString::from_str("kirikit")]);
+            let kinds = objc2_foundation::NSArray::from_retained_slice(&[NSString::from_str(&ext)]);
             let _: () = msg_send![&*panel, setAllowedFileTypes: &*kinds];
             let answer: isize = msg_send![&*panel, runModal];
             if answer != 1 {

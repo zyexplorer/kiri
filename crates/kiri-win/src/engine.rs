@@ -5,7 +5,8 @@
 //! Terminal, the keychain, /etc/resolver) has a Windows equivalent here or
 //! is reported as not available yet.
 
-use std::io;
+use std::io::{self, Write};
+use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -270,6 +271,33 @@ fn act(result: io::Result<()>) {
 
 pub(crate) fn path_escape(s: &str) -> String {
     s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~:/@".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
+fn image_tar_suggested(name: &str) -> String {
+    let leaf = name.rsplit('/').next().unwrap_or(name);
+    let s: String = leaf
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let s = s.trim_matches('-');
+    format!("{}.tar", if s.is_empty() { "image" } else { s })
+}
+
+fn export_image_tar(name: &str, dest: &Path) -> io::Result<()> {
+    let api = format!("/images/{}/get", path_escape(name));
+    let mut stream = client::Stream::open(&api)?;
+    let mut file = std::fs::File::create(dest)?;
+    while let Some(chunk) = stream.next() {
+        file.write_all(&chunk)?;
+    }
+    file.flush()?;
+    Ok(())
 }
 
 /// Start, or a launch: the daemon is made to answer (so `docker` gets an
@@ -1077,6 +1105,38 @@ pub fn on_message(msg: &str) {
         "hubsearch" => crate::hub::ask(crate::hub::Kind::Search, c.name, emit),
         "hubtags" => crate::hub::ask(crate::hub::Kind::Tags, c.name, emit),
         "rmi" => send(Cmd::RemoveImage(c.name)),
+        // Images → Export: save panel, then stream `docker save` to that path.
+        "imageexportopen" => {
+            let name = c.name.trim().to_owned();
+            if name.is_empty() {
+                return;
+            }
+            let suggested = image_tar_suggested(&name);
+            crate::app::pick_save(
+                &tr("Export image"),
+                &suggested,
+                &[("Tar archive".into(), "*.tar".into())],
+                move |path| {
+                    let Some(path) = path else { return };
+                    // Ensure a .tar suffix if the dialog didn't add one.
+                    let path = if path.extension().and_then(|e| e.to_str()) == Some("tar") {
+                        path
+                    } else {
+                        path.with_extension("tar")
+                    };
+                    match export_image_tar(&name, &path) {
+                        Ok(()) => {
+                            let file = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                            emit(json!({"type": "imageexported", "name": name, "file": file}).to_string());
+                        }
+                        Err(e) => {
+                            let _ = std::fs::remove_file(&path);
+                            emit(json!({"type": "imageexported", "name": name, "error": e.to_string()}).to_string());
+                        }
+                    }
+                },
+            );
+        }
         "run" => {
             let env = c.value.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
             send(Cmd::Run(c.name, env));

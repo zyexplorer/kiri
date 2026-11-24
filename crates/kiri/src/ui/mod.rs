@@ -8,7 +8,8 @@
 //! engine thread pushes JSON events back with `kiri.on({...})`.
 
 use std::fmt::Write as _;
-use std::io;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
@@ -521,6 +522,64 @@ fn path_escape(s: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Suggested `docker save` filename from an image reference.
+fn image_tar_suggested(name: &str) -> String {
+    let leaf = name.rsplit('/').next().unwrap_or(name);
+    let s: String = leaf
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let s = s.trim_matches('-');
+    format!("{}.tar", if s.is_empty() { "image" } else { s })
+}
+
+/// Streams `GET /images/{name}/get` (`docker save`) to `dest`.
+fn export_image_tar(name: &str, dest: &Path) -> io::Result<()> {
+    let api = format!("/images/{}/get", path_escape(name));
+    let mut stream = client::Stream::open(&api)?;
+    let mut file = std::fs::File::create(dest)?;
+    while let Some(chunk) = stream.next() {
+        file.write_all(&chunk)?;
+    }
+    file.flush()?;
+    Ok(())
+}
+
+/// After the save panel: write the tar, tell the page (it translates), reveal.
+fn export_image_to(name: String, dest: PathBuf, emit: fn(String)) {
+    match export_image_tar(&name, &dest) {
+        Ok(()) => {
+            let file = dest
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            emit(
+                serde_json::json!({"type": "imageexported", "name": name, "file": file})
+                    .to_string(),
+            );
+            reveal(&dest);
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&dest);
+            emit(
+                serde_json::json!({
+                    "type": "imageexported",
+                    "name": name,
+                    "error": e.to_string(),
+                })
+                .to_string(),
+            );
+        }
+    }
 }
 
 /// Opens a URL, file or folder the way the system would on a double-click.
@@ -2864,6 +2923,18 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
                     }
                 });
             });
+            Ok(())
+        }
+        // Images → Export: native save panel, then `docker save` to that path.
+        "imageexportopen" => {
+            let name = msg.name.clone();
+            if !name.is_empty() {
+                let suggested = image_tar_suggested(&name);
+                window::pick_tar_save(&tr("Export image"), &suggested, move |path| {
+                    let Some(path) = path else { return };
+                    std::thread::spawn(move || export_image_to(name, path, emit));
+                });
+            }
             Ok(())
         }
         // Before Run: what the image's start script won't start without.
