@@ -1233,6 +1233,7 @@ pub fn on_message(msg: &str) {
             }
         }
         "restartvm" => crate::wslconfig::restart(),
+        "movedisk" => crate::wslconfig::move_disk(),
         "inspect" => detail::inspect(c.id),
         "logs" => detail::logs(c.id),
         "logsstop" => detail::stop_logs(),
@@ -1244,6 +1245,104 @@ pub fn on_message(msg: &str) {
         // Open a compose file…: Windows' own dialog, on the window's thread;
         // the path it gives stays here, the page gets the project.
         "composeopen" => crate::app::pick_file(&tr("Open a compose file"), &[(tr("Compose files"), compose::FILE_NAMES.join(";")), (tr("YAML files"), "*.yaml;*.yml".to_owned())], |path| compose::picked(path, compose_cli, compose_store, emit)),
+        // Projects: linked folders / kits / IDE detail (shared projects.rs).
+        // Lost when rebasing onto upstream compose/engine changes — keep in sync
+        // with crates/kiri/src/ui/mod.rs and projects::handle's match arms.
+        "projects" | "projectremove" | "projectscan" | "projectpin" | "projectmeta" | "projectrun"
+        | "projectbuild" | "projectcompose" | "projectreveal" | "projecttree" | "projectexport"
+        | "projectimport" | "projectadd" | "projectcancel"
+        | "projectmkdir" | "projectrmpath" | "projectwrite" | "projectcopyin" | "projectpaste"
+        | "projectread" | "projectsave" | "projectrename" | "projectexec" | "projectnewfile" => {
+            let (cmd, id, value) = (c.cmd.clone(), c.name.clone(), c.value);
+            std::thread::spawn(move || {
+                let open_compose = {
+                    let emit = emit;
+                    move |path: std::path::PathBuf| {
+                        compose::picked(Some(path), compose_cli, compose_store, emit);
+                    }
+                };
+                let state = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri"));
+                crate::projects::handle(&cmd, &id, &value, state, emit, open_compose);
+            });
+        }
+        "projectlinkopen" => {
+            let name = c.value.get("name").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let code = c.value.get("code").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let summary = c.value.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let icon = c.value.get("icon").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let color = c.value.get("color").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            crate::app::pick_folder(&tr("Link a project folder"), move |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri")) {
+                        crate::projects::add_linked_path(&state, path, name, code, summary, icon, color, emit);
+                    }
+                });
+            });
+        }
+        "projectuploadfiles" => {
+            let id = c.name.clone();
+            let into = c.value.get("into").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            crate::app::pick_files(&tr("Upload files"), move |paths| {
+                if paths.is_empty() {
+                    return;
+                }
+                std::thread::spawn(move || {
+                    if let Some(state) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri")) {
+                        crate::projects::copy_picked_into(&state, &id, paths, &into, emit);
+                    }
+                });
+            });
+        }
+        "projectuploaddir" => {
+            let id = c.name.clone();
+            let into = c.value.get("into").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            crate::app::pick_folder(&tr("Upload a folder"), move |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri")) {
+                        crate::projects::copy_picked_into(&state, &id, vec![path], &into, emit);
+                    }
+                });
+            });
+        }
+        "projectimportopen" => {
+            crate::app::pick_file(&tr("Import a project kit"), &[(tr("Kit"), "*.kirikit;*.zip".to_owned())], move |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri")) {
+                        crate::projects::import_kit_path(&state, path, emit);
+                    }
+                });
+            });
+        }
+        "projectexportopen" => {
+            let id = c.name.clone();
+            let name = c.value.get("name").and_then(|v| v.as_str()).unwrap_or("project");
+            let suggested = format!("{}.kirikit", name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect::<String>());
+            crate::app::pick_save(&tr("Export project kit"), &suggested, &[(tr("Kit"), "*.kirikit".to_owned())], move |path| {
+                let Some(path) = path else { return };
+                std::thread::spawn(move || {
+                    if let Some(state) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri")) {
+                        crate::projects::export_kit_to(&state, &id, path, emit);
+                    }
+                });
+            });
+        }
+        // Personal Markdown notes + per-image remarks (shared notes.rs).
+        // Same arm as crates/kiri/src/ui/mod.rs — keep in sync when rebasing.
+        "notes" | "noteread" | "notesave" | "notedelete" | "notemkdir" | "notermdir" | "noterename"
+        | "notemove" | "notereveal" | "imgnotes" | "imgnote" | "imgnotesave" => {
+            let (cmd, id, value) = (
+                c.cmd.clone(),
+                if c.id.is_empty() { c.name.clone() } else { c.id.clone() },
+                c.value,
+            );
+            std::thread::spawn(move || {
+                let state = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri"));
+                crate::notes::handle(&cmd, &id, &value, state, emit);
+            });
+        }
         // Before Run: what the image's start script won't start without.
         "needs" => {
             let image = c.name;
