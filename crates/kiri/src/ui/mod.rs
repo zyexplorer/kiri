@@ -2858,6 +2858,7 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         // Create dialog chose "link a local folder": pick dir, then create with name/summary.
         "projectlinkopen" => {
             let name = msg.value.get("name").and_then(|v| v.as_str()).unwrap_or("").to_owned();
+            let code = msg.value.get("code").and_then(|v| v.as_str()).unwrap_or("").to_owned();
             let summary = msg.value.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_owned();
             let icon = msg.value.get("icon").and_then(|v| v.as_str()).unwrap_or("").to_owned();
             let color = msg.value.get("color").and_then(|v| v.as_str()).unwrap_or("").to_owned();
@@ -2865,7 +2866,7 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
                 let Some(path) = path else { return };
                 std::thread::spawn(move || {
                     if let Some(state) = state_dir() {
-                        projects::add_linked_path(&state, path, name, summary, icon, color, emit);
+                        projects::add_linked_path(&state, path, name, code, summary, icon, color, emit);
                     }
                 });
             });

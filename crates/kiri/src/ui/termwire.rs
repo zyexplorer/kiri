@@ -60,6 +60,8 @@ const ENV_ALLOW: &[&str] = &[
     "PROJECT_SLUG",
     "COMPOSE_PROJECT_NAME",
     "KIRI_PROJECT_ID",
+    "KIRI_PROJECT_CODE",
+    "KIRI_PROJECTS_ROOT",
 ];
 
 /// Optional environment from `{env}`: only allow-listed keys, no NULs, capped

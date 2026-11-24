@@ -243,11 +243,12 @@ pub fn handle(
     true
 }
 
-/// After the folder picker when creating a linked project (dialog already has name/summary/icon).
+/// After the folder picker when creating a linked project (dialog already has name/code/summary/icon).
 pub fn add_linked_path(
     state: &Path,
     path: PathBuf,
     name: String,
+    code: String,
     summary: String,
     icon: String,
     color: String,
@@ -257,6 +258,7 @@ pub fn add_linked_path(
         "source": "linked",
         "root": path.to_string_lossy(),
         "name": if name.is_empty() { path.file_name().and_then(|s| s.to_str()).unwrap_or("project") } else { name.as_str() },
+        "code": code,
         "summary": summary,
         "icon": icon,
         "color": color,
@@ -326,6 +328,10 @@ struct Store {
 struct Project {
     id: String,
     name: String,
+    /// Stable ASCII code for paths / DATA_ROOT (`szda`, `my-app`). Unique.
+    /// Empty on older projects until the person sets one in Edit.
+    #[serde(default)]
+    code: String,
     /// `workspace` | `linked` | `kit`
     source: String,
     root: String,
@@ -436,6 +442,39 @@ fn load_store(state: &Path) -> Store {
     }
 }
 
+/// Windows' canonical form `\\?\C:\x` → `C:\x`, `\\?\UNC\server\share\x` →
+/// `\\server\share\x`. Same idea as compose::plain_path / termwire::plain_path;
+/// kept local so this file works both under `ui` (macOS) and as a top-level
+/// `#[path]` module in kiri-win (where compose lives under `engine`).
+fn plain_path(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        let b = rest.as_bytes();
+        if b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {
+            return PathBuf::from(rest);
+        }
+    }
+    p
+}
+
+/// Strip Windows `\\?\` / `\\?\UNC\` prefixes from stored roots so projects.json
+/// matches what Explorer and shells show. Returns true when any root changed.
+fn normalize_store_roots(store: &mut Store) -> bool {
+    let mut changed = false;
+    for p in &mut store.projects {
+        let plain = plain_path(PathBuf::from(&p.root));
+        let s = plain.to_string_lossy();
+        if s != p.root {
+            p.root = s.into_owned();
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn save_store(state: &Path, store: &Store) -> Result<(), String> {
     let path = store_path(state);
     let tmp = path.with_extension("json.tmp");
@@ -451,11 +490,19 @@ fn new_id() -> String {
 
 fn list_event(state: &Path) -> String {
     let mut store = load_store(state);
+    if normalize_store_roots(&mut store) {
+        let _ = save_store(state, &store);
+    }
     for p in &mut store.projects {
         p.missing = !Path::new(&p.root).is_dir();
     }
     let projects: Vec<Value> = store.projects.iter().map(project_view).collect();
-    json!({"type": "projects", "projects": projects}).to_string()
+    json!({
+        "type": "projects",
+        "projectsRoot": path_slash(&projects_data_root()),
+        "projects": projects,
+    })
+    .to_string()
 }
 
 fn project_view(p: &Project) -> Value {
@@ -464,6 +511,8 @@ fn project_view(p: &Project) -> Value {
     json!({
         "id": p.id,
         "name": p.name,
+        "code": p.code,
+        "dataRoot": project_data_root(p),
         "source": p.source,
         "root": p.root,
         "summary": p.summary,
@@ -491,29 +540,97 @@ where
     Ok(v)
 }
 
-/// Folder name under `projects/`: the project name itself (Unicode kept), with
-/// only path-illegal characters stripped. Names are unique in that directory.
-fn workspace_folder_name(name: &str) -> Result<String, String> {
-    let s = name.trim();
+/// ASCII project code for DATA_ROOT / workspace folder: `^[a-z][a-z0-9_-]{1,47}$`.
+/// Lowercased on accept so paths stay stable across display names.
+fn validate_project_code(raw: &str) -> Result<String, String> {
+    let s = raw.trim().to_ascii_lowercase();
     if s.is_empty() {
-        return Err("Name is required".into());
+        return Err("Project code is required".into());
     }
-    if s == "." || s == ".." {
-        return Err("Invalid project name".into());
+    if s.len() < 2 || s.len() > 48 {
+        return Err("Project code must be 2–48 characters".into());
     }
-    let cleaned: String = s
+    let mut chars = s.chars();
+    let Some(first) = chars.next() else {
+        return Err("Project code is required".into());
+    };
+    if !first.is_ascii_lowercase() {
+        return Err("Project code must start with a letter".into());
+    }
+    if !chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-') {
+        return Err("Project code: only letters, digits, _ and -".into());
+    }
+    if s.contains("--") || s.contains("__") || s.ends_with('-') || s.ends_with('_') {
+        return Err("Project code cannot end with -/_ or repeat them".into());
+    }
+    Ok(s)
+}
+
+/// Path slug for seed/compose isolation: prefer `code`, else a safe fallback
+/// from `id` so older projects without a code still get an ASCII DATA_ROOT.
+fn project_data_slug(p: &Project) -> String {
+    if let Ok(c) = validate_project_code(&p.code) {
+        return c;
+    }
+    let id = p.id.trim();
+    let cleaned: String = id
         .chars()
-        .map(|c| match c {
-            '/' | '\\' | '\0' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
-            c if c.is_control() => '-',
-            c => c,
-        })
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
         .collect();
-    let cleaned = cleaned.trim_matches(|c| c == '-' || c == ' ' || c == '.').to_owned();
-    if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
-        return Err("Invalid project name".into());
+    let cleaned = cleaned.trim_matches('-').to_owned();
+    if cleaned.is_empty() {
+        "project".into()
+    } else if cleaned.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        format!("p{cleaned}")
+    } else {
+        cleaned
     }
-    Ok(cleaned)
+}
+
+/// Shared parent for every project's seed/middleware data:
+/// `…/kiri-projects/{code}/data`. Prefer `KIRI_PROJECTS_ROOT`; on Windows use
+/// `D:/kiri-projects` when D: exists, else `%LOCALAPPDATA%/Kiri/kiri-projects`;
+/// elsewhere `~/kiri-projects`.
+fn projects_data_root() -> PathBuf {
+    if let Some(v) = std::env::var_os("KIRI_PROJECTS_ROOT").filter(|s| !s.is_empty()) {
+        return PathBuf::from(v);
+    }
+    #[cfg(windows)]
+    {
+        if Path::new(r"D:\").is_dir() {
+            return PathBuf::from(r"D:\kiri-projects");
+        }
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            return PathBuf::from(local).join("Kiri").join("kiri-projects");
+        }
+        return PathBuf::from(r"C:\kiri-projects");
+    }
+    #[cfg(not(windows))]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join("kiri-projects");
+        }
+        PathBuf::from("/var/lib/kiri-projects")
+    }
+}
+
+/// Host path string with `/` separators (compose/scripts prefer this on Windows).
+fn path_slash(p: &Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+/// `…/kiri-projects/{code}/data` for this project; creates the directory.
+fn project_data_root(p: &Project) -> String {
+    let slug = project_data_slug(p);
+    let dir = projects_data_root().join(&slug).join("data");
+    let _ = fs::create_dir_all(&dir);
+    path_slash(&dir)
+}
+
+/// Folder name under `projects/`: the project's ASCII `code` (Unicode display
+/// names must not become path segments).
+fn workspace_folder_name(code: &str) -> Result<String, String> {
+    validate_project_code(code)
 }
 
 fn create_project(state: &Path, value: &Value) -> Result<Project, String> {
@@ -524,6 +641,7 @@ fn create_project(state: &Path, value: &Value) -> Result<Project, String> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| "Name is required".to_owned())?
         .to_owned();
+    let code = validate_project_code(value.get("code").and_then(|v| v.as_str()).unwrap_or(""))?;
     let summary = value.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_owned();
     let icon = sanitize_icon(value.get("icon").and_then(|v| v.as_str()).unwrap_or(""));
     let color = sanitize_color(value.get("color").and_then(|v| v.as_str()).unwrap_or(""));
@@ -532,26 +650,31 @@ fn create_project(state: &Path, value: &Value) -> Result<Project, String> {
     if store.projects.iter().any(|p| p.name == name) {
         return Err("A project with that name already exists".into());
     }
+    if store.projects.iter().any(|p| !p.code.is_empty() && p.code.eq_ignore_ascii_case(&code)) {
+        return Err("A project with that code already exists".into());
+    }
     let id = new_id();
     let (source, root) = if source == "linked" {
         let root = value.get("root").and_then(|v| v.as_str()).unwrap_or("").trim();
         if root.is_empty() {
             return Err("Pick a folder".into());
         }
-        let path = PathBuf::from(root).canonicalize().map_err(|e| e.to_string())?;
+        // canonicalize resolves `.` / links; on Windows it also adds `\\?\` —
+        // strip that so projects.json keeps a normal path (same as workspace).
+        let path = plain_path(PathBuf::from(root).canonicalize().map_err(|e| e.to_string())?);
         if !path.is_dir() {
             return Err("Not a directory".into());
         }
-        if store.projects.iter().any(|p| Path::new(&p.root) == path) {
+        if store.projects.iter().any(|p| paths_equal(Path::new(&p.root), &path)) {
             return Err("That folder is already a project".into());
         }
         ("linked".into(), path.to_string_lossy().into_owned())
     } else {
-        // Workspace root is ~/.kiri(-dev)/projects/<name>, not a random id.
-        let dir_name = workspace_folder_name(&name)?;
+        // Workspace root is ~/.kiri(-dev)/projects/<code>, not the display name.
+        let dir_name = workspace_folder_name(&code)?;
         let root = workspaces_dir(state).join(&dir_name);
         if root.exists() || store.projects.iter().any(|p| Path::new(&p.root) == root) {
-            return Err("A project with that name already exists".into());
+            return Err("A project with that code already exists".into());
         }
         fs::create_dir_all(&root).map_err(|e| e.to_string())?;
         ("workspace".into(), root.to_string_lossy().into_owned())
@@ -559,6 +682,7 @@ fn create_project(state: &Path, value: &Value) -> Result<Project, String> {
     let p = Project {
         id,
         name,
+        code,
         source,
         root,
         summary,
@@ -874,21 +998,34 @@ fn set_pins(state: &Path, id: &str, value: &Value) -> Result<Value, String> {
 
 fn set_meta(state: &Path, id: &str, value: &Value) -> Result<Value, String> {
     let rename = value.get("name").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+    let new_code = match value.get("code").and_then(|v| v.as_str()) {
+        Some(s) => Some(validate_project_code(s)?),
+        None => None,
+    };
     if let Some(ref new_name) = rename {
         let store = load_store(state);
         if store.projects.iter().any(|p| p.id != id && p.name == *new_name) {
             return Err("A project with that name already exists".into());
         }
     }
+    if let Some(ref code) = new_code {
+        let store = load_store(state);
+        if store.projects.iter().any(|p| p.id != id && !p.code.is_empty() && p.code.eq_ignore_ascii_case(code)) {
+            return Err("A project with that code already exists".into());
+        }
+    }
     with_project(state, id, |p| {
         if let Some(n) = rename {
-            if p.source == "workspace" && n != p.name {
-                let dir_name = workspace_folder_name(&n)?;
+            p.name = n;
+        }
+        if let Some(code) = new_code {
+            // Workspace folders are keyed by code; renaming the code moves the dir.
+            if p.source == "workspace" && code != p.code {
                 let old_root = PathBuf::from(&p.root);
-                let new_root = workspaces_dir(state).join(&dir_name);
+                let new_root = workspaces_dir(state).join(&code);
                 if new_root != old_root {
                     if new_root.exists() {
-                        return Err("A project with that name already exists".into());
+                        return Err("A project with that code already exists".into());
                     }
                     if old_root.is_dir() && old_root.starts_with(workspaces_dir(state)) {
                         fs::rename(&old_root, &new_root).map_err(|e| e.to_string())?;
@@ -896,7 +1033,7 @@ fn set_meta(state: &Path, id: &str, value: &Value) -> Result<Value, String> {
                     }
                 }
             }
-            p.name = n;
+            p.code = code;
         }
         if let Some(s) = value.get("summary").and_then(|v| v.as_str()) {
             p.summary = s.to_owned();
@@ -1060,20 +1197,21 @@ fn apply_docker_env_to_shell(cmd: &mut Command) -> Result<(), String> {
 }
 
 /// Per-project data root so seed/compose scripts don't clash across projects.
-/// `DATA_ROOT=/$PROJECT_SLUG/data` (slug mirrors the workspace folder name).
+/// `DATA_ROOT=…/kiri-projects/{code}/data` under a shared `kiri-projects` parent.
 fn apply_project_data_env(cmd: &mut Command, p: &Project) {
-    let slug = workspace_folder_name(&p.name).unwrap_or_else(|_| {
-        if p.id.is_empty() {
-            "project".into()
-        } else {
-            p.id.clone()
-        }
-    });
-    let data_root = format!("/{slug}/data");
+    let slug = project_data_slug(p);
+    let projects_root = path_slash(&projects_data_root());
+    let data_root = project_data_root(p);
+    // COMPOSE_PROJECT_NAME aligns with compose file `name: ${PROJECT_SLUG}-middleware`
+    // so Windows named volumes keyed by project stay isolated across A↔B switches.
+    let compose_name = format!("{slug}-middleware");
     cmd.env("PROJECT_SLUG", &slug)
+        .env("COMPOSE_PROJECT_NAME", &compose_name)
+        .env("KIRI_PROJECTS_ROOT", &projects_root)
         .env("DATA_ROOT", &data_root)
         .env("DATA_ROOT_DOCKER", &data_root)
-        .env("KIRI_PROJECT_ID", &p.id);
+        .env("KIRI_PROJECT_ID", &p.id)
+        .env("KIRI_PROJECT_CODE", &slug);
 }
 
 fn run_script(state: &Path, id: &str, value: &Value, emit: impl Fn(String)) -> Result<(), String> {
@@ -1457,6 +1595,8 @@ fn run_build(state: &Path, id: &str, value: &Value, emit: impl Fn(String)) -> Re
 struct KitManifest {
     name: String,
     #[serde(default)]
+    code: String,
+    #[serde(default)]
     summary: String,
     #[serde(default)]
     pins: Vec<Pin>,
@@ -1487,6 +1627,7 @@ fn export_kit(state: &Path, id: &str, value: &Value) -> Result<String, String> {
     let include_context = value.get("includeContext").and_then(|v| v.as_bool()).unwrap_or(false);
     let manifest = KitManifest {
         name: p.name.clone(),
+        code: p.code.clone(),
         summary: p.summary.clone(),
         pins: p.pins.clone(),
         kiri_min: "0.2.0".into(),
@@ -1570,6 +1711,7 @@ fn import_kit(state: &Path, value: &Value) -> Result<Project, String> {
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     let mut manifest = KitManifest {
         name: id.clone(),
+        code: String::new(),
         summary: String::new(),
         pins: Vec::new(),
         kiri_min: String::new(),
@@ -1612,9 +1754,27 @@ fn import_kit(state: &Path, value: &Value) -> Result<Project, String> {
     };
 
     let mut store = load_store(state);
+    let code = validate_project_code(&manifest.code).unwrap_or_else(|_| {
+        // Older kits omit code: derive a unique ASCII slug from the name/id.
+        let base = slug(&manifest.name);
+        let mut candidate = if base == "project" { format!("kit-{}", &id[id.len().saturating_sub(6)..]) } else { base };
+        let mut n = 2u32;
+        while store.projects.iter().any(|p| p.code.eq_ignore_ascii_case(&candidate)) {
+            candidate = format!("{}-{n}", slug(&manifest.name));
+            n += 1;
+            if n > 99 {
+                break;
+            }
+        }
+        candidate
+    });
+    if store.projects.iter().any(|p| !p.code.is_empty() && p.code.eq_ignore_ascii_case(&code)) {
+        return Err("A project with that code already exists".into());
+    }
     let p = Project {
         id: id.clone(),
         name: if manifest.name.is_empty() { id } else { manifest.name },
+        code,
         source: "kit".into(),
         root: root.to_string_lossy().into_owned(),
         summary: manifest.summary,
@@ -1668,6 +1828,38 @@ mod tests {
     }
 
     #[test]
+    fn linked_root_is_plain_path() {
+        let state = tempfile_dir();
+        let dir = state.join("linked-src");
+        fs::create_dir_all(&dir).unwrap();
+        let p = create_project(
+            &state,
+            &json!({
+                "source": "linked",
+                "root": dir.to_string_lossy(),
+                "name": "linked-demo",
+                "code": "linked-demo",
+                "summary": ""
+            }),
+        )
+        .unwrap();
+        assert!(!p.root.starts_with(r"\\?\"), "root should not keep Windows verbatim prefix: {}", p.root);
+        assert!(Path::new(&p.root).is_dir());
+        #[cfg(windows)]
+        {
+            // Existing \\?\ entries are rewritten when the projects list loads.
+            let mut store = load_store(&state);
+            store.projects[0].root = format!(r"\\?\{}", p.root);
+            save_store(&state, &store).unwrap();
+            let _ = list_event(&state);
+            let fixed = load_store(&state);
+            assert!(!fixed.projects[0].root.starts_with(r"\\?\"));
+            assert_eq!(fixed.projects[0].root, p.root);
+        }
+        let _ = fs::remove_dir_all(&state);
+    }
+
+    #[test]
     fn unique_child_avoids_existing_names() {
         let dir = tempfile_dir();
         fs::write(dir.join("all.cmd"), "a").unwrap();
@@ -1690,6 +1882,7 @@ mod tests {
         store.projects.push(Project {
             id: "p1".into(),
             name: "demo".into(),
+            code: "demo".into(),
             source: "linked".into(),
             root: root.to_string_lossy().into_owned(),
             summary: String::new(),
@@ -1750,10 +1943,12 @@ mod tests {
                 "source": "linked",
                 "root": szda.to_string_lossy(),
                 "name": "szda-web docker",
+                "code": "szda-web",
                 "summary": "先 built.sh，再 apps.sh up"
             }),
         )
         .unwrap();
+        assert_eq!(linked.code, "szda-web");
         assert!(!linked.missing);
         let targets = scan_targets(Path::new(&linked.root));
         assert!(targets.iter().any(|t| t.path == "built.sh"));
@@ -1791,15 +1986,25 @@ mod tests {
         assert!(imported_targets.iter().any(|t| t.path == "apps.sh"));
         assert!(!imported_targets.iter().any(|t| t.path.contains("context")));
 
-        let blank = create_project(&state, &json!({"source": "workspace", "name": "blank", "summary": ""})).unwrap();
+        let blank = create_project(&state, &json!({"source": "workspace", "name": "blank", "code": "blank", "summary": ""})).unwrap();
         assert_eq!(blank.source, "workspace");
         assert!(Path::new(&blank.root).is_dir());
         assert_eq!(Path::new(&blank.root).file_name().and_then(|s| s.to_str()), Some("blank"));
         write_in(&state, &blank.id, &json!({"path": "hello.sh", "base64": "IyEvYmluL2Jhc2gK"})).unwrap();
         assert!(Path::new(&blank.root).join("hello.sh").is_file());
-        let cn = create_project(&state, &json!({"source": "workspace", "name": "产品档案", "summary": ""})).unwrap();
-        assert_eq!(Path::new(&cn.root).file_name().and_then(|s| s.to_str()), Some("产品档案"));
-        assert!(create_project(&state, &json!({"source": "workspace", "name": "blank", "summary": ""})).is_err());
+        // Display name may be Chinese; workspace folder and DATA_ROOT use ASCII code.
+        let cn = create_project(&state, &json!({"source": "workspace", "name": "产品档案", "code": "szda", "summary": ""})).unwrap();
+        assert_eq!(cn.code, "szda");
+        assert_eq!(Path::new(&cn.root).file_name().and_then(|s| s.to_str()), Some("szda"));
+        assert_eq!(project_data_slug(&cn), "szda");
+        let data = project_data_root(&cn);
+        assert!(data.replace('\\', "/").contains("/kiri-projects/szda/data"), "{data}");
+        assert!(Path::new(&data).is_dir());
+        assert!(create_project(&state, &json!({"source": "workspace", "name": "blank", "code": "blank-2", "summary": ""})).is_err());
+        assert!(create_project(&state, &json!({"source": "workspace", "name": "other", "code": "szda", "summary": ""})).is_err());
+        assert!(validate_project_code("产品").is_err());
+        assert!(validate_project_code("1abc").is_err());
+        assert_eq!(validate_project_code("SzDa_Web").unwrap(), "szda_web");
         let _ = fs::remove_dir_all(&state);
     }
 
