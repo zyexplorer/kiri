@@ -36,6 +36,26 @@ t("the first open asks for the shells, then starts the default one", () => {
   ok(document.getElementById("strip-term").getAttribute("aria-pressed") === "true", "strip button not pressed");
   for (const b of drawer.querySelectorAll(".hthead [data-ht]")) items.push(`terminal button: ${b.getAttribute("aria-label")}`);
 });
+t("strip and status bar buttons toggle the drawer closed again", () => {
+  ok(!drawer.hidden, "need an open drawer");
+  document.getElementById("strip-term").click();
+  ok(drawer.hidden && document.getElementById("strip-term").getAttribute("aria-pressed") === "false", "strip did not hide");
+  document.querySelector("#statusbar [data-htterm]").click();
+  ok(!drawer.hidden && document.getElementById("strip-term").getAttribute("aria-pressed") === "true", "status bar did not show");
+  document.querySelector("#statusbar [data-htterm]").click();
+  ok(drawer.hidden && document.getElementById("strip-term").getAttribute("aria-pressed") === "false", "status bar did not hide");
+  document.getElementById("strip-term").click();
+  ok(!drawer.hidden, "strip did not reopen");
+});
+t("Ctrl+` toggles the drawer even when the terminal has focus", () => {
+  ok(!drawer.hidden, "need an open drawer");
+  const ta = ht.panes.get(ht.focus)?.term?.textarea || document.body;
+  ta.focus?.();
+  key(ta, { key: "`", code: "Backquote", ctrlKey: true });
+  ok(drawer.hidden, "shortcut did not hide while terminal focused (double-toggle?)");
+  key(document.body, { key: "`", code: "Backquote", ctrlKey: true });
+  ok(!drawer.hidden, "shortcut did not show again");
+});
 const first = () => ht.panes.get(terms("open")[0].id);
 t("what's typed goes to the shell as bytes", () => {
   first().term.input("ls ✓\r");

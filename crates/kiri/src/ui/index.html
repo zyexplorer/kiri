@@ -245,7 +245,9 @@ h2 .beta { vertical-align: 3px; }
 .proj-modal .xclose:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
 .proj-modal .xclose svg { width: 14px; height: 14px; fill: currentColor; }
 .proj-modal label { display: grid; gap: 6px; font-size: var(--fs-small); color: var(--muted); }
+.proj-modal label .sub { color: var(--faint); line-height: 1.35; }
 .proj-modal input[type=text], .proj-modal textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--text); padding: 8px 10px; font: inherit; }
+.proj-modal #proj-code { font-family: var(--mono-font); letter-spacing: 0.02em; }
 .proj-modal input[type=text].bad { border-color: var(--red, #ef4444); }
 .proj-modal .ferr { color: var(--red, #ef4444); font-size: var(--fs-small); min-height: 1.15em; }
 .proj-modal textarea { min-height: 56px; max-height: 120px; resize: vertical; }
@@ -256,23 +258,40 @@ h2 .beta { vertical-align: 3px; }
 .proj-modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 .proj-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; position: relative; }
 .proj-pick .field { display: grid; gap: 6px; font-size: var(--fs-small); color: var(--muted); min-width: 0; }
-.proj-pick .ico-trig { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--text); cursor: pointer; font: inherit; text-align: left; }
-.proj-pick .ico-trig:hover { border-color: color-mix(in srgb, var(--text) 28%, var(--line)); }
+.proj-pick .ico-trig, .proj-pick .color-trig { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--text); cursor: pointer; font: inherit; text-align: left; }
+.proj-pick .ico-trig:hover, .proj-pick .color-trig:hover { border-color: color-mix(in srgb, var(--text) 28%, var(--line)); }
 .proj-pick .ico-trig .preview { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; flex: none; color: var(--proj-c, var(--blue)); background: color-mix(in srgb, var(--proj-c, var(--blue)) 16%, var(--panel)); }
 .proj-pick .ico-trig .preview svg { width: 16px; height: 16px; fill: currentColor; }
 .proj-pick .ico-trig .lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-.proj-pick .ico-trig .caret { width: 12px; height: 12px; flex: none; color: var(--muted); fill: currentColor; opacity: .7; transform: rotate(90deg); }
-.proj-pick .ico-pop { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 2; max-height: min(220px, 40vh); overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 12px 32px color-mix(in srgb, #000 35%, transparent); display: none; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; }
-.proj-pick .ico-pop.open { display: grid; }
-.proj-pick .ico { width: 100%; aspect-ratio: 1; border-radius: 8px; border: 1px solid transparent; background: var(--raised); color: var(--muted); display: grid; place-items: center; cursor: pointer; padding: 0; }
-.proj-pick .ico svg { width: 18px; height: 18px; fill: currentColor; }
-.proj-pick .ico:hover { color: var(--text); border-color: var(--line); }
-.proj-pick .ico.on { border-color: var(--proj-c, var(--blue)); color: var(--proj-c, var(--blue)); background: color-mix(in srgb, var(--proj-c, var(--blue)) 16%, var(--panel)); }
-.proj-pick .color-trig { display: flex; align-items: center; gap: 10px; width: 100%; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); cursor: pointer; position: relative; overflow: hidden; }
-.proj-pick .color-trig:hover { border-color: color-mix(in srgb, var(--text) 28%, var(--line)); }
-.proj-pick .color-trig input[type=color] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: 0; padding: 0; }
+.proj-pick .ico-trig .caret, .proj-pick .color-trig .caret { width: 12px; height: 12px; flex: none; color: var(--muted); fill: currentColor; opacity: .7; transform: rotate(90deg); }
+/* Fixed + hosted on .proj-modal (not .sheet) so the grid never grows/clips the dialog scroll. */
+.proj-modal .ico-pop, .proj-modal .color-pop {
+  position: fixed; z-index: 90; box-sizing: border-box; overflow: auto;
+  padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  box-shadow: 0 12px 32px color-mix(in srgb, #000 35%, transparent); display: none;
+}
+.proj-modal .ico-pop { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; max-height: min(220px, 40vh); }
+.proj-modal .ico-pop.open { display: grid; }
+.proj-modal .ico-pop .ico { width: 100%; aspect-ratio: 1; border-radius: 8px; border: 1px solid transparent; background: var(--raised); color: var(--muted); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.proj-modal .ico-pop .ico svg { width: 18px; height: 18px; fill: currentColor; }
+.proj-modal .ico-pop .ico:hover { color: var(--text); border-color: var(--line); }
+.proj-modal .ico-pop .ico.on { border-color: var(--proj-c, var(--blue)); color: var(--proj-c, var(--blue)); background: color-mix(in srgb, var(--proj-c, var(--blue)) 16%, var(--panel)); }
 .proj-pick .color-trig .swatch { width: 28px; height: 28px; border-radius: 7px; flex: none; background: var(--c); box-shadow: inset 0 0 0 1px color-mix(in srgb, #000 18%, transparent); }
-.proj-pick .color-trig .hex { font-variant-numeric: tabular-nums; color: var(--text); letter-spacing: .02em; }
+.proj-pick .color-trig .hex { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; color: var(--text); letter-spacing: .02em; }
+/* mac-style: common row → spectrum grid → custom (stacked; not side-by-side with .swatches). */
+.proj-modal .color-pop { gap: 10px; max-height: min(360px, 55vh); }
+.proj-modal .color-pop.open { display: flex; flex-direction: column; align-items: stretch; }
+.proj-modal .color-pop .swatches { display: grid; gap: 6px; }
+.proj-modal .color-pop .swatches.common { grid-template-columns: repeat(12, minmax(0, 1fr)); padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.proj-modal .color-pop .swatches.palette { grid-template-columns: repeat(10, minmax(0, 1fr)); }
+.proj-modal .color-pop .csw { width: 100%; aspect-ratio: 1; border-radius: 6px; border: 2px solid transparent; background: var(--c); cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px color-mix(in srgb, #000 18%, transparent); }
+.proj-modal .color-pop .csw:hover { border-color: color-mix(in srgb, var(--text) 35%, transparent); }
+.proj-modal .color-pop .csw.on { border-color: var(--text); }
+.proj-modal .color-pop .color-more { display: flex; align-items: stretch; padding-top: 2px; }
+.proj-modal .color-pop .custom { position: relative; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); color: var(--text); cursor: pointer; font: inherit; font-size: var(--fs-small); overflow: hidden; }
+.proj-modal .color-pop .custom:hover { border-color: color-mix(in srgb, var(--text) 28%, var(--line)); }
+.proj-modal .color-pop .custom .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; background: conic-gradient(#ef4444, #eab308, #22c55e, #3b82f6, #a855f7, #ef4444); box-shadow: inset 0 0 0 1px color-mix(in srgb, #000 20%, transparent); }
+.proj-modal .color-pop .custom input[type=color] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; border: 0; padding: 0; }
 .proj-tree-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; align-items: center; justify-content: flex-end; }
 .proj-tree-tools .btn.ic {
   width: 30px; height: 30px; padding: 0; display: grid; place-items: center; position: relative;
@@ -393,6 +412,7 @@ h2 .beta { vertical-align: 3px; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   word-break: break-word;
 }
+.proj-card .meta .sub.mono { font-family: var(--mono-font); color: var(--faint); -webkit-line-clamp: 1; }
 .proj-card .meta .warn { color: var(--red, #ef4444); font-size: var(--fs-small); }
 .proj-card .badge {
   flex: none; font-size: 10px; font-weight: 600; letter-spacing: .02em;
@@ -4663,6 +4683,7 @@ const ZH = {
   "New project": "新建项目",
   "Edit project": "编辑项目",
   "Name": "名称",
+  "Project code": "项目编码",
   "Description": "说明",
   "Blank workspace": "空白工作区",
   "Upload Dockerfiles, compose files and scripts in the project page.": "在项目页上传 Dockerfile、compose 与脚本。",
@@ -4680,11 +4701,19 @@ const ZH = {
   "No materials yet. Upload files or a folder.": "还没有物料。请上传文件或文件夹。",
   "Upload materials to detect scripts, compose files and Dockerfiles.": "上传物料后，将识别脚本、compose 与 Dockerfile。",
   "Name is required": "请填写名称",
+  "Project code is required": "请填写项目编码",
+  "Project code must be 2–48 characters": "项目编码须为 2–48 个字符",
+  "Project code must start with a letter": "项目编码须以字母开头",
+  "Project code: only letters, digits, _ and -": "项目编码仅允许字母、数字、_ 和 -",
+  "Project code cannot end with -/_ or repeat them": "项目编码不能以 -/_ 结尾，也不能连续重复",
+  "A project with that code already exists": "已有相同编码的项目",
   "Delete {path}?": "删除 {path}？",
   "This cannot be undone.": "此操作无法撤销。",
   "Delete": "删除",
   "Project files in Kiri are deleted. Linked folders on disk are left alone.": "会删除 Kiri 内的项目文件；本机关联目录不会动。",
-  "e.g. szda-web docker": "例如 szda-web docker",
+  "e.g. szda-web docker": "例如 数字档案",
+  "e.g. szda": "例如 szda",
+  "ASCII code for data paths (seed / middleware). Letters, digits, _ and -.": "用于数据目录隔离的英文编码（中间件 seed 等）。仅字母、数字、_ 和 -。数据落在 kiri-projects/{code}/data。",
 
   "Import kit…": "导入物料包…",
   "Add folder…": "添加本机目录…",
@@ -4741,6 +4770,8 @@ const ZH = {
   "Color": "颜色",
   "Choose icon": "选择图标",
   "Pick a color": "选择颜色",
+  "Custom color": "自定义颜色",
+  "Pick from screen": "从屏幕取色",
   "Project root": "项目根目录",
   "Adding into project root": "新增到项目根目录",
   "Adding into {path}": "新增到 {path}",
@@ -4754,6 +4785,27 @@ const ZH = {
   "Recreating…": "正在重新创建…",
   "Removing…": "正在移除…",
   "Starts on line {n} · click to jump there": "从第 {n} 行开始 · 点击跳转",
+
+  /* usage tip */
+  "CPU is a share of all {n} cores: 100% would be every core busy.": "CPU 为全部 {n} 个核心的占比：100% 表示所有核心都满载。",
+  "Graphics|process": "图形",
+  "Helpers|process": "辅助进程",
+  "Network|process": "网络",
+  "PC": "电脑",
+  "Page|process": "页面",
+  "WebView2": "WebView2",
+  "What Kiri's window uses on this {host}, not counting the {vm}:": "Kiri 窗口在这台{host}上的占用（不含{vm}）：",
+  "{n} processes": "{n} 个进程",
+
+  /* VM memory tip (status bar xxGB / xxGB) */
+  "The {vm} is asleep: it holds no memory": "{vm}正在休眠：不占用内存",
+  "Kiri's containers and engine use {used}, of the {total} this computer has.": "Kiri 的容器和引擎使用了 {used}，本机共有 {total}。",
+  "Kiri's containers, engine and agent hold {used} of the {total} WSL has (.wslconfig sets that).": "Kiri 的容器、引擎和代理占用了 {used}，WSL 共有 {total}（由 .wslconfig 设置）。",
+  "In use {used}. The VM may take up to {target} right now, and grows as containers need more.": "已使用 {used}。虚拟机当前最多可占用 {target}，并会随容器需求增长。",
+
+  /* docker context tip (status bar) */
+  "The docker command uses {app}": "docker 命令使用 {app}",
+  "The docker command uses {engine}. Switch it to {app}": "docker 命令使用 {engine}。切换到 {app}",
 
 }
 const ZH_TW = {
@@ -6257,6 +6309,7 @@ const ZH_TW = {
   "New project": "新建專案",
   "Edit project": "編輯專案",
   "Name": "名稱",
+  "Project code": "專案編碼",
   "Description": "說明",
   "Blank workspace": "空白工作區",
   "Upload Dockerfiles, compose files and scripts in the project page.": "在專案頁上傳 Dockerfile、compose 與腳本。",
@@ -6274,11 +6327,19 @@ const ZH_TW = {
   "No materials yet. Upload files or a folder.": "還沒有物料。請上傳檔案或資料夾。",
   "Upload materials to detect scripts, compose files and Dockerfiles.": "上傳物料後，將識別腳本、compose 與 Dockerfile。",
   "Name is required": "請填寫名稱",
+  "Project code is required": "請填寫專案編碼",
+  "Project code must be 2–48 characters": "專案編碼須為 2–48 個字元",
+  "Project code must start with a letter": "專案編碼須以字母開頭",
+  "Project code: only letters, digits, _ and -": "專案編碼僅允許字母、數字、_ 和 -",
+  "Project code cannot end with -/_ or repeat them": "專案編碼不能以 -/_ 結尾，也不能連續重複",
+  "A project with that code already exists": "已有相同編碼的專案",
   "Delete {path}?": "刪除 {path}？",
   "This cannot be undone.": "此操作無法復原。",
   "Delete": "刪除",
   "Project files in Kiri are deleted. Linked folders on disk are left alone.": "會刪除 Kiri 內的專案檔案；本機關聯目錄不會動。",
-  "e.g. szda-web docker": "例如 szda-web docker",
+  "e.g. szda-web docker": "例如 數字檔案",
+  "e.g. szda": "例如 szda",
+  "ASCII code for data paths (seed / middleware). Letters, digits, _ and -.": "用於資料目錄隔離的英文編碼（中介軟體 seed 等）。僅字母、數字、_ 和 -。資料落在 kiri-projects/{code}/data。",
 
   "Import kit…": "匯入物料包…",
   "Add folder…": "新增本機目錄…",
@@ -6334,6 +6395,8 @@ const ZH_TW = {
   "Color": "顏色",
   "Choose icon": "選擇圖示",
   "Pick a color": "選擇顏色",
+  "Custom color": "自訂顏色",
+  "Pick from screen": "從螢幕取色",
   "Project root": "專案根目錄",
   "Adding into project root": "新增到專案根目錄",
   "Adding into {path}": "新增到 {path}",
@@ -6347,6 +6410,27 @@ const ZH_TW = {
   "Recreating…": "正在重新建立…",
   "Removing…": "正在移除…",
   "Starts on line {n} · click to jump there": "從第 {n} 行開始 · 點擊跳轉",
+
+  /* usage tip */
+  "CPU is a share of all {n} cores: 100% would be every core busy.": "CPU 是占全部 {n} 個核心的比例：100% 表示所有核心都滿載。",
+  "Graphics|process": "圖形",
+  "Helpers|process": "輔助程序",
+  "Network|process": "網路",
+  "PC": "電腦",
+  "Page|process": "頁面",
+  "WebView2": "WebView2",
+  "What Kiri's window uses on this {host}, not counting the {vm}:": "Kiri 視窗在這台{host}上的使用量（不含{vm}）：",
+  "{n} processes": "{n} 個進程",
+
+  /* VM memory tip (status bar xxGB / xxGB) */
+  "The {vm} is asleep: it holds no memory": "{vm}正在休眠：不占用記憶體",
+  "Kiri's containers and engine use {used}, of the {total} this computer has.": "Kiri 的容器和引擎使用了 {used}，這台電腦共有 {total}。",
+  "Kiri's containers, engine and agent hold {used} of the {total} WSL has (.wslconfig sets that).": "Kiri 的容器、引擎和代理程式占用了 {used}，WSL 共有 {total}（由 .wslconfig 設定）。",
+  "In use {used}. The VM may take up to {target} right now, and grows as containers need more.": "已使用 {used}。虛擬機器目前最多可占用 {target}，並會隨容器需求增加。",
+
+  /* docker context tip (status bar) */
+  "The docker command uses {app}": "docker 指令使用 {app}",
+  "The docker command uses {engine}. Switch it to {app}": "docker 指令使用 {engine}。切換到 {app}",
 
 };
 const VIEW_LABEL = { containers: "Containers", images: "Images", volumes: "Volumes", networks: "Networks", builds: "Builds", pods: "Pods", services: "Services", settings: "Settings", share: "Share", notes: "Notes", compose: "Compose", projects: "Projects" };
@@ -7636,8 +7720,9 @@ const ctxBytes = (v) => { const m = /^([\d.]+)\s*([kMGT]?)B$/i.exec(String(v || 
 
 function ctxStatusItem() {
   if (!ui.status) return "";
-  if (!ctxOther()) return `<span class="sep">·</span><span class="item ctx-ok" title="The docker command uses ${esc(ui.status.app || "Kiri")}"><i></i>docker → ${esc(ui.status.app || "Kiri")}</span>`;
-  return `<span class="sep">·</span><button class="item ctx-warn" data-ctxswitch title="The docker command uses ${esc(ctxLabel(ui.status.context))}. Switch it to ${esc(ui.status.app || "Kiri")}">${ctxWarn()}docker → ${esc(ctxLabel(ui.status.context))}</button>`;
+  const app = ui.status.app || "Kiri";
+  if (!ctxOther()) return `<span class="sep">·</span><span class="item ctx-ok" title="${esc(tr("The docker command uses {app}", { app }))}"><i></i>docker → ${esc(app)}</span>`;
+  return `<span class="sep">·</span><button class="item ctx-warn" data-ctxswitch title="${esc(tr("The docker command uses {engine}. Switch it to {app}", { engine: ctxLabel(ui.status.context), app }))}">${ctxWarn()}docker → ${esc(ctxLabel(ui.status.context))}</button>`;
 }
 
 function renderCtxStrip() {
@@ -8146,11 +8231,21 @@ function resourcesPane() {
   const d = ui.resDraft;
   const maxGb = Math.max(1, Math.floor(r.max_memory_mib / 1024));
   const pending = r.awake && (r.running_cpus !== r.cpus || Math.abs(r.running_memory_mib - r.memory_mib) > 64);
+  const diskPath = r.disk_path || "";
+  const diskSize = typeof r.disk_bytes === "number" ? size(r.disk_bytes) : "";
+  const diskRow = WIN ? `<div class="pref"><span class="t">${tr("Linux disk")}</span><span class="d">${diskPath
+    ? tr("Images and containers live in the virtual disk at this path ({size}). Moving it shuts down every WSL distro, then restarts Kiri.", { size: diskSize || "—" })
+    : tr("The Linux virtual disk path is not available yet.")}</span>
+      ${diskPath ? `<span class="mono" style="font-size:12px;word-break:break-all" title="${esc(diskPath)}">${esc(diskPath)}</span>` : ""}
+      <span class="pact">${r.disk_movable
+        ? `<button class="btn" data-movedisk${r.disk_moving ? " disabled" : ""}>${r.disk_moving ? tr("Moving…") : tr("Move…")}</button>`
+        : ""}</span></div>` : "";
   return `<div class="pane"><h3>${tr("Resources")}</h3>
     <div class="pref"><span class="t">${tr("CPUs")}</span><span class="d">${tr("Shared with {os}: the VM only uses them while containers are busy.", { os: OS })}</span>
       <div class="range"><input type="range" id="res-cpus" min="1" max="${r.max_cpus}" step="1" value="${d.cpus}" aria-label="${tr("CPUs")}" style="--fill:${rangeFill(d.cpus, 1, r.max_cpus)}"><span class="num" id="res-cpus-v">${cpuText(d.cpus)}</span></div></div>
     <div class="pref"><span class="t">${tr("Memory")}</span><span class="d">${tr("The most the VM may take. It uses memory only as containers need it and gives the rest back to {os}.", { os: OS })}</span>
       <div class="range"><input type="range" id="res-mem" min="1024" max="${maxGb * 1024}" step="1024" value="${Math.min(d.memory_mib, maxGb * 1024)}" aria-label="${tr("Memory")}" style="--fill:${rangeFill(Math.min(d.memory_mib, maxGb * 1024), 1024, maxGb * 1024)}"><span class="num" id="res-mem-v">${gb(d.memory_mib)}</span></div></div>
+    ${diskRow}
     ${r.overridden ? `<p class="muted">${tr("KIRI_CPUS or KIRI_MEMORY_MIB is set for the daemon, and it takes precedence over these.")}</p>` : ""}
     <div class="res-foot"><span class="muted">${r.awake ? tr("Running now with {cpus} and up to {mem}.", { cpus: cpuText(r.running_cpus), mem: gb(r.running_memory_mib) }) : tr("The VM is asleep; it starts with these next time.")}</span>
       <span style="flex:1"></span>
@@ -9181,7 +9276,7 @@ function cmpJump() {
 
 /* —— Projects: cards + create dialog + IDE detail —— */
 const proj = {
-  list: null, open: null, tree: null, asked: 0, creating: false,
+  list: null, projectsRoot: "", open: null, tree: null, asked: 0, creating: false,
   draft: { name: "", summary: "", source: "workspace" },
   sel: "", selDir: true, // "" + selDir = project root
   openDirs: {}, // path -> true (collapsed when false/missing after first expand-all)
@@ -10964,27 +11059,39 @@ function projTermMakeSession(cwd) {
     shell: null,
   };
 }
-/** Project folder / DATA_ROOT slug: keep Unicode, strip path-illegal chars (mirrors workspace_folder_name). */
-function projSlug(name) {
-  const s = String(name || "").trim();
-  if (!s || s === "." || s === "..") return "project";
-  let cleaned = "";
-  for (const c of s) {
-    cleaned += /[/\\:\0*?\"<>|]/.test(c) || c.charCodeAt(0) < 32 ? "-" : c;
-  }
-  cleaned = cleaned.replace(/^[- .]+|[- .]+$/g, "");
-  return cleaned || "project";
+/** ASCII DATA_ROOT slug from project code (fallback: id). Mirrors Rust project_data_slug. */
+function projDataSlug(p) {
+  const code = String(p?.code || "").trim().toLowerCase();
+  if (/^[a-z][a-z0-9_-]{1,47}$/.test(code) && !/--|__/.test(code) && !/[-_]$/.test(code)) return code;
+  let cleaned = String(p?.id || "project").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!cleaned) cleaned = "project";
+  if (/^[0-9]/.test(cleaned)) cleaned = "p" + cleaned;
+  return cleaned;
+}
+/** Shared parent for seed data: mirrors Rust projects_data_root (page fallback). */
+function projProjectsRoot() {
+  if (proj.projectsRoot) return String(proj.projectsRoot).replace(/\\/g, "/").replace(/\/+$/, "");
+  if (WIN) return "D:/kiri-projects";
+  return "~/kiri-projects";
+}
+function projDataRootOf(p) {
+  if (p?.dataRoot) return String(p.dataRoot).replace(/\\/g, "/");
+  return `${projProjectsRoot()}/${projDataSlug(p)}/data`;
 }
 /** Env injected into project PTYs so seed/compose scripts isolate per project. */
 function projTermEnv() {
   const p = projOf(proj.open);
   if (!p) return undefined;
-  const slug = projSlug(p.name || p.id || "project");
+  const slug = projDataSlug(p);
+  const dataRoot = projDataRootOf(p);
   return {
     PROJECT_SLUG: slug,
-    DATA_ROOT: `/${slug}/data`,
-    DATA_ROOT_DOCKER: `/${slug}/data`,
+    COMPOSE_PROJECT_NAME: `${slug}-middleware`,
+    KIRI_PROJECTS_ROOT: projProjectsRoot(),
+    DATA_ROOT: dataRoot,
+    DATA_ROOT_DOCKER: dataRoot,
     KIRI_PROJECT_ID: String(p.id || ""),
+    KIRI_PROJECT_CODE: slug,
   };
 }
 function projTermBoot(sess) {
@@ -11258,9 +11365,29 @@ const PROJ_ICONS = [
 ].filter((n) => PH[n]);
 function projIconOf(p) { const i = p?.icon || "briefcase"; return PH[i] ? i : "briefcase"; }
 function projColorOf(p) { const c = (p?.color || "#84CC16").toUpperCase(); return /^#[0-9A-F]{6}$/.test(c) ? c : "#84CC16"; }
-function projCloseIconPop() {
-  document.querySelector("#proj-modal .ico-pop")?.classList.remove("open");
+/* mac-style create/edit color pop: common row + spectrum grid + custom <input type=color>.
+   (WebView2 EyeDropper / native eyedropper is unreliable — presets are the primary UX.) */
+const PROJ_COLORS_COMMON = [
+  "#EF4444", "#F97316", "#EAB308", "#84CC16", "#22C55E", "#14B8A6",
+  "#0EA5E9", "#3B82F6", "#8B5CF6", "#EC4899", "#A3A3A3", "#0F172A",
+];
+const PROJ_COLORS_PALETTE = [
+  "#FEE2E2", "#FFEDD5", "#FEF9C3", "#ECFCCB", "#DCFCE7", "#CFFAFE", "#DBEAFE", "#EDE9FE", "#FCE7F3", "#F5F5F4",
+  "#FECACA", "#FED7AA", "#FEF08A", "#D9F99D", "#BBF7D0", "#A5F3FC", "#BFDBFE", "#DDD6FE", "#FBCFE8", "#E7E5E4",
+  "#F87171", "#FB923C", "#FACC15", "#A3E635", "#4ADE80", "#22D3EE", "#60A5FA", "#A78BFA", "#F472B6", "#A8A29E",
+  "#EF4444", "#F97316", "#EAB308", "#84CC16", "#22C55E", "#06B6D4", "#3B82F6", "#8B5CF6", "#EC4899", "#78716C",
+  "#B91C1C", "#C2410C", "#A16207", "#4D7C0F", "#15803D", "#0E7490", "#1D4ED8", "#6D28D9", "#BE185D", "#44403C",
+  "#7F1D1D", "#7C2D12", "#713F12", "#365314", "#14532D", "#164E63", "#1E3A8A", "#4C1D95", "#831843", "#1C1917",
+];
+function projClosePicks() {
+  const m = document.getElementById("proj-modal");
+  if (!m) return;
+  m.querySelector(".ico-pop")?.classList.remove("open");
+  m.querySelector(".color-pop")?.classList.remove("open");
+  m.querySelector("[data-projicoopen]")?.setAttribute("aria-expanded", "false");
+  m.querySelector("[data-projcoloropen]")?.setAttribute("aria-expanded", "false");
 }
+function projCloseIconPop() { projClosePicks(); }
 function projCardIco(p) {
   const icon = projIconOf(p), color = projColorOf(p);
   return `<div class="proj-card-ico"><svg viewBox="0 0 256 256" aria-hidden="true"><path d="${PH[icon]}"/></svg></div>`;
@@ -11270,6 +11397,10 @@ function projCloseCreate() {
     document.removeEventListener("keydown", proj._createEsc);
     proj._createEsc = null;
   }
+  if (proj._pickResize) {
+    window.removeEventListener("resize", proj._pickResize);
+    proj._pickResize = null;
+  }
   proj.creating = false;
   proj.editingId = null;
   proj._createPending = false;
@@ -11278,19 +11409,44 @@ function projCloseCreate() {
 function projNameTaken(name, exceptId) {
   return (proj.list || []).some((p) => p.name === name && p.id !== exceptId);
 }
-function projSetCreateErr(msg) {
-  const err = $("proj-name-err");
-  const inp = $("proj-name");
-  if (err) err.textContent = msg || "";
+function projCodeTaken(code, exceptId) {
+  const c = String(code || "").trim().toLowerCase();
+  if (!c) return false;
+  return (proj.list || []).some((p) => p.id !== exceptId && String(p.code || "").toLowerCase() === c);
+}
+/** Client-side mirror of validate_project_code; returns translated error or "". */
+function projCodeError(raw) {
+  const s = String(raw || "").trim().toLowerCase();
+  if (!s) return tr("Project code is required");
+  if (s.length < 2 || s.length > 48) return tr("Project code must be 2–48 characters");
+  if (!/^[a-z]/.test(s)) return tr("Project code must start with a letter");
+  if (!/^[a-z][a-z0-9_-]*$/.test(s)) return tr("Project code: only letters, digits, _ and -");
+  if (/--|__/.test(s) || /[-_]$/.test(s)) return tr("Project code cannot end with -/_ or repeat them");
+  return "";
+}
+function projSetCreateErr(msg, field) {
+  const nameErr = $("proj-name-err");
+  const codeErr = $("proj-code-err");
+  const nameInp = $("proj-name");
+  const codeInp = $("proj-code");
+  if (nameErr) nameErr.textContent = "";
+  if (codeErr) codeErr.textContent = "";
+  nameInp?.classList.remove("bad");
+  codeInp?.classList.remove("bad");
+  if (!msg) return;
+  const onCode = field === "code";
+  const err = onCode ? codeErr : nameErr;
+  const inp = onCode ? codeInp : nameInp;
+  if (err) err.textContent = msg;
   if (inp) {
-    inp.classList.toggle("bad", !!msg);
-    if (msg) inp.focus();
+    inp.classList.add("bad");
+    inp.focus();
   }
 }
 function projOpenCreate() {
   proj.creating = true;
   proj.editingId = null;
-  proj.draft = { name: "", summary: "", source: "workspace", icon: "briefcase", color: "#84CC16" };
+  proj.draft = { name: "", code: "", summary: "", source: "workspace", icon: "briefcase", color: "#84CC16" };
   projPaintCreate();
 }
 function projOpenEdit(id) {
@@ -11300,6 +11456,7 @@ function projOpenEdit(id) {
   proj.editingId = id;
   proj.draft = {
     name: p.name || "",
+    code: p.code || "",
     summary: p.summary || "",
     source: p.source || "workspace",
     icon: projIconOf(p),
@@ -11318,6 +11475,9 @@ function projPaintCreate() {
   const icon = projIconOf(d), color = projColorOf(d);
   d.icon = icon; d.color = color;
   const icos = PROJ_ICONS.map((n) => `<button type="button" class="ico${icon === n ? " on" : ""}" data-projico="${n}" style="--proj-c:${esc(color)}" title="${n}"><svg viewBox="0 0 256 256"><path d="${PH[n]}"/></svg></button>`).join("");
+  const swatchBtn = (c) => `<button type="button" class="csw${c === color ? " on" : ""}" data-projswatch="${c}" style="--c:${esc(c)}" title="${esc(c)}" aria-label="${esc(c)}"></button>`;
+  const commonSwatches = PROJ_COLORS_COMMON.map(swatchBtn).join("");
+  const paletteSwatches = PROJ_COLORS_PALETTE.map(swatchBtn).join("");
   const caret = `<svg class="caret" viewBox="0 0 256 256"><path d="${PH.caret || ""}"/></svg>`;
   const title = editing ? tr("Edit project") : tr("New project");
   const modes = editing ? "" : `<div class="modes">
@@ -11336,6 +11496,9 @@ function projPaintCreate() {
     </div>
     <label>${tr("Name")}<input type="text" id="proj-name" value="${esc(d.name)}" placeholder="${tr("e.g. szda-web docker")}" autocomplete="off" />
       <span class="ferr" id="proj-name-err" role="alert"></span></label>
+    <label>${tr("Project code")}<input type="text" id="proj-code" value="${esc(d.code)}" placeholder="${tr("e.g. szda")}" spellcheck="false" autocomplete="off" autocapitalize="off" />
+      <span class="sub">${tr("ASCII code for data paths (seed / middleware). Letters, digits, _ and -.")}</span>
+      <span class="ferr" id="proj-code-err" role="alert"></span></label>
     <label>${tr("Description")}<textarea id="proj-sum" placeholder="${tr("Short guide for others (shown on the card)")}">${esc(d.summary)}</textarea></label>
     <div class="proj-pick">
       <div class="field">
@@ -11348,33 +11511,70 @@ function projPaintCreate() {
       </div>
       <div class="field">
         <span>${tr("Color")}</span>
-        <label class="color-trig" title="${tr("Pick a color")}" style="--c:${esc(color)}">
-          <input type="color" id="proj-color" value="${esc(color.toLowerCase())}" />
+        <button type="button" class="color-trig" data-projcoloropen aria-haspopup="listbox" aria-expanded="false" title="${tr("Pick a color")}" style="--c:${esc(color)}">
           <span class="swatch" aria-hidden="true"></span>
           <span class="hex" id="proj-color-hex">${esc(color)}</span>
-        </label>
+          ${caret}
+        </button>
       </div>
-      <div class="ico-pop" role="listbox" aria-label="${tr("Choose icon")}">${icos}</div>
     </div>
     ${modes}
     <div class="actions">
       <button class="btn quiet" type="button" data-projcancelcreate>${tr("Cancel")}</button>
       <button class="btn primary" type="button" data-projcreate>${tr(editing ? "Save" : "Create")}</button>
     </div>
+  </div>
+  <div class="ico-pop" role="listbox" aria-label="${tr("Choose icon")}">${icos}</div>
+  <div class="color-pop" role="listbox" aria-label="${tr("Pick a color")}">
+    <div class="swatches common" aria-label="${tr("Pick a color")}">${commonSwatches}</div>
+    <div class="swatches palette">${paletteSwatches}</div>
+    <div class="color-more">
+      <label class="custom" title="${tr("Custom color")}">
+        <input type="color" id="proj-color" value="${esc(color.toLowerCase())}" />
+        <span class="dot" aria-hidden="true"></span>
+        <span>${tr("Custom color")}</span>
+      </label>
+    </div>
   </div>`;
   document.body.append(scrim);
   const pop = scrim.querySelector(".ico-pop");
+  const colorPop = scrim.querySelector(".color-pop");
   const trig = scrim.querySelector("[data-projicoopen]");
-  const setPop = (open) => {
-    pop?.classList.toggle("open", open);
-    if (trig) trig.setAttribute("aria-expanded", open ? "true" : "false");
+  const colorTrig = scrim.querySelector("[data-projcoloropen]");
+  const placePop = (el, anchor, fullPickWidth, maxWant) => {
+    if (!el || !anchor) return;
+    const ar = anchor.getBoundingClientRect();
+    const box = fullPickWidth ? (scrim.querySelector(".proj-pick")?.getBoundingClientRect() || ar) : ar;
+    const gap = 6;
+    const want = Math.min(maxWant || 220, Math.round(window.innerHeight * (maxWant ? 0.55 : 0.4)));
+    let top = ar.bottom + gap;
+    let maxH = Math.min(want, window.innerHeight - top - 12);
+    if (maxH < 120 && ar.top > window.innerHeight - ar.bottom) {
+      maxH = Math.min(want, ar.top - 12);
+      top = Math.max(12, ar.top - gap - maxH);
+    }
+    el.style.left = `${Math.round(box.left)}px`;
+    el.style.width = `${Math.round(box.width)}px`;
+    el.style.top = `${Math.round(top)}px`;
+    el.style.maxHeight = `${Math.round(Math.max(100, maxH))}px`;
+    el.style.right = "auto";
   };
-  // Close only via × / Cancel / Esc — not by clicking the scrim. Esc closes icon pop first.
+  const setIcoPop = (open) => {
+    if (open) { colorPop?.classList.remove("open"); colorTrig?.setAttribute("aria-expanded", "false"); placePop(pop, trig, true); }
+    pop?.classList.toggle("open", open);
+    trig?.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  const setColorPop = (open) => {
+    if (open) { pop?.classList.remove("open"); trig?.setAttribute("aria-expanded", "false"); placePop(colorPop, colorTrig, true, 360); }
+    colorPop?.classList.toggle("open", open);
+    colorTrig?.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  // Close only via × / Cancel / Esc — not by clicking the scrim. Esc closes picks first.
   proj._createEsc = (ev) => {
     if (ev.key !== "Escape") return;
     if (!document.getElementById("proj-modal")) return;
     ev.preventDefault();
-    if (pop?.classList.contains("open")) { setPop(false); return; }
+    if (pop?.classList.contains("open") || colorPop?.classList.contains("open")) { projClosePicks(); return; }
     projCloseCreate();
   };
   document.addEventListener("keydown", proj._createEsc);
@@ -11397,53 +11597,96 @@ function projPaintCreate() {
     if (ct) ct.style.setProperty("--c", c);
     const hex = $("proj-color-hex"); if (hex) hex.textContent = c;
     const inp = $("proj-color"); if (inp && inp.value.toUpperCase() !== c) inp.value = c.toLowerCase();
+    scrim.querySelectorAll("[data-projswatch]").forEach((b) => b.classList.toggle("on", b.dataset.projswatch === c));
   };
   trig.onclick = (ev) => {
     ev.stopPropagation();
-    setPop(!pop.classList.contains("open"));
+    setIcoPop(!pop.classList.contains("open"));
+  };
+  colorTrig.onclick = (ev) => {
+    ev.stopPropagation();
+    setColorPop(!colorPop.classList.contains("open"));
   };
   pop.addEventListener("click", (ev) => {
     const b = ev.target.closest("[data-projico]");
     if (!b) return;
     proj.draft.icon = b.dataset.projico;
     paintPick();
-    setPop(false);
+    setIcoPop(false);
+  });
+  colorPop.addEventListener("click", (ev) => {
+    const b = ev.target.closest("[data-projswatch]");
+    if (!b) return;
+    proj.draft.color = b.dataset.projswatch;
+    paintPick();
+    setColorPop(false);
   });
   scrim.querySelector(".sheet")?.addEventListener("click", (ev) => {
-    if (pop?.classList.contains("open") && !ev.target.closest(".ico-pop, [data-projicoopen]")) setPop(false);
+    if (ev.target.closest("[data-projicoopen], [data-projcoloropen]")) return;
+    projClosePicks();
   });
-  $("proj-color")?.addEventListener("input", (ev) => {
+  scrim.addEventListener("click", (ev) => { if (ev.target === scrim) projClosePicks(); });
+  pop?.addEventListener("mousedown", (ev) => ev.stopPropagation());
+  colorPop?.addEventListener("mousedown", (ev) => ev.stopPropagation());
+  scrim.querySelector(".sheet")?.addEventListener("scroll", () => projClosePicks(), { passive: true });
+  if (proj._pickResize) window.removeEventListener("resize", proj._pickResize);
+  proj._pickResize = projClosePicks;
+  window.addEventListener("resize", proj._pickResize);
+  const colorInp = $("proj-color");
+  colorInp?.addEventListener("input", (ev) => {
     const v = (ev.target.value || "").toUpperCase();
     if (/^#[0-9A-F]{6}$/.test(v)) { proj.draft.color = v; paintPick(); }
+  });
+  colorInp?.addEventListener("change", (ev) => {
+    const v = (ev.target.value || "").toUpperCase();
+    if (/^#[0-9A-F]{6}$/.test(v)) { proj.draft.color = v; paintPick(); setColorPop(false); }
+  });
+  /* Prefer showPicker when available — more reliable than opaque overlay clicks in WebView2. */
+  scrim.querySelector(".color-pop .custom")?.addEventListener("click", (ev) => {
+    if (!colorInp || typeof colorInp.showPicker !== "function") return;
+    if (ev.target === colorInp) return;
+    try { colorInp.showPicker(); ev.preventDefault(); } catch (_) { /* native label → input */ }
   });
   scrim.querySelector("[data-projclosecreate]").onclick = () => projCloseCreate();
   scrim.querySelector("[data-projcancelcreate]").onclick = () => projCloseCreate();
   $("proj-name")?.addEventListener("input", () => projSetCreateErr(""));
+  $("proj-code")?.addEventListener("input", (ev) => {
+    // Soft-normalize while typing: lower-case, strip illegal chars.
+    const el = ev.target;
+    const next = String(el.value || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    if (el.value !== next) el.value = next;
+    proj.draft.code = el.value;
+    projSetCreateErr("");
+  });
   scrim.querySelector("[data-projcreate]").onclick = () => {
     const name = ($("proj-name")?.value || "").trim();
+    const code = ($("proj-code")?.value || "").trim().toLowerCase();
     const summary = $("proj-sum")?.value || "";
     const source = scrim.querySelector('input[name="proj-src"]:checked')?.value || d.source || "workspace";
     const icon = proj.draft.icon || "briefcase";
     const color = proj.draft.color || "#84CC16";
-    if (!name) { projSetCreateErr(tr("Name is required")); return; }
-    if (projNameTaken(name, proj.editingId || undefined)) { projSetCreateErr(tr("A project with that name already exists")); return; }
+    if (!name) { projSetCreateErr(tr("Name is required"), "name"); return; }
+    if (projNameTaken(name, proj.editingId || undefined)) { projSetCreateErr(tr("A project with that name already exists"), "name"); return; }
+    const codeErr = projCodeError(code);
+    if (codeErr) { projSetCreateErr(codeErr, "code"); return; }
+    if (projCodeTaken(code, proj.editingId || undefined)) { projSetCreateErr(tr("A project with that code already exists"), "code"); return; }
     if (editing) {
       proj._createPending = true;
       const go = scrim.querySelector("[data-projcreate]");
       if (go) go.disabled = true;
-      send("projectmeta", { name: proj.editingId, value: { name, summary, icon, color } });
+      send("projectmeta", { name: proj.editingId, value: { name, code, summary, icon, color } });
       return;
     }
     if (source === "linked") {
       projCloseCreate();
-      send("projectlinkopen", { value: { name, summary, icon, color } });
+      send("projectlinkopen", { value: { name, code, summary, icon, color } });
       return;
     }
     // Keep the modal open until the server accepts — duplicate / folder clash stays inline.
     proj._createPending = true;
     const go = scrim.querySelector("[data-projcreate]");
     if (go) go.disabled = true;
-    send("projectadd", { value: { source: "workspace", name, summary, icon, color } });
+    send("projectadd", { value: { source: "workspace", name, code, summary, icon, color } });
   };
   setTimeout(() => $("proj-name")?.focus(), 0);
 }
@@ -11474,9 +11717,13 @@ function renderProjects() {
         <button type="button" class="btn quiet ic danger" data-projrm="${esc(p.id)}" title="${tr("Remove")}" aria-label="${tr("Remove")}"><svg viewBox="0 0 256 256"><path d="${PH.trash}"/></svg></button>
       </div>`;
     const blurb = p.summary || (p.source === "workspace" ? tr("Empty workspace — upload materials") : p.root);
+    const codeLine = p.code
+      ? `<div class="sub mono" title="${esc(projDataRootOf(p))}">${esc(p.code)} · ${esc(projDataRootOf(p))}</div>`
+      : `<div class="sub warn">${tr("Project code is required")}</div>`;
     return `<div class="proj-card${p.missing ? " missing" : ""}" style="--proj-c:${esc(color)}" data-projopen="${esc(p.id)}">
       <div class="top">${projCardIco(p)}<div class="card-side">${projBadge(p)}${acts}</div></div>
       <div class="meta"><b title="${esc(p.name)}">${esc(p.name)}</b>
+        ${codeLine}
         <div class="sub" title="${esc(blurb)}">${esc(blurb)}</div>
         ${p.missing ? `<div class="warn">${tr("Folder missing")}</div>` : ""}
       </div>
@@ -11683,6 +11930,7 @@ function renderProjectPage() {
 function projEvent(e) {
   if (e.type === "projects") {
     proj.list = e.projects || [];
+    if (e.projectsRoot) proj.projectsRoot = String(e.projectsRoot).replace(/\\/g, "/");
     const n = $("n-projects"); if (n) n.textContent = proj.list.length || "";
     if (ui.view === "projects") render();
   } else if (e.type === "project") {
@@ -13689,12 +13937,14 @@ const FEEDBACK_URL = "https://github.com/libracoder/kiri/issues/new";
 
 /* The VM's memory: under 1 GB in MB, so an idle VM doesn't read as "0.2". */
 const memText = (mib) => (mib < 1024 ? `${Math.round(mib)} MB` : `${(mib / 1024).toFixed(1)} GB`);
-const memTitle = () => !ui.mem?.target ? `The ${VM.toLowerCase()} is asleep: it holds no memory`
-  : LINUX ? `Kiri's containers and engine use ${memText(ui.mem.used)}, of the ${memText(ui.mem.ceiling)} this computer has.`
-  : WIN ? `Kiri's containers, engine and agent hold ${memText(ui.mem.used)} of the ${memText(ui.mem.ceiling)} WSL has (.wslconfig sets that).`
-  : `In use ${memText(ui.mem.used)}. The VM may take up to ${memText(ui.mem.target)} right now, and grows as containers need more.`;
+const memTitle = () => !ui.mem?.target ? tr("The {vm} is asleep: it holds no memory", { vm: tr(VM) })
+  : LINUX ? tr("Kiri's containers and engine use {used}, of the {total} this computer has.", { used: memText(ui.mem.used), total: memText(ui.mem.ceiling) })
+  : WIN ? tr("Kiri's containers, engine and agent hold {used} of the {total} WSL has (.wslconfig sets that).", { used: memText(ui.mem.used), total: memText(ui.mem.ceiling) })
+  : tr("In use {used}. The VM may take up to {target} right now, and grows as containers need more.", { used: memText(ui.mem.used), target: memText(ui.mem.target) });
 /* What Kiri's window costs this computer (ui/usage.rs): memory and CPU of
    the window and the processes that draw this page, not the Linux VM. */
+/* i18n: usage tip part names (Name|process disambiguates UI chrome words). */
+void [tr("Helpers|process"), tr("Graphics|process"), tr("Page|process"), tr("Network|process"), tr("Window")];
 function usageItem() {
   const u = ui.usage;
   if (!u) return "";
@@ -13702,9 +13952,18 @@ function usageItem() {
   // the whole computer, which is what a reader takes "CPU" to mean.
   const cores = Math.max(1, u.cores || 1);
   const cpu = (c) => `${pct(c / cores)} CPU`;
-  const why = `What Kiri's window uses on this ${HOST}, not counting the ${VM}:\n`
-    + (u.parts || []).map((p) => `${p.name}${p.n > 1 ? ` (${p.n} processes)` : ""}: ${size(p.mem)} · ${cpu(p.cpu)}`).join("\n")
-    + `\n\nCPU is a share of all ${cores} cores: 100% would be every core busy.`;
+  // Process-group names: some share a word with UI chrome (Network, Page…),
+  // so lang files keep them as "Name|process". English strips the context.
+  const partKey = { Helpers: "Helpers|process", Graphics: "Graphics|process", Page: "Page|process", Network: "Network|process" };
+  const partName = (name) => {
+    const key = partKey[name] || name;
+    const s = tr(key);
+    return s === key && key.includes("|") ? key.slice(0, key.lastIndexOf("|")) : s;
+  };
+  const partLine = (p) => `${partName(p.name)}${p.n > 1 ? ` (${tr("{n} processes", { n: p.n })})` : ""}: ${size(p.mem)} · ${cpu(p.cpu)}`;
+  const why = tr("What Kiri's window uses on this {host}, not counting the {vm}:", { host: tr(HOST), vm: tr(VM) })
+    + "\n" + (u.parts || []).map(partLine).join("\n")
+    + "\n\n" + tr("CPU is a share of all {n} cores: 100% would be every core busy.", { n: cores });
   return `<span class="sep">·</span><span class="num use" title="${esc(why)}">${size(u.mem)} · ${cpu(u.cpu)}</span>`;
 }
 // Every 5 s while the window shows; nothing while it's hidden.
@@ -15523,7 +15782,9 @@ window.kiri = {
           proj._createPending = false;
           const go = document.querySelector("#proj-modal [data-projcreate]");
           if (go) go.disabled = false;
-          projSetCreateErr(trErr(e.text));
+          const msg = trErr(e.text);
+          const onCode = /code/i.test(e.text || "");
+          projSetCreateErr(msg, onCode ? "code" : "name");
           break;
         }
         toast(e.kind, e.kind === "error" ? trErr(e.text) : tr(e.text), e.op, e.open, e.act); break;
@@ -15855,6 +16116,15 @@ $("content").addEventListener("click", (ev) => {
     send("setdaemon", { value: parsed.value });
   }
   else if ((el = t("[data-saveres]"))) send("setresources", { value: ui.resDraft });
+  else if ((el = t("[data-movedisk]"))) {
+    confirmRemove(
+      tr("Move the Linux disk?"),
+      tr("WSL will shut down (every distro, not only Kiri's). Pick a folder; the virtual disk moves there, then Kiri starts again."),
+      "Move…",
+      () => { el.disabled = true; el.textContent = tr("Moving…"); send("movedisk"); },
+      "primary"
+    );
+  }
   else if ((el = t("[data-vmpower]"))) { el.disabled = true; powerEngine(el.dataset.vmpower); }
   else if ((el = t("[data-restartvm]"))) { el.disabled = true; el.textContent = "Restarting…"; send("restartvm"); }
   else if ((el = t("[data-copy]"))) {
@@ -19776,8 +20046,14 @@ function htShow(open) {
   if (!ht.tabs.length) htNewTab();
   else { htRender(); requestAnimationFrame(() => htPane()?.term?.focus()); }
 }
+let htToggleAt = 0;
 function htToggle() {
-  if (ht.open && !htHasFocus() && htPane()) return htPane().term?.focus();
+  // Native AcceleratorKeyPressed + page keydown can both fire for one
+  // keystroke; debounce so open→close (or close→open) never cancels itself.
+  const now = performance.now();
+  if (now - htToggleAt < 120) return;
+  htToggleAt = now;
+  // Always show/hide: buttons and Ctrl+` / F4 (Linux) both toggle.
   htShow(!ht.open);
   if (!ht.open) document.activeElement?.blur?.();
 }
@@ -20011,10 +20287,14 @@ function htDo(a, p = htPane()) {
   else if (a === "z0") htStep(0);
   else if (a.startsWith("move-")) htMove(a.slice(5));
 }
-/* The toggle works from anywhere in the window. */
+/* The toggle works from anywhere in the window. Capture so a focused
+   terminal (xterm) can't also handle the key and toggle twice — close then open. */
 document.addEventListener("keydown", (ev) => {
-  if (htToggleKey(ev)) { ev.preventDefault(); htToggle(); }
-});
+  if (!htToggleKey(ev)) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  htToggle();
+}, true);
 htBody.addEventListener("wheel", (ev) => {
   if (!(WIN || LINUX ? ev.ctrlKey : ev.metaKey || ev.ctrlKey)) return;
   ev.preventDefault();
