@@ -5,10 +5,11 @@
 //!
 //! The page sends `{"cmd":"term","name":ACTION,"id":SESSION,"value":…}`:
 //! `shells`; `open` with `{shell, cols, rows}` and optional `cwd` (an existing
-//! directory; else the home folder); `input` with the bytes typed (base64);
-//! `resize` with `{cols, rows}`; `close`; `closeall` when the page starts;
-//! `paste`; and `copy` with the text. The app answers with events of type
-//! `term`: `shells`, `data`
+//! directory; else the home folder) and optional `env` (a small allow-listed
+//! map for project terminals, e.g. `DATA_ROOT` / `PROJECT_SLUG`); `input` with
+//! the bytes typed (base64); `resize` with `{cols, rows}`; `close`; `closeall`
+//! when the page starts; `paste`; and `copy` with the text. The app answers
+//! with events of type `term`: `shells`, `data`
 //! (output, base64), `exit`, `paste`.
 //!
 //! Output and input go as base64: a read can end in the middle of a UTF-8
@@ -49,6 +50,36 @@ pub fn cwd(v: &Value) -> Option<PathBuf> {
     }
     let p = PathBuf::from(s);
     std::fs::canonicalize(&p).ok().filter(|c| c.is_dir()).map(plain_path)
+}
+
+/// Keys the page may set on `open` via `{env: {…}}`. Anything else is dropped
+/// so a tab can't rewrite `PATH` / `LD_PRELOAD` / credentials.
+const ENV_ALLOW: &[&str] = &[
+    "DATA_ROOT",
+    "DATA_ROOT_DOCKER",
+    "PROJECT_SLUG",
+    "COMPOSE_PROJECT_NAME",
+    "KIRI_PROJECT_ID",
+];
+
+/// Optional environment from `{env}`: only allow-listed keys, no NULs, capped
+/// length. Empty when absent or invalid.
+pub fn env(v: &Value) -> Vec<(String, String)> {
+    let Some(obj) = v.get("env").and_then(|x| x.as_object()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (k, val) in obj {
+        if !ENV_ALLOW.iter().any(|a| a == k) {
+            continue;
+        }
+        let Some(s) = val.as_str() else { continue };
+        if s.is_empty() || s.len() > 1024 || s.contains('\0') {
+            continue;
+        }
+        out.push((k.clone(), s.to_owned()));
+    }
+    out
 }
 
 /// Windows' canonical form `\\?\C:\x` → `C:\x`, `\\?\UNC\server\share\x` →
@@ -208,6 +239,24 @@ mod tests {
         }
         assert!(cwd(&json!({"cwd": "/no/such/kiri/dir/ever"})).is_none());
         assert!(cwd(&json!({})).is_none());
+    }
+
+    #[test]
+    fn env_only_allows_project_keys() {
+        let got = env(&json!({
+            "env": {
+                "DATA_ROOT": "/数字档案/data",
+                "PROJECT_SLUG": "数字档案",
+                "PATH": "/evil",
+                "LD_PRELOAD": "x"
+            }
+        }));
+        assert_eq!(got.len(), 2);
+        assert!(got.iter().all(|(k, _)| ENV_ALLOW.contains(&k.as_str())));
+        assert!(got.iter().any(|(k, v)| k == "DATA_ROOT" && v == "/数字档案/data"));
+        assert!(got.iter().any(|(k, v)| k == "PROJECT_SLUG" && v == "数字档案"));
+        assert!(env(&json!({})).is_empty());
+        assert!(env(&json!({"env": {"DATA_ROOT": ""}})).is_empty());
     }
 
     #[test]

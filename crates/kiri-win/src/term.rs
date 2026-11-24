@@ -71,6 +71,7 @@ pub fn handle(action: &str, id: &str, value: &Value, emit: fn(String)) {
         "open" if termwire::valid_id(id) => {
             let (cols, rows) = termwire::size(value);
             let cwd = termwire::cwd(value);
+            let env = termwire::env(value);
             let asked = value["shell"].as_str().unwrap_or("").to_owned();
             let id = id.to_owned();
             // Listing WSL's distros runs wsl.exe: not on the window's thread.
@@ -80,7 +81,7 @@ pub fn handle(action: &str, id: &str, value: &Value, emit: fn(String)) {
                 let Some(shell) = list.iter().find(|s| s.id == asked).or(list.first()) else {
                     return emit(termwire::exit(&id, None, Some("No shell found")));
                 };
-                if let Err(e) = open(&id, &command_line(&shell.id), cols, rows, cwd, emit) {
+                if let Err(e) = open(&id, &command_line(&shell.id), cols, rows, cwd, &env, emit) {
                     emit(termwire::exit(&id, None, Some(&e.to_string())));
                 }
             });
@@ -254,8 +255,9 @@ fn ensure_run_cmd_helper() {
 
 /// This process's environment with Kiri's tools first on the PATH, as a
 /// CreateProcessW block: `name=value` UTF-16 strings, sorted, each ending
-/// in a NUL, and one more NUL at the end.
-fn environment() -> Vec<u16> {
+/// in a NUL, and one more NUL at the end. `extra` overlays allow-listed
+/// project vars (e.g. `DATA_ROOT`) after the defaults.
+fn environment(extra: &[(String, String)]) -> Vec<u16> {
     ensure_run_cmd_helper();
     let ours = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(r"Kiri\bin")).filter(|d| d.is_dir());
     let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()));
@@ -309,6 +311,9 @@ fn environment() -> Vec<u16> {
     set(&mut vars, "GIT_CONFIG_KEY_0", "color.ui");
     set(&mut vars, "GIT_CONFIG_VALUE_0", "always");
     set(&mut vars, "npm_config_color", "always");
+    for (k, v) in extra {
+        set(&mut vars, k, v);
+    }
     vars.sort_by_key(|(k, _)| k.to_uppercase());
     let mut block: Vec<u16> = Vec::new();
     for (k, v) in vars {
@@ -330,7 +335,15 @@ fn pipe() -> std::io::Result<(OwnedHandle, OwnedHandle)> {
     }
 }
 
-fn open(id: &str, command: &str, cols: u16, rows: u16, cwd: Option<PathBuf>, emit: fn(String)) -> std::io::Result<()> {
+fn open(
+    id: &str,
+    command: &str,
+    cols: u16,
+    rows: u16,
+    cwd: Option<PathBuf>,
+    env: &[(String, String)],
+    emit: fn(String),
+) -> std::io::Result<()> {
     if let Some(old) = with(|s| s.remove(id)) {
         end(old);
     }
@@ -346,7 +359,7 @@ fn open(id: &str, command: &str, cols: u16, rows: u16, cwd: Option<PathBuf>, emi
     }
     let console = Arc::new(Console(Mutex::new(Some(hpc))));
 
-    let process = match spawn(command, hpc, cwd.as_deref()) {
+    let process = match spawn(command, hpc, cwd.as_deref(), env) {
         Ok(p) => Arc::new(p),
         Err(e) => {
             console.close();
@@ -409,13 +422,18 @@ fn open(id: &str, command: &str, cols: u16, rows: u16, cwd: Option<PathBuf>, emi
 }
 
 /// Starts `command` attached to the pseudo console `hpc`, in `cwd` or the user's folder.
-fn spawn(command: &str, hpc: HPCON, cwd: Option<&std::path::Path>) -> std::io::Result<OwnedHandle> {
+fn spawn(
+    command: &str,
+    hpc: HPCON,
+    cwd: Option<&std::path::Path>,
+    extra_env: &[(String, String)],
+) -> std::io::Result<OwnedHandle> {
     let mut cmdline: Vec<u16> = command.encode_utf16().chain([0]).collect();
     let cwd: Option<Vec<u16>> = cwd
         .map(|p| p.to_path_buf())
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
         .map(|p| p.to_string_lossy().encode_utf16().chain([0]).collect());
-    let env = environment();
+    let env = environment(extra_env);
     // SAFETY: the attribute list is sized by the first call and lives in
     // `list` until after CreateProcessW; every pointer passed outlives the
     // call that takes it.

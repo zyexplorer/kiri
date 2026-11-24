@@ -1059,6 +1059,23 @@ fn apply_docker_env_to_shell(cmd: &mut Command) -> Result<(), String> {
     }
 }
 
+/// Per-project data root so seed/compose scripts don't clash across projects.
+/// `DATA_ROOT=/$PROJECT_SLUG/data` (slug mirrors the workspace folder name).
+fn apply_project_data_env(cmd: &mut Command, p: &Project) {
+    let slug = workspace_folder_name(&p.name).unwrap_or_else(|_| {
+        if p.id.is_empty() {
+            "project".into()
+        } else {
+            p.id.clone()
+        }
+    });
+    let data_root = format!("/{slug}/data");
+    cmd.env("PROJECT_SLUG", &slug)
+        .env("DATA_ROOT", &data_root)
+        .env("DATA_ROOT_DOCKER", &data_root)
+        .env("KIRI_PROJECT_ID", &p.id);
+}
+
 fn run_script(state: &Path, id: &str, value: &Value, emit: impl Fn(String)) -> Result<(), String> {
     CANCEL.store(false, Ordering::SeqCst);
     let p = project_by_id(state, id)?;
@@ -1072,6 +1089,7 @@ fn run_script(state: &Path, id: &str, value: &Value, emit: impl Fn(String)) -> R
 
     let mut cmd = script_command(&script, args)?;
     apply_docker_env_to_shell(&mut cmd)?;
+    apply_project_data_env(&mut cmd, &p);
     cmd.current_dir(&p.root)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1277,6 +1295,7 @@ fn exec_line(state: &Path, id: &str, value: &Value, emit: impl Fn(String)) -> Re
     emit(json!({"type": "projectrun", "id": id, "phase": "start", "path": line, "kind": "exec"}).to_string());
     let mut cmd = line_shell(line)?;
     apply_docker_env_to_shell(&mut cmd)?;
+    apply_project_data_env(&mut cmd, &p);
     cmd.current_dir(&cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     let (tx, rx) = std::sync::mpsc::channel();

@@ -10953,6 +10953,29 @@ function projTermMakeSession(cwd) {
     shell: null,
   };
 }
+/** Project folder / DATA_ROOT slug: keep Unicode, strip path-illegal chars (mirrors workspace_folder_name). */
+function projSlug(name) {
+  const s = String(name || "").trim();
+  if (!s || s === "." || s === "..") return "project";
+  let cleaned = "";
+  for (const c of s) {
+    cleaned += /[/\\:\0*?\"<>|]/.test(c) || c.charCodeAt(0) < 32 ? "-" : c;
+  }
+  cleaned = cleaned.replace(/^[- .]+|[- .]+$/g, "");
+  return cleaned || "project";
+}
+/** Env injected into project PTYs so seed/compose scripts isolate per project. */
+function projTermEnv() {
+  const p = projOf(proj.open);
+  if (!p) return undefined;
+  const slug = projSlug(p.name || p.id || "project");
+  return {
+    PROJECT_SLUG: slug,
+    DATA_ROOT: `/${slug}/data`,
+    DATA_ROOT_DOCKER: `/${slug}/data`,
+    KIRI_PROJECT_ID: String(p.id || ""),
+  };
+}
 function projTermBoot(sess) {
   if (!sess || typeof Terminal !== "function") return;
   if (sess.term && !sess.exited) {
@@ -10994,7 +11017,10 @@ function projTermBoot(sess) {
   sess.exited = false; sess.opened = false;
   termBindScrollUi(term, { wide: !proj.pty.wrap });
   projTermFit(sess);
-  send("term", { name: "open", id, value: { shell, cols: term.cols, rows: term.rows, cwd: sess.cwd } });
+  const openVal = { shell, cols: term.cols, rows: term.rows, cwd: sess.cwd };
+  const env = projTermEnv();
+  if (env) openVal.env = env;
+  send("term", { name: "open", id, value: openVal });
   sess.opened = true;
   term.focus();
 }
