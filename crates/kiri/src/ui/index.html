@@ -453,7 +453,7 @@ h2 .beta { vertical-align: 3px; }
 .proj-tab-add { flex: none; width: 30px; height: 30px; margin: 3px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: 600 16px/1 var(--ui-font); cursor: pointer; display: grid; place-items: center; }
 .proj-tab-add:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
 .proj-editor-wrap, .proj-term-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
-.proj-editor { flex: 1; min-height: 0; width: 100%; border: 0; resize: none; padding: 12px 14px; background: var(--raised); color: var(--text); font-family: var(--mono-font, ui-monospace, Menlo, Consolas, monospace); font-size: 13px; line-height: 1.45; outline: none; overflow: auto; tab-size: 2; white-space: pre; overflow-wrap: normal; }
+.proj-editor { flex: 1; min-height: 0; width: 100%; border: 0; resize: none; padding: 12px 14px; background: var(--raised); color: var(--text); font-family: var(--mono-font, ui-monospace, Menlo, Consolas, monospace); font-size: 13px; line-height: 1.45; outline: none; overflow: auto; tab-size: 2; white-space: pre; overflow-wrap: normal; cursor: text; -webkit-user-select: text; user-select: text; }
 .proj-editor-empty { flex: 1; display: grid; place-items: center; color: var(--muted); padding: 24px; text-align: center; }
 /* Editor find / replace (Ctrl/Cmd+F, Ctrl/Cmd+H). */
 .proj-find {
@@ -509,7 +509,7 @@ h2 .beta { vertical-align: 3px; }
   position: absolute; inset: 0; width: 100%; height: 100%; box-sizing: border-box;
   padding: var(--proj-ed-pad); font: var(--proj-ed-font); background: transparent;
   color: transparent; caret-color: var(--text); -webkit-text-fill-color: transparent;
-  z-index: 1; resize: none;
+  z-index: 1; resize: none; cursor: text; -webkit-user-select: text; user-select: text;
 }
 .proj-code > .proj-editor::selection { background: color-mix(in srgb, var(--blue) 35%, transparent); color: transparent; -webkit-text-fill-color: transparent; }
 .proj-code > .proj-editor::-moz-selection { background: color-mix(in srgb, var(--blue) 35%, transparent); color: transparent; }
@@ -1366,7 +1366,7 @@ tr.warnrow .name > div:last-child { min-width: 0; } tr.warnrow :is(.wtitle, .sub
 .ed .body { position: relative; min-width: 0; overflow: hidden; }
 .ed pre, .ed textarea { position: absolute; inset: 0; margin: 0; padding: 10px 12px; font: var(--fs-mono)/1.6 var(--mono-font); white-space: pre; overflow: auto; tab-size: 2; border: 0; }
 .ed pre { color: var(--text); pointer-events: none; }
-.ed textarea { background: transparent; color: transparent; caret-color: var(--text); resize: none; outline: none; }
+.ed textarea { background: transparent; color: transparent; caret-color: var(--text); resize: none; outline: none; cursor: text; -webkit-user-select: text; user-select: text; }
 .ed textarea::selection { background: color-mix(in srgb, var(--blue) 28%, transparent); color: transparent; }
 /* Scrollbars: hand cursor on the thumb / track (WebView2 / Chromium). */
 .ed textarea::-webkit-scrollbar,
@@ -3280,6 +3280,11 @@ const ZH = {
   "Open location": "打开位置",
   "Copy Path": "复制路径",
   "Copy Relative Path": "复制相对路径",
+  "Pasted": "已粘贴",
+  "Nothing to paste": "没有可粘贴的内容",
+  "Can't paste a folder into itself": "不能把文件夹粘贴到自身里面",
+  "Can't paste onto the same file": "不能粘贴到原文件上",
+  "Paste into a folder": "请粘贴到文件夹中",
   "Unsaved changes": "有未保存的更改",
   "Could not find Kiri's data folder": "找不到 Kiri 的数据目录",
   "Could not create the notes folder": "无法创建便笺目录",
@@ -4796,6 +4801,11 @@ const ZH_TW = {
   "Open location": "打開位置",
   "Copy Path": "複製路徑",
   "Copy Relative Path": "複製相對路徑",
+  "Pasted": "已貼上",
+  "Nothing to paste": "沒有可貼上的內容",
+  "Can't paste a folder into itself": "不能把資料夾貼到自身裡面",
+  "Can't paste onto the same file": "不能貼到原檔案上",
+  "Paste into a folder": "請貼到資料夾中",
   "Unsaved changes": "有未保存的更改",
   "Could not find Kiri's data folder": "找不到 Kiri 的資料目錄",
   "Could not create the notes folder": "無法建立便箋目錄",
@@ -7913,6 +7923,59 @@ function buildsPane() {
   </div>`;
 }
 
+/* Overlay editors (Projects / Compose): text is painted in a <pre> under a
+   transparent textarea. Copy/cut then need the value, not the glyphs; and
+   body { user-select: none } needs the field to opt back into text selection
+   so ⌘/Ctrl+A selects the field, not nothing. */
+function bindOverlayEditor(ta) {
+  if (!ta || ta.dataset.overlayBound) return;
+  ta.dataset.overlayBound = "1";
+  ta.addEventListener("copy", (ev) => {
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    if (s === e || !ev.clipboardData) return;
+    ev.clipboardData.setData("text/plain", ta.value.slice(s, e));
+    ev.preventDefault();
+  });
+  ta.addEventListener("cut", (ev) => {
+    if (ta.readOnly || ta.disabled) return;
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    if (s === e || !ev.clipboardData) return;
+    ev.clipboardData.setData("text/plain", ta.value.slice(s, e));
+    ev.preventDefault();
+    // Prefer an undoable delete so ⌘/Ctrl+Z still reverses the cut.
+    if (document.execCommand("delete")) ta.dispatchEvent(new Event("input", { bubbles: true }));
+    else { ta.setRangeText("", s, e, "end"); ta.dispatchEvent(new Event("input", { bubbles: true })); }
+  });
+  ta.addEventListener("keydown", (ev) => {
+    if (textareaTabIndent(ev)) {
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+    const mod = WIN || LINUX ? ev.ctrlKey && !ev.metaKey : ev.metaKey && !ev.ctrlKey;
+    if (!mod || ev.altKey) return;
+    const key = ev.key.toLowerCase();
+    // Select all inside the field: the window's user-select:none would otherwise win.
+    if (key === "a" && !ev.shiftKey) {
+      ev.preventDefault();
+      ta.select();
+      return;
+    }
+    // Undo / redo on Windows and Linux (no Edit menu). On the Mac, Edit's ⌘Z / ⇧⌘Z win.
+    if (!(WIN || LINUX)) return;
+    if (key === "z" && !ev.shiftKey) {
+      ev.preventDefault();
+      document.execCommand("undo");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+    if ((key === "z" && ev.shiftKey) || key === "y") {
+      ev.preventDefault();
+      document.execCommand("redo");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+}
+
 /* Tab / Shift+Tab in a textarea: indent with two spaces (JSON-style), don't leave the field. */
 function textareaTabIndent(ev, pad = "  ") {
   if (ev.key !== "Tab" || ev.altKey || ev.ctrlKey || ev.metaKey) return false;
@@ -8784,7 +8847,7 @@ function cmpFileTab(p, el) {
   ta.value = cmp.draft;
   ta.addEventListener("input", () => { cmp.draft = ta.value; cmpDraw(); cmpPlanSoon(); });
   ta.addEventListener("scroll", cmpScroll);
-  ta.addEventListener("keydown", (e) => { if (e.key === "Tab" && !ta.readOnly) { e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); ta.dispatchEvent(new Event("input")); } });
+  bindOverlayEditor(ta);
   cmpDraw();
   if (!cmp.plan) cmpPlanSoon();
   cmpJump();
@@ -9111,6 +9174,8 @@ const proj = {
   draft: { name: "", summary: "", source: "workspace" },
   sel: "", selDir: true, // "" + selDir = project root
   openDirs: {}, // path -> true (collapsed when false/missing after first expand-all)
+  // In-app tree clipboard for Copy → Paste (project-relative path).
+  clip: null, // { projectId, path, isDir }
   pane: "editor",
   tabs: [], active: "", // {path, text, dirty}
   // Tab strip: remember scroll; stop auto-chasing after the user scrolls the strip.
@@ -9680,6 +9745,7 @@ function projBindEditor(ta) {
   if (!ta || ta.dataset.projBound) return;
   ta.dataset.projBound = "1";
   projHlPaint(ta);
+  bindOverlayEditor(ta);
   ta.addEventListener("input", () => {
     const t = projTab(proj.active);
     if (!t || t.loading) return;
@@ -10315,6 +10381,22 @@ function projTreeCopyPath(path, relative) {
   send("copy", { name: text });
   toast("ok", tr("Copied"));
 }
+/** Remember a tree node for Paste (in-app clipboard; not the OS pasteboard). */
+function projTreeCopyNode(path, isDir) {
+  if (!proj.open || path == null || path === "") return;
+  proj.clip = { projectId: proj.open, path: String(path), isDir: !!isDir };
+  toast("ok", tr("Copied"));
+}
+function projTreePasteInto(intoPath) {
+  if (!proj.open) return;
+  const clip = proj.clip;
+  if (!clip?.path || clip.projectId !== proj.open) {
+    toast("error", tr("Nothing to paste"));
+    return;
+  }
+  const into = intoPath || "";
+  send("projectpaste", { name: proj.open, value: { from: [clip.path], into } });
+}
 function projTreeReveal(path) {
   if (!proj.open) return;
   send("projectreveal", { name: proj.open, value: { path: path || "" } });
@@ -10328,12 +10410,14 @@ function projTreeMenuAction(action, ctx) {
   else if (action === "newfolder") projTreeNewFolder(isDir ? path : (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ""));
   else if (action === "copyabs") projTreeCopyPath(path, false);
   else if (action === "copyrel") projTreeCopyPath(path, true);
+  else if (action === "copy") projTreeCopyNode(path, isDir);
+  else if (action === "paste") projTreePasteInto(isDir ? path : (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ""));
   else if (action === "rename") projTreeRename(path);
   else if (action === "delete") projTreeDelete(path);
 }
 /**
  * Tree context menu — order matches common IDEs, works on macOS / Windows / Linux:
- *   Open in Terminal → Open location → New… → Copy paths → Rename / Delete
+ *   Open in Terminal → Open location → New… → Copy / Paste → Copy paths → Rename / Delete
  */
 function projShowTreeMenu(clientX, clientY, path, isDir) {
   closeMenu();
@@ -10347,6 +10431,11 @@ function projShowTreeMenu(clientX, clientY, path, isDir) {
     items.push(["New file", "newfile"]);
     items.push(["New folder", "newfolder"]);
   }
+  items.push("---");
+  // Copy the node itself (file or folder); Paste only onto folders when something is clipped.
+  if (path) items.push(["Copy", "copy"]);
+  const canPaste = isDir && proj.clip?.path && proj.clip.projectId === proj.open;
+  if (canPaste) items.push(["Paste", "paste"]);
   items.push("---");
   items.push(["Copy Path", "copyabs"]);
   items.push(["Copy Relative Path", "copyrel"]);

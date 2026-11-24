@@ -2782,7 +2782,7 @@ fn handle(text: &str, tx: &Sender<Cmd>, autostart: bool, view: Option<&str>) {
         "projects" | "projectremove" | "projectscan" | "projectpin" | "projectmeta" | "projectrun"
         | "projectbuild" | "projectcompose" | "projectreveal" | "projecttree" | "projectexport"
         | "projectimport" | "projectadd" | "projectcancel"
-        | "projectmkdir" | "projectrmpath" | "projectwrite" | "projectcopyin"
+        | "projectmkdir" | "projectrmpath" | "projectwrite" | "projectcopyin" | "projectpaste"
         | "projectread" | "projectsave" | "projectrename" | "projectexec" | "projectnewfile" => {
             let (cmd, id, value) = (msg.cmd.clone(), msg.name.clone(), msg.value);
             std::thread::spawn(move || {

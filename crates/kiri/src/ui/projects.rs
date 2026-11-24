@@ -48,6 +48,7 @@ pub fn handle(
             | "projectrmpath"
             | "projectwrite"
             | "projectcopyin"
+            | "projectpaste"
             | "projectread"
             | "projectsave"
             | "projectrename"
@@ -188,6 +189,16 @@ pub fn handle(
                 emit(json!({"type": "projecttree", "id": id, "entries": tree_for(&state, id)}).to_string());
                 emit(refresh_project(&state, id));
                 emit(notice("ok", &format!("Added {n} item(s)")));
+            }
+            Err(e) => emit(err(&e)),
+        },
+        // Tree Copy → Paste: duplicate paths already in this project into a folder.
+        "projectpaste" => match paste_within(&state, id, value) {
+            Ok(n) => {
+                emit(json!({"type": "projecttree", "id": id, "entries": tree_for(&state, id)}).to_string());
+                emit(refresh_project(&state, id));
+                let _ = n;
+                emit(notice("ok", "Pasted"));
             }
             Err(e) => emit(err(&e)),
         },
@@ -657,6 +668,122 @@ fn copy_paths_in(state: &Path, id: &str, value: &Value) -> Result<usize, String>
         n += 1;
     }
     Ok(n)
+}
+
+/// Paste copied project-relative paths into `into` ("" = project root).
+/// Names that already exist become `name copy.ext`, then `name copy 2.ext`, …
+fn paste_within(state: &Path, id: &str, value: &Value) -> Result<usize, String> {
+    let p = project_by_id(state, id)?;
+    let root = Path::new(&p.root);
+    let into = value.get("into").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let base = if into.is_empty() {
+        root.to_path_buf()
+    } else {
+        let b = safe_join(root, into)?;
+        if !b.is_dir() {
+            return Err("Paste into a folder".into());
+        }
+        b
+    };
+    let from = value
+        .get("from")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if from.is_empty() {
+        return Err("Nothing to paste".into());
+    }
+    let mut n = 0;
+    for rel in from {
+        let rel = rel.trim().trim_start_matches('/').trim_start_matches('\\');
+        if rel.is_empty() {
+            continue;
+        }
+        let src = safe_join(root, rel)?;
+        if !src.exists() {
+            continue;
+        }
+        if src.is_dir() && path_is_under(&base, &src) {
+            return Err("Can't paste a folder into itself".into());
+        }
+        let name = src.file_name().ok_or_else(|| "Invalid path".to_owned())?;
+        // Same folder as the source: always make a new name (`file copy.ext`), or
+        // pasting would land on the original and look like nothing happened.
+        // Other folders: keep the name, and only rename when that name is taken.
+        let same_folder = src.parent().is_some_and(|p| paths_equal(p, &base));
+        let dest = if same_folder {
+            unique_copy_name(&base, name)
+        } else {
+            unique_child(&base, name)
+        };
+        if paths_equal(&dest, &src) {
+            return Err("Can't paste onto the same file".into());
+        }
+        if src.is_dir() {
+            copy_dir(&src, &dest)?;
+        } else {
+            fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+        }
+        n += 1;
+    }
+    if n == 0 {
+        return Err("Nothing to paste".into());
+    }
+    Ok(n)
+}
+
+/// Whether `path` is `dir` or lives under it (after canonicalize when possible).
+fn path_is_under(path: &Path, dir: &Path) -> bool {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    path == dir || path.starts_with(&dir)
+}
+
+fn paths_equal(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// `file.txt` → `file copy.txt` → `file copy 2.txt` when the name is taken.
+fn unique_child(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
+    let dest = dir.join(name);
+    if !dest.exists() {
+        return dest;
+    }
+    unique_copy_name(dir, name)
+}
+
+/// Always start at `stem copy.ext` (Finder / Explorer style for a same-folder paste).
+fn unique_copy_name(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
+    let path = Path::new(name);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("copy");
+    let ext = path.extension().and_then(|s| s.to_str());
+    for i in 1..10_000 {
+        let label = if i == 1 {
+            format!("{stem} copy")
+        } else {
+            format!("{stem} copy {i}")
+        };
+        let candidate = match ext {
+            Some(e) => dir.join(format!("{label}.{e}")),
+            None => dir.join(label),
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    dir.join(format!("{}-{}", name.to_string_lossy(), uuid_stub()))
+}
+
+fn uuid_stub() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    format!("{t:x}")
 }
 
 fn copy_dir(src: &Path, dest: &Path) -> Result<(), String> {
@@ -1519,6 +1646,56 @@ mod tests {
         assert!(is_compose_name("docker-compose.middleware.linux.yml"));
         assert!(is_compose_name("compose.yaml"));
         assert!(!is_compose_name("version.env"));
+    }
+
+    #[test]
+    fn unique_child_avoids_existing_names() {
+        let dir = tempfile_dir();
+        fs::write(dir.join("all.cmd"), "a").unwrap();
+        let once = unique_child(&dir, std::ffi::OsStr::new("all.cmd"));
+        assert_eq!(once.file_name().unwrap(), "all copy.cmd");
+        fs::write(&once, "b").unwrap();
+        let twice = unique_child(&dir, std::ffi::OsStr::new("all.cmd"));
+        assert_eq!(twice.file_name().unwrap(), "all copy 2.cmd");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn paste_within_duplicates_file_and_refuses_self_folder() {
+        let state = tempfile_dir();
+        let root = state.join("ws").join("demo");
+        fs::create_dir_all(root.join("base")).unwrap();
+        fs::write(root.join("all.cmd"), "@echo hi\n").unwrap();
+        fs::write(root.join("base").join("x.txt"), "x\n").unwrap();
+        let mut store = Store { projects: vec![] };
+        store.projects.push(Project {
+            id: "p1".into(),
+            name: "demo".into(),
+            source: "linked".into(),
+            root: root.to_string_lossy().into_owned(),
+            summary: String::new(),
+            icon: default_icon(),
+            color: default_color(),
+            pins: vec![],
+            missing: false,
+        });
+        save_store(&state, &store).unwrap();
+
+        assert_eq!(paste_within(&state, "p1", &json!({"from": ["all.cmd"], "into": "base"})).unwrap(), 1);
+        assert!(root.join("base/all.cmd").is_file());
+        // Second paste into another folder gets a unique name.
+        assert_eq!(paste_within(&state, "p1", &json!({"from": ["all.cmd"], "into": "base"})).unwrap(), 1);
+        assert!(root.join("base/all copy.cmd").is_file());
+        // Same folder as the source: always `name copy.ext`, never overwrite the original.
+        assert_eq!(paste_within(&state, "p1", &json!({"from": ["all.cmd"], "into": ""})).unwrap(), 1);
+        assert!(root.join("all.cmd").is_file());
+        assert!(root.join("all copy.cmd").is_file());
+        assert_eq!(paste_within(&state, "p1", &json!({"from": ["all.cmd"], "into": ""})).unwrap(), 1);
+        assert!(root.join("all copy 2.cmd").is_file());
+        // Folder into itself is refused.
+        let err = paste_within(&state, "p1", &json!({"from": ["base"], "into": "base"})).unwrap_err();
+        assert!(err.contains("itself"), "{err}");
+        let _ = fs::remove_dir_all(&state);
     }
 
     #[test]
