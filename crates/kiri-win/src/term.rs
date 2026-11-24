@@ -137,7 +137,7 @@ pub fn captured(program: &std::path::Path, args: &[&str]) -> std::io::Result<(st
         return Err(std::io::Error::other(format!("CreatePseudoConsole failed ({hr:#x})")));
     }
     let console = Arc::new(Console(Mutex::new(Some(hpc))));
-    let process = match spawn(&command, hpc, None) {
+    let process = match spawn(&command, hpc, None, &[]) {
         Ok(p) => Arc::new(p),
         Err(e) => {
             console.close();
@@ -209,7 +209,7 @@ fn shells() -> Vec<Shell> {
     list.push(Shell { id: "powershell".into(), label: "Windows PowerShell".into(), group: "" });
     list.push(Shell { id: "cmd".into(), label: "Command Prompt".into(), group: "" });
     // Kiri's own distro runs the engine; Docker Desktop's aren't for logging into.
-    for d in crate::setup::distros().unwrap_or_default() {
+    for d in crate::setup::distros() {
         let lower = d.to_ascii_lowercase();
         if !lower.starts_with("kiri") && !lower.starts_with("docker-desktop") && d.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)) {
             list.push(Shell { id: format!("wsl:{d}"), label: format!("WSL · {d}"), group: "WSL" });

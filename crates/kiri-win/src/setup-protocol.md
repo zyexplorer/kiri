@@ -15,6 +15,7 @@ way the main page does: it sends JSON strings with
 | `setup-restart` | | Restart → "Restart now" |
 | `setup-later` | | Restart → "Restart later" (hides the window to the tray) |
 | `setup-choose` | `value`: `"kiri"` or `"ubuntu"` | Choose a Linux → the primary button |
+| `setup-browse-wsl-root` | | Choose a Linux → "Browse…" for the Linux disk folder (`wsl --import` parent; images/containers live in `ext4.vhdx` under it) |
 | `setup-switch` | `value`: `"kiri"` | while Ubuntu downloads → "Use Kiri Linux instead" |
 | `setup-cancel` | | any progress screen → "Cancel" (back to the step's start) |
 | `setup-retry` | | error → "Try again" |
@@ -45,6 +46,7 @@ One event type, sent whenever anything changes (at most ~10 a second):
   "makeDefault": true,
   "buildKiri": true,
   "autostart": true,
+  "wslRoot": "D:\\kiri-wsl",
   "progress": {"pct": 58, "done": 224395264, "total": 367575040, "rate": 19084083, "eta": 9, "label": "Downloading WSL 3.0.3 from Microsoft"} | null,
   "tasks": [{"label": "Download WSL", "state": "done" | "active" | "todo" | "error", "detail": "214 / 368 MB"}],
   "log": ["kiri daemon: ready in 33 ms"],

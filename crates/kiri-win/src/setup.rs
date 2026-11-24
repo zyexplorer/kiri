@@ -77,6 +77,9 @@ struct Saved {
     /// "kiri" or "ubuntu".
     linux: Option<String>,
     distro: Option<String>,
+    /// Parent folder for the WSL distro disk (`{wslRoot}/{distro}/ext4.vhdx`).
+    /// Images and containers live there; the app stays in `%LOCALAPPDATA%\Kiri`.
+    wsl_root: Option<String>,
     /// Unix seconds of the WSL install that needs a restart.
     restart_after: Option<u64>,
     /// Why setup last stopped, kept so a restart of Kiri doesn't lose it.
@@ -109,6 +112,8 @@ struct State {
     /// with Kiri", asked only with another engine here.
     build_kiri: bool,
     autostart: bool,
+    /// Parent folder for the WSL virtual disk (setup Choose step).
+    wsl_root: String,
     /// A first start: the page asks for the language before anything else.
     ask_lang: bool,
     progress: Option<Value>,
@@ -142,6 +147,112 @@ fn save(s: &Saved) {
 /// The distro setup put Kiri in, for the bridge.
 pub fn distro() -> Option<String> {
     saved().distro
+}
+
+/// Suggested parent for a new WSL disk: `D:\kiri-wsl` when D: exists, else
+/// `%LOCALAPPDATA%\Kiri\wsl`. Shown on the Choose step; install uses the
+/// saved value (or the historical LocalAppData default if none was saved).
+pub(crate) fn suggest_wsl_root() -> PathBuf {
+    if Path::new(r"D:\").is_dir() {
+        return PathBuf::from(r"D:\kiri-wsl");
+    }
+    dir().join("wsl")
+}
+
+/// Parent folder used for `wsl --import` (`{root}/{distro}`).
+pub(crate) fn wsl_root() -> PathBuf {
+    saved()
+        .wsl_root
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dir().join("wsl"))
+}
+
+/// Persist the parent folder for the WSL disk (setup + Resources move).
+pub(crate) fn set_wsl_root(path: &Path) {
+    let mut s = saved();
+    s.wsl_root = Some(path.to_string_lossy().into_owned());
+    save(&s);
+}
+
+fn wsl_root_for_state(s: &Saved) -> String {
+    s.wsl_root
+        .clone()
+        .filter(|p| !p.trim().is_empty())
+        .unwrap_or_else(|| suggest_wsl_root().to_string_lossy().into_owned())
+}
+
+/// The Windows folder that holds `ext4.vhdx` for `name`, from Lxss registry.
+pub(crate) fn distro_base_path(name: &str) -> Option<PathBuf> {
+    use windows_sys::Win32::Foundation::{ERROR_NO_MORE_ITEMS, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ, REG_SZ,
+    };
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(Some(0)).collect()
+    }
+    unsafe fn reg_sz(key: windows_sys::Win32::System::Registry::HKEY, value: &str) -> Option<String> {
+        let name = wide(value);
+        let mut kind = 0u32;
+        let mut len = 0u32;
+        // SAFETY: valid open key; first call sizes the buffer.
+        let st = unsafe { RegQueryValueExW(key, name.as_ptr(), std::ptr::null_mut(), &mut kind, std::ptr::null_mut(), &mut len) };
+        if st != ERROR_SUCCESS || kind != REG_SZ || len < 2 {
+            return None;
+        }
+        let mut buf = vec![0u8; len as usize];
+        let st = unsafe { RegQueryValueExW(key, name.as_ptr(), std::ptr::null_mut(), &mut kind, buf.as_mut_ptr(), &mut len) };
+        if st != ERROR_SUCCESS || kind != REG_SZ {
+            return None;
+        }
+        let units: Vec<u16> = buf.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let s = String::from_utf16_lossy(&units);
+        Some(s.trim_end_matches('\0').to_owned())
+    }
+    let sub = wide(r"Software\Microsoft\Windows\CurrentVersion\Lxss");
+    // SAFETY: opens HKCU\…\Lxss for read; closed before return.
+    unsafe {
+        let mut root = 0;
+        if RegOpenKeyExW(HKEY_CURRENT_USER, sub.as_ptr(), 0, KEY_READ, &mut root) != ERROR_SUCCESS {
+            return None;
+        }
+        let mut i = 0u32;
+        let mut found = None;
+        loop {
+            let mut child_name = [0u16; 256];
+            let mut child_len = child_name.len() as u32;
+            let st = RegEnumKeyExW(root, i, child_name.as_mut_ptr(), &mut child_len, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+            if st == ERROR_NO_MORE_ITEMS {
+                break;
+            }
+            if st != ERROR_SUCCESS {
+                i += 1;
+                continue;
+            }
+            let mut child = 0;
+            if RegOpenKeyExW(root, child_name.as_ptr(), 0, KEY_READ, &mut child) == ERROR_SUCCESS {
+                if reg_sz(child, "DistributionName").as_deref() == Some(name)
+                    && let Some(base) = reg_sz(child, "BasePath")
+                {
+                    let base = base.strip_prefix(r"\\?\").unwrap_or(&base);
+                    found = Some(PathBuf::from(base));
+                }
+                RegCloseKey(child);
+            }
+            if found.is_some() {
+                break;
+            }
+            i += 1;
+        }
+        RegCloseKey(root);
+        found
+    }
+}
+
+/// Bytes occupied by the distro's `ext4.vhdx`, if present.
+pub(crate) fn distro_vhdx_bytes(name: &str) -> Option<u64> {
+    let base = distro_base_path(name)?;
+    std::fs::metadata(base.join("ext4.vhdx")).ok().map(|m| m.len())
 }
 
 /// The SHA-256 of each bundle file, embedded at build time by
@@ -306,6 +417,7 @@ fn fresh_state(step: &'static str, s: &Saved) -> State {
         make_default: !other,
         build_kiri: !other,
         autostart: true,
+        wsl_root: wsl_root_for_state(s),
         ask_lang: crate::engine::fresh() && crate::engine::prefs()["langAsked"] != true,
         progress: None,
         tasks: Vec::new(),
@@ -597,8 +709,9 @@ fn install_linux(kind: &str) -> io::Result<()> {
     if let Some(e) = crate::win::arch_mismatch() {
         return Err(io::Error::other(e));
     }
-    let base = dir().join("wsl");
+    let base = wsl_root();
     std::fs::create_dir_all(&base)?;
+    log_line(&format!("WSL disk folder: {}", base.display()));
     let distro = if kind == "kiri" {
         update(|s| s.tasks = tasks(&[tr("Unpack Kiri Linux"), tr("Add it to WSL"), tr("Start it")]));
         task(0, "active", "");
@@ -630,10 +743,16 @@ fn install_linux(kind: &str) -> io::Result<()> {
                 let file = download(&UBUNTU, 0)?;
                 update(|s| s.progress = None);
                 task(1, "active", "≈ 1.6 GB");
-                // A real Ubuntu, in Start too; older WSL lacks --from-file.
-                let installed = quiet("wsl.exe").args(["--install", "--from-file"]).arg(&file).args(["--name", UBUNTU_DISTRO, "--no-launch"]).status().is_ok_and(|s| s.success());
-                if !installed {
-                    wsl_ok(quiet("wsl.exe").args(["--import", UBUNTU_DISTRO]).arg(base.join(UBUNTU_DISTRO)).arg(&file).args(["--version", "2"]))?;
+                // Prefer --import into the chosen disk folder so the VHDX
+                // lands off C: when the person picked another drive. The
+                // Microsoft --install path picks its own BasePath.
+                let dest = base.join(UBUNTU_DISTRO);
+                let imported = quiet("wsl.exe").args(["--import", UBUNTU_DISTRO]).arg(&dest).arg(&file).args(["--version", "2"]).status().is_ok_and(|s| s.success());
+                if !imported {
+                    // Fallback: Store-style install (location chosen by WSL).
+                    wsl_ok(quiet("wsl.exe").args(["--install", "--from-file"]).arg(&file).args(["--name", UBUNTU_DISTRO, "--no-launch"]))?;
+                } else {
+                    log_line(&format!("wsl --import {UBUNTU_DISTRO} {} …", dest.display()));
                 }
                 task(1, "done", "");
                 update(|s| {
@@ -656,6 +775,9 @@ fn install_linux(kind: &str) -> io::Result<()> {
     let mut s = saved();
     s.linux = Some(kind.to_owned());
     s.distro = Some(distro.clone());
+    if s.wsl_root.is_none() {
+        s.wsl_root = Some(base.to_string_lossy().into_owned());
+    }
     save(&s);
     crate::serve::set_distro(&distro);
     update(|st| st.linux = Some(kind.to_owned()));
@@ -1018,8 +1140,30 @@ pub fn on_message(msg: &str) {
             let _ = quiet("shutdown.exe").args(["/r", "/t", "5", "/c", "Kiri: finishing Windows Subsystem for Linux"]).status();
         }
         "setup-later" => Handle.run(crate::app::Ui::hide),
+        "setup-browse-wsl-root" => {
+            if BUSY.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::spawn(|| {
+                let Some(path) = crate::app::pick_folder_blocking(&tr("Choose where the Linux disk should live")) else {
+                    return;
+                };
+                set_wsl_root(&path);
+                update(|s| {
+                    s.wsl_root = path.to_string_lossy().into_owned();
+                    s.error = None;
+                });
+            });
+        }
         "setup-choose" => {
             let kind = if v["value"] == "ubuntu" { "ubuntu" } else { "kiri" };
+            // Persist the disk folder shown on Choose before import runs.
+            let root = STATE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map(|s| s.wsl_root.clone()).filter(|p| !p.trim().is_empty());
+            if let Some(root) = root {
+                set_wsl_root(Path::new(&root));
+            } else {
+                set_wsl_root(&suggest_wsl_root());
+            }
             update(|s| s.linux = Some(kind.to_owned()));
             run("linux", move || install_linux(kind));
         }

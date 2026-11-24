@@ -204,6 +204,12 @@ main.center .err{width:min(640px,100%)}
 .opt-n{font:700 22px/1.2 var(--f-display)}
 .badge{margin-inline-start:auto;padding:3px 10px;border-radius:9999px;background:var(--ember);color:#1A1400;font-size:12px;font-weight:600}
 .opt-p{margin:0;font-size:14px;line-height:1.5;color:var(--text-2)}
+.diskpick{width:100%;max-width:100%;display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:12px;border:1px solid var(--line);background:var(--surface);text-align:left}
+.diskpick .disk-t{font:600 14px/1.3 var(--f-text);color:var(--ink)}
+.diskpick .disk-d{margin:0;font-size:13px;line-height:1.45;color:var(--muted)}
+.diskpick .disk-row{display:flex;align-items:center;gap:10px;min-width:0}
+.diskpick .disk-path{flex:1;min-width:0;padding:8px 10px;border-radius:8px;background:var(--sunk);font:13px/1.3 var(--f-mono);color:var(--ember-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.diskpick.dim{opacity:.55}
 .facts{margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px}
 .facts dt{font-size:12px;color:var(--muted)}
 .facts dd{margin:2px 0 0;font:600 15px var(--f-mono)}
@@ -468,6 +474,11 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
     "Later: Kiri waits in the tray and picks up after your next restart.": "稍后：Kiri 会留在托盘，并在下次重启后继续。",
     "Where should your containers run?": "容器应在哪里运行？",
     "Kiri runs Linux containers inside WSL, in a Linux of its own. Both choices run the same containers at the same speed; they differ in size and in what else you get.": "Kiri 在 WSL 内的自有 Linux 中运行 Linux 容器。两种选择运行同样的容器、速度相同；差别在体积以及你额外能用到什么。",
+    "Linux disk location": "Linux 磁盘位置",
+    "Images and containers live in a virtual disk under this folder. Kiri itself stays in Local AppData on C:.": "镜像和容器存放在此文件夹下的虚拟磁盘中。Kiri 程序本身仍留在 C 盘的 Local AppData。",
+    "Browse…": "浏览…",
+    "Already-installed Ubuntu keeps its current disk location.": "已安装的 Ubuntu 会保留当前磁盘位置。",
+    "Choose where the Linux disk should live": "选择 Linux 磁盘存放位置",
     "Kiri Linux": "Kiri Linux",
     "A tiny Linux made only for Kiri, built from Alpine. It stays out of sight and leaves with Kiri.": "专为 Kiri 打造的精简 Linux，基于 Alpine。平时不出现，卸载 Kiri 时一并移除。",
     "Download": "下载",
@@ -2238,7 +2249,13 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
                   '<ul class="pros"><li>' + tr('+ A complete Linux you can open from Start') + '</li><li>' + tr('+ Already have Ubuntu? Kiri uses it: nothing to download') + '</li>' +
                   (ratio ? '<li class="con">' + tr('– About {n}× the download of Kiri Linux', { n: ratio }) + '</li>' : '') + '</ul>') +
             '</div></label>' +
-          '</div>' + ERR +
+          '</div>' +
+          '<div class="diskpick' + (ex && choice === 'ubuntu' ? ' dim' : '') + '"><span class="disk-t">' + tr('Linux disk location') + '</span>' +
+            '<p class="disk-d">' + tr('Images and containers live in a virtual disk under this folder. Kiri itself stays in Local AppData on C:.') +
+            (ex ? ' ' + tr('Already-installed Ubuntu keeps its current disk location.') : '') + '</p>' +
+            '<div class="disk-row"><code class="disk-path" id="wslRoot" title="' + esc(s.wslRoot || '') + '">' + esc(s.wslRoot || '') + '</code>' +
+            '<button type="button" class="btn" data-act="browse-wsl"' + (ex && choice === 'ubuntu' ? ' disabled' : '') + '>' + tr('Browse…') + '</button></div></div>' +
+          ERR +
           '<div class="foot"><p class="small">' + (ex ? tr('Ubuntu is already on this PC, so choosing it downloads nothing.') : (isNum(sz.ubuntu) ? tr("{size} is Ubuntu's download today.", { size: ubSize }) : '')) + tr(' * Estimates until measured on a clean PC.') + '</p>' +
           '<button type="button" class="btn primary" data-act="choose" id="chooseBtn">' + tr('Set up with Kiri Linux') + '</button></div>' };
       }
@@ -2527,6 +2544,7 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
       return;
     }
     if (b.dataset.act === 'choose') send('setup-choose', { value: choice });
+    else if (b.dataset.act === 'browse-wsl') send('setup-browse-wsl-root');
     else if (b.dataset.act === 'copy') {
       send('copy', { value: 'docker run --rm alpine echo hello' });
       copiedTip(b);

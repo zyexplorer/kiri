@@ -3,9 +3,14 @@
 //! %USERPROFILE%\.wslconfig (memory is half of the PC's when unset). Saving
 //! writes those two keys and keeps the rest of the file; they apply when
 //! WSL restarts, which stops every WSL distro, not only Kiri's.
+//!
+//! Disk location is the WSL distro's `ext4.vhdx` folder (Lxss BasePath).
+//! Setup chooses it before `wsl --import`; Resources can move it later with
+//! `wsl --manage <distro> --move`.
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Value, json};
 
@@ -132,11 +137,22 @@ pub(crate) fn configured() -> (u64, u64) {
     (cpus, memory)
 }
 
+fn disk_fields() -> (Option<String>, Option<u64>, bool) {
+    let Some(name) = crate::setup::distro().or_else(crate::engine::distro) else {
+        return (None, None, false);
+    };
+    let path = crate::setup::distro_base_path(&name).map(|p| p.to_string_lossy().into_owned());
+    let bytes = crate::setup::distro_vhdx_bytes(&name);
+    let movable = path.is_some();
+    (path, bytes, movable)
+}
+
 fn event() -> Value {
     let (cpus, memory) = configured();
     let max_cpus = std::thread::available_parallelism().map_or(1, |n| n.get() as u64);
     let max_mib = physical_mib();
     let now = running();
+    let (disk_path, disk_bytes, disk_movable) = disk_fields();
     json!({
         "type": "resources",
         "cpus": cpus,
@@ -147,6 +163,10 @@ fn event() -> Value {
         "max_cpus": max_cpus,
         "max_memory_mib": max_mib,
         "overridden": false,
+        "disk_path": disk_path,
+        "disk_bytes": disk_bytes,
+        "disk_movable": disk_movable,
+        "disk_moving": MOVING.load(Ordering::SeqCst),
         "restart_note": "Restarting restarts WSL: every WSL distro stops, not only Kiri's, and Kiri's containers start again as they're set to.",
     })
 }
@@ -190,6 +210,98 @@ pub fn restart() {
         });
         emit(event().to_string());
     });
+}
+
+static MOVING: AtomicBool = AtomicBool::new(false);
+
+fn quiet_wsl() -> std::process::Command {
+    let mut c = crate::win::tool("wsl.exe");
+    std::os::windows::process::CommandExt::creation_flags(&mut c, 0x0800_0000);
+    c.env("WSL_UTF8", "1");
+    c
+}
+
+fn wsl_err(out: &std::process::Output) -> io::Error {
+    let text = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    io::Error::other(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("WSL failed").to_owned())
+}
+
+/// Settings → Resources → Move…: pick a parent folder, move the distro's
+/// VHDX there with `wsl --manage --move`, then restart the engine.
+pub fn move_disk() {
+    if MOVING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(|| {
+        let finish = |r: io::Result<()>| {
+            MOVING.store(false, Ordering::SeqCst);
+            match r {
+                Ok(()) => emit(notice("ok", &tr("Linux disk moved. WSL restarted with the new location"))),
+                Err(e) => emit(notice("error", &trf("Could not move the Linux disk: {error}", &[("error", &e)]))),
+            }
+            emit(event().to_string());
+        };
+        emit(event().to_string());
+        let Some(distro) = crate::setup::distro().or_else(crate::engine::distro) else {
+            finish(Err(io::Error::other("Kiri's Linux is not set up yet")));
+            return;
+        };
+        let Some(parent) = crate::app::pick_folder_blocking(&tr("Choose where the Linux disk should live")) else {
+            MOVING.store(false, Ordering::SeqCst);
+            emit(event().to_string());
+            return;
+        };
+        let dest = parent.join(&distro);
+        if let Some(cur) = crate::setup::distro_base_path(&distro) {
+            if same_dir(&cur, &dest) {
+                finish(Ok(()));
+                return;
+            }
+            if dest.exists() && !dir_empty(&dest) {
+                finish(Err(io::Error::other(format!("{} is not empty", dest.display()))));
+                return;
+            }
+        }
+        if let Err(e) = std::fs::create_dir_all(&parent) {
+            finish(Err(io::Error::other(format!("could not create {}: {e}", parent.display()))));
+            return;
+        }
+        // Shut down every WSL distro so the VHDX can move.
+        let shut = quiet_wsl().arg("--shutdown").output();
+        if let Ok(o) = &shut {
+            if !o.status.success() {
+                finish(Err(wsl_err(o)));
+                return;
+            }
+        } else if let Err(e) = shut {
+            finish(Err(e));
+            return;
+        }
+        let moved = quiet_wsl().args(["--manage", &distro, "--move"]).arg(&dest).output();
+        match moved {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                finish(Err(wsl_err(&o)));
+                return;
+            }
+            Err(e) => {
+                finish(Err(e));
+                return;
+            }
+        }
+        crate::setup::set_wsl_root(&parent);
+        finish(crate::engine::ensure_daemon());
+    });
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    let a = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+    let b = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    a == b
+}
+
+fn dir_empty(path: &Path) -> bool {
+    std::fs::read_dir(path).map(|mut d| d.next().is_none()).unwrap_or(true)
 }
 
 #[cfg(test)]
