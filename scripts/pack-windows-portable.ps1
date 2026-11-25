@@ -1,4 +1,4 @@
-# One-click Windows portable zip from an existing Linux/engine half.
+﻿# One-click Windows portable zip from an existing Linux/engine half.
 #
 # Reuses target/kiri-windows-x86_64 (kiri, kiri-init, kiri-linux.tar.gz, docker
 # CLI, …), rebuilds bin\kiri.exe and kiri-win.exe with KIRI_BUNDLE_SHA256
@@ -30,6 +30,20 @@ function Fail([string]$msg) {
   Write-Host ""
   Write-Host "ERROR: $msg" -ForegroundColor Red
   exit 1
+}
+
+# cargo cannot overwrite target\release\kiri-win.exe while that process is live.
+function Stop-LockedKiriWin {
+  $hits = @(Get-Process -Name kiri-win -ErrorAction SilentlyContinue)
+  if (-not $hits.Count) { return }
+  Write-Host ("Stopping {0} kiri-win process(es) locking the release build..." -f $hits.Count) -ForegroundColor Yellow
+  $hits | Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 1
+  $left = @(Get-Process -Name kiri-win -ErrorAction SilentlyContinue)
+  if ($left.Count) {
+    $pids = ($left | ForEach-Object { $_.Id }) -join ", "
+    Fail ("kiri-win.exe is still running (PID {0}); quit Kiri from the tray, then re-run this script" -f $pids)
+  }
 }
 
 function Get-Sha256([string]$path) {
@@ -104,6 +118,7 @@ try {
   Write-Host "Bundle manifest: $($parts.Count) files -> $manifestPath"
 
   Write-Host "`n=== build kiri-win.exe (with KIRI_BUNDLE_SHA256) ===" -ForegroundColor Cyan
+  Stop-LockedKiriWin
   Invoke-VsCargo "clean -p kiri-win"
   # Quote the set value: manifest contains ';' which cmd treats as a separator.
   $buildCmd = "call `"$Vs`" -arch=amd64 -host_arch=amd64 && set HOME= && set `"KIRI_BUNDLE_SHA256=$manifest`" && cargo build -p kiri-win --release"
