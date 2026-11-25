@@ -391,6 +391,20 @@ fn start_daemon() -> io::Result<()> {
     }
     for _ in 0..100 {
         if client::alive() {
+            // Dev / partial installs often never sync a new Linux engine that
+            // would call ensure_defaults. Seed the three CN Hub mirrors from
+            // Windows when daemon.json is missing, then POST so the running
+            // daemon reloads without a full restart.
+            if let Some(d) = distro.as_deref() {
+                match crate::setup::ensure_hub_mirror_file(d) {
+                    Ok(true) => {
+                        crate::serve::log("engine: seeded default Hub registry mirrors");
+                        let _ = client::request("POST", "/kiri/daemon", Some(&crate::setup::hub_mirror_settings()));
+                    }
+                    Ok(false) => {}
+                    Err(e) => crate::serve::log(&format!("engine: could not seed Hub mirrors ({e})")),
+                }
+            }
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -483,6 +497,8 @@ fn vm_panel() {
                 "used_mib": mib("KiriMemoryUsed"),
                 "running": info["ContainersRunning"], "cpus": info["NCPU"],
                 "daemon_kib": info["KiriAgentMemory"].as_u64().unwrap_or(0) >> 10,
+                // WSL eth0 (or host outbound) IPv4 from /info; empty on older engines.
+                "ip": info["KiriVmIp"].as_str().unwrap_or(""),
             })
             .to_string());
             // Stopped (Stop in the window): off until Start, unlike asleep.
@@ -955,6 +971,26 @@ fn set_pref(name: &str, value: Value) {
     }
 }
 
+/// A host path the page may open in Explorer: a drive letter, or WSL's UNC share.
+fn host_path_ok(path: &str) -> bool {
+    let p = path.trim();
+    if p.is_empty() || p.contains('\0') || p.contains('\n') || p.contains('\r') {
+        return false;
+    }
+    let bytes = p.as_bytes();
+    // `C:\…` or `C:/…`
+    if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+    {
+        return true;
+    }
+    // `\\wsl$\Distro\…` (Explorer needs backslashes)
+    let lower = p.to_ascii_lowercase();
+    lower.starts_with(r"\\wsl$\") || lower.starts_with(r"\\wsl.localhost\")
+}
+
 /// A page link: only Kiri's own addresses, as on the Mac.
 fn allowed_url(url: &str) -> bool {
     if url == "https://kiri.canestack.com" || url == "https://learn.microsoft.com/windows/wsl/about" || url == "https://github.com/libracoder/kiri/issues/new" || url == "https://github.com/libracoder/kiri" || url == "https://login.docker.com/activate" || url == "https://github.com/login/device" {
@@ -974,7 +1010,7 @@ fn allowed_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed_url, unanswered, wakes};
+    use super::{allowed_url, host_path_ok, unanswered, wakes};
     use std::io::ErrorKind;
 
     /// As on the Mac and Linux: Stop on a stopped container, or Start on a
@@ -1026,6 +1062,17 @@ mod tests {
         assert!(!allowed_url("http://evil.example\\x.kiri.localhost"));
         assert!(!allowed_url("https://evil.example/#.kiri.localhost"));
         assert!(!allowed_url("ftp://localhost/"));
+    }
+
+    #[test]
+    fn host_reveal_only_local_paths() {
+        assert!(host_path_ok(r"C:\Users\a\Kiri"));
+        assert!(host_path_ok(r"\\wsl$\Ubuntu\var\lib\kiri\containers\x\container.log"));
+        assert!(host_path_ok(r"\\wsl.localhost\Ubuntu\var\lib\kiri\x"));
+        assert!(!host_path_ok(""));
+        assert!(!host_path_ok("http://evil.example/"));
+        assert!(!host_path_ok("cmd.exe"));
+        assert!(!host_path_ok("C:noslash"));
     }
 }
 
@@ -1357,6 +1404,15 @@ pub fn on_message(msg: &str) {
         "preview" => detail::preview(c.name, c.path),
         "download" => detail::download(c.name, c.path),
         "reveal" => emit(notice("error", &tr("Container files are not on Windows' disk: use Save to Downloads"))),
+        // Host path the page already mapped (`\\wsl$\…` or a drive letter): open in Explorer.
+        "hostreveal" => {
+            let path = c.path;
+            if !host_path_ok(&path) {
+                emit(notice("error", &tr("That path cannot be opened from here")));
+            } else if !crate::app::reveal(std::path::Path::new(&path)) {
+                emit(notice("error", &tr("Could not open that path in Explorer")));
+            }
+        }
         "terminal" => detail::terminal(&c.name, &env().pipe),
         "open" => {
             if allowed_url(&c.name) {
@@ -1389,7 +1445,15 @@ pub fn on_message(msg: &str) {
             let body = c.value;
             std::thread::spawn(move || proxy(Some(body)));
         }
-        // Settings → Registries: daemon.json's lists, in the engine's distro.
+        // Settings → Network: full daemon.json (mirrors), as Mac `daemon` / `setdaemon`.
+        "daemon" => {
+            std::thread::spawn(|| daemon_config(None));
+        }
+        "setdaemon" => {
+            let body = c.value;
+            std::thread::spawn(move || daemon_config(Some(body)));
+        }
+        // Older Registries tab shape (still used by some UI builds).
         "registryconfig" => {
             std::thread::spawn(|| registry_config(None));
         }
@@ -1648,6 +1712,26 @@ fn proxy(set: Option<Value>) {
         Err(e) => json!({"type": "proxy", "error": e.to_string()}),
     };
     emit(ev.to_string());
+}
+
+/// Settings → Network mirrors: read/save `~/.kiri/daemon.json` via `/kiri/daemon`.
+/// Same event shape as Mac (`type: "daemon"`, notice `daemon.json saved`) so the
+/// page can leave the Saving… state.
+fn daemon_config(save: Option<Value>) {
+    if let Some(body) = save {
+        match client::request("POST", "/kiri/daemon", Some(&body)) {
+            Ok(r) if r.ok() => emit(notice("ok", "daemon.json saved")),
+            Ok(r) => emit(notice("error", &r.error())),
+            Err(e) => emit(notice("error", &e.to_string())),
+        }
+    }
+    match client::get("/kiri/daemon") {
+        Ok(mut v) => {
+            v["type"] = json!("daemon");
+            emit(v.to_string());
+        }
+        Err(e) => emit(json!({"type": "daemon", "error": e.to_string()}).to_string()),
+    }
 }
 
 /// Settings → Registries: the engine's daemon.json (in its WSL distro):

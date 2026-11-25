@@ -812,24 +812,48 @@ const HUB_MIRRORS: &[&str] = &[
     "https://docker.xuanyuan.me",
 ];
 
+fn hub_mirror_daemon_json() -> String {
+    format!(
+        "{{\n  \"registry-mirrors\": [{}],\n  \"max-concurrent-downloads\": 4,\n  \"max-concurrent-uploads\": 5\n}}\n",
+        HUB_MIRRORS.iter().map(|u| format!("\"{u}\"")).collect::<Vec<_>>().join(", ")
+    )
+}
+
+/// Writes `daemon.json` with the three default Hub mirrors when the file is
+/// absent. Does not restart the daemon. Returns whether a new file was written.
+pub(crate) fn ensure_hub_mirror_file(distro: &str) -> io::Result<bool> {
+    let seed_dir = dir().join("downloads");
+    std::fs::create_dir_all(&seed_dir)?;
+    let seed = seed_dir.join("daemon.json.seed");
+    std::fs::write(&seed, hub_mirror_daemon_json())?;
+    let wsl_seed = to_wsl(distro, &seed)?;
+    // One line, no CR from the Rust source file. Echo "seeded" only when we create it.
+    let script = format!(
+        "d=/var/lib/kiri-daemon/.kiri; mkdir -p \"$d\"; if [ -f \"$d/daemon.json\" ]; then exit 0; fi; cp \"{wsl_seed}\" \"$d/daemon.json\" && echo seeded"
+    );
+    let out = quiet("wsl.exe").args(["-d", distro, "-u", "root", "--", "sh", "-c", &script]).output()?;
+    if !out.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&out.stderr).lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("WSL failed").to_owned(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).contains("seeded"))
+}
+
+/// Default Hub mirrors as JSON for `POST /kiri/daemon` after a seed.
+pub(crate) fn hub_mirror_settings() -> serde_json::Value {
+    serde_json::json!({
+        "registry-mirrors": HUB_MIRRORS,
+        "max-concurrent-downloads": 4,
+        "max-concurrent-uploads": 5,
+    })
+}
+
 /// Writes `daemon.json` with Hub mirrors when absent. Copies a file from
 /// Windows into the distro (avoids CRLF / quoting breakage of `sh -c`
 /// multi-line scripts on Alpine). Restarts the daemon so it reloads the file.
 fn seed_hub_mirror(distro: &str) -> io::Result<()> {
-    let seed_dir = dir().join("downloads");
-    std::fs::create_dir_all(&seed_dir)?;
-    let seed = seed_dir.join("daemon.json.seed");
-    let body = format!(
-        "{{\n  \"registry-mirrors\": [{}],\n  \"max-concurrent-downloads\": 4,\n  \"max-concurrent-uploads\": 5\n}}\n",
-        HUB_MIRRORS.iter().map(|u| format!("\"{u}\"")).collect::<Vec<_>>().join(", ")
-    );
-    std::fs::write(&seed, body)?;
-    let wsl_seed = to_wsl(distro, &seed)?;
-    // One line, no CR from the Rust source file.
-    let script = format!(
-        "d=/var/lib/kiri-daemon/.kiri; mkdir -p \"$d\"; if [ ! -f \"$d/daemon.json\" ]; then cp \"{wsl_seed}\" \"$d/daemon.json\"; fi; test -s \"$d/daemon.json\""
-    );
-    wsl_ok(quiet("wsl.exe").args(["-d", distro, "-u", "root", "--", "sh", "-c", &script]))?;
+    let _ = ensure_hub_mirror_file(distro)?;
     let _ = quiet("wsl.exe")
         .args(["-d", distro, "-u", "root", "--", "sh", "-c", "pkill -f '/usr/local/bin/kiri daemon' 2>/dev/null; true"])
         .status();
