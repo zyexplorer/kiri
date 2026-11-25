@@ -37,10 +37,15 @@ if (-not $SkipWindowsBundle) {
   throw "missing target\kiri-windows-x86_64; omit -SkipWindowsBundle or run cargo xtask windows"
 }
 
-Write-Host "`n=== cargo xtask msi ===" -ForegroundColor Cyan
+# msi-pack reuses target\kiri-windows-* (avoids rebuilding the Linux engine in WSL).
+Write-Host "`n=== cargo xtask msi-pack ===" -ForegroundColor Cyan
 $env:KIRI_RELEASE_BASE = $Base
-cargo xtask msi
-if ($LASTEXITCODE -ne 0) { throw "cargo xtask msi failed" }
+if (Test-Path (Join-Path $Root "docs\releases\$Version.md")) {
+  $env:KIRI_RELEASE_NOTES = (Resolve-Path (Join-Path $Root "docs\releases\$Version.md")).Path
+  Write-Host "Notes: $env:KIRI_RELEASE_NOTES"
+}
+cargo xtask msi-pack
+if ($LASTEXITCODE -ne 0) { throw "cargo xtask msi-pack failed" }
 
 $msi = Join-Path $Root "target\Kiri-$Version-x86_64.msi"
 $feed = Join-Path $Root "target\latest-windows-x86_64.json"
