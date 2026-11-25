@@ -226,6 +226,93 @@ fn wsl_err(out: &std::process::Output) -> io::Error {
     io::Error::other(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("WSL failed").to_owned())
 }
 
+fn shutdown_wsl() -> io::Result<()> {
+    let out = quiet_wsl().arg("--shutdown").output()?;
+    if out.status.success() { Ok(()) } else { Err(wsl_err(&out)) }
+}
+
+/// `wsl --shutdown` returns before HCS always releases `ext4.vhdx`. True when
+/// an exclusive open succeeds (disk is free to move) or the file is gone.
+fn vhdx_unlocked(distro: &str) -> bool {
+    let Some(base) = crate::setup::distro_base_path(distro) else {
+        return true;
+    };
+    let vhdx = base.join("ext4.vhdx");
+    if !vhdx.is_file() {
+        return true;
+    }
+    use std::os::windows::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().read(true).write(true).share_mode(0).open(&vhdx).is_ok()
+}
+
+fn wait_vhdx_free(distro: &str, budget: std::time::Duration) {
+    let deadline = std::time::Instant::now() + budget;
+    while std::time::Instant::now() < deadline {
+        if vhdx_unlocked(distro) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
+/// Errors that mean the VM/VHDX is still held — worth another shutdown + wait.
+fn busy_move_err(err: &io::Error) -> bool {
+    let s = err.to_string();
+    let lower = s.to_ascii_lowercase();
+    lower.contains("in use")
+        || lower.contains("being used")
+        || lower.contains("used by another")
+        || lower.contains("sharing violation")
+        || s.contains("使用")
+        || s.contains("占用")
+        || lower.contains("0x80070020")
+        || lower.contains("0x8037011e")
+}
+
+/// Drop the bridge, shut WSL down, wait for the VHDX, then
+/// `wsl --manage --move`. Retries when WSL still reports the VM in use.
+///
+/// Do **not** POST `/kiri/stop` here: that writes the persistent `stopped`
+/// marker, and after the move `kiri-start` brings up a daemon that refuses
+/// (or exits) until Start — which itself cannot clear the marker if the
+/// daemon never answers. A plain `wsl --shutdown` releases the VHDX.
+fn move_distro(distro: &str, dest: &Path) -> io::Result<()> {
+    // Drop the bridge so a reconnect does not wake the distro mid-move.
+    crate::serve::renew_bridge();
+
+    const ATTEMPTS: u32 = 8;
+    let mut last = io::Error::other("WSL move failed");
+    for attempt in 0..ATTEMPTS {
+        if let Err(e) = shutdown_wsl() {
+            last = e;
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            continue;
+        }
+        wait_vhdx_free(distro, std::time::Duration::from_secs(8));
+        match quiet_wsl().args(["--manage", distro, "--move"]).arg(dest).output() {
+            Ok(o) if o.status.success() => return Ok(()),
+            Ok(o) => {
+                last = wsl_err(&o);
+                if !busy_move_err(&last) {
+                    return Err(last);
+                }
+            }
+            Err(e) => {
+                last = e;
+                if !busy_move_err(&last) {
+                    return Err(last);
+                }
+            }
+        }
+        crate::serve::log(&format!(
+            "disk move: attempt {} still busy ({last}); shutting down again",
+            attempt + 1
+        ));
+        std::thread::sleep(std::time::Duration::from_millis(400 + 200 * u64::from(attempt)));
+    }
+    Err(last)
+}
+
 /// Settings → Resources → Move…: pick a parent folder, move the distro's
 /// VHDX there with `wsl --manage --move`, then restart the engine.
 pub fn move_disk() {
@@ -266,32 +353,69 @@ pub fn move_disk() {
             finish(Err(io::Error::other(format!("could not create {}: {e}", parent.display()))));
             return;
         }
-        // Shut down every WSL distro so the VHDX can move.
-        let shut = quiet_wsl().arg("--shutdown").output();
-        if let Ok(o) = &shut {
-            if !o.status.success() {
-                finish(Err(wsl_err(o)));
-                return;
-            }
-        } else if let Err(e) = shut {
+        if let Err(e) = move_distro(&distro, &dest) {
             finish(Err(e));
             return;
         }
-        let moved = quiet_wsl().args(["--manage", &distro, "--move"]).arg(&dest).output();
-        match moved {
-            Ok(o) if o.status.success() => {}
-            Ok(o) => {
-                finish(Err(wsl_err(&o)));
-                return;
-            }
+        crate::setup::set_wsl_root(&parent);
+        // Disk is already at dest. Starting the engine after --move can take
+        // longer than a normal restart; never report that as a failed move.
+        match restart_engine_after_move(&distro) {
+            Ok(()) => finish(Ok(())),
             Err(e) => {
-                finish(Err(e));
-                return;
+                crate::serve::log(&format!("disk move: disk moved but engine did not start: {e}"));
+                MOVING.store(false, Ordering::SeqCst);
+                emit(notice("ok", &tr("Linux disk moved. Start the engine to run containers again.")));
+                emit(event().to_string());
             }
         }
-        crate::setup::set_wsl_root(&parent);
-        finish(crate::engine::ensure_daemon());
     });
+}
+
+/// Clear a leftover window-Stop marker inside the distro so `kiri-start`
+/// can bring the daemon up after a move (or a prior aborted Stop).
+fn clear_stopped_marker(distro: &str) {
+    let mut cmd = quiet_wsl();
+    cmd.args([
+        "-d",
+        distro,
+        "-u",
+        "root",
+        "--",
+        "rm",
+        "-f",
+        "/var/lib/kiri-daemon/.kiri/stopped",
+    ]);
+    let _ = cmd.output();
+}
+
+/// After `wsl --manage --move`, the distro's first start is often slower than
+/// `ensure_daemon`'s usual wait — retry with a short pause between attempts.
+fn restart_engine_after_move(distro: &str) -> io::Result<()> {
+    crate::serve::renew_bridge();
+    // Brief settle: Lxss may still be updating BasePath right after --move.
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    clear_stopped_marker(distro);
+    let mut last = io::Error::other("engine did not start after disk move");
+    for attempt in 0..5 {
+        match crate::engine::ensure_daemon() {
+            Ok(()) => {
+                let _ = crate::client::request("POST", "/kiri/wake", None);
+                return Ok(());
+            }
+            Err(e) => {
+                last = e;
+                crate::serve::log(&format!(
+                    "disk move: engine start attempt {} failed ({last})",
+                    attempt + 1
+                ));
+                clear_stopped_marker(distro);
+                crate::serve::renew_bridge();
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        }
+    }
+    Err(last)
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
