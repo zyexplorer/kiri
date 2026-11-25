@@ -8181,6 +8181,34 @@ function daemonMirrorCount(value) {
   const arr = value && value["registry-mirrors"];
   return Array.isArray(arr) ? arr.filter((s) => String(s || "").trim()).length : 0;
 }
+/* Lists / status refresh every few seconds and may rebuild Settings. Keep the
+   daemon.json editor's scroll and caret so editing isn't yanked to the top. */
+function mirrorsFieldSnap() {
+  const ta = $("px-mirrors");
+  if (!ta) return null;
+  return {
+    top: ta.scrollTop,
+    start: ta.selectionStart,
+    end: ta.selectionEnd,
+    focus: document.activeElement === ta,
+    value: ta.value,
+  };
+}
+function mirrorsFieldRestore(snap) {
+  if (!snap) return;
+  const ta = $("px-mirrors");
+  if (!ta) return;
+  if (snap.focus || document.activeElement === ta) {
+    try { ta.setSelectionRange(snap.start, snap.end); } catch {}
+  }
+  ta.scrollTop = snap.top;
+  if (snap.focus) ta.focus({ preventScroll: true });
+}
+function mirrorsFieldBind(ta) {
+  if (!ta || ta.dataset.mxBound) return;
+  ta.dataset.mxBound = "1";
+  ta.addEventListener("scroll", () => { ui.mirrorsScroll = ta.scrollTop; }, { passive: true });
+}
 
 /* Settings → Network: the proxy for pulls and, if wanted, for containers;
    plus Docker Hub registry mirrors (`~/.kiri/daemon.json`). */
@@ -8282,6 +8310,10 @@ function resourcesPane() {
 }
 
 function renderSettings() {
+  // Pull any in-progress daemon.json edit before building HTML / comparing.
+  const liveMirrors = $("px-mirrors");
+  if (liveMirrors) ui.mirrorsDraft = liveMirrors.value;
+  const mirrorsSnap = mirrorsFieldSnap() || (ui.mirrorsScroll != null ? { top: ui.mirrorsScroll, start: 0, end: 0, focus: false } : null);
   const tab = (id, icon, label) => `<button data-stab="${id}" aria-current="${prefs.tab === id}"><svg class="i" viewBox="0 0 256 256"><path d="${PH[icon]}"/></svg>${label}</button>`;
   const opts = (list, current, system) => {
     const memo = optsMemo[system];
@@ -8372,7 +8404,11 @@ function renderSettings() {
   // option in its own font made WebKit load every installed font (438 here)
   // the first time Appearance showed, freezing the window for about 3 s. The
   // preview below them shows the chosen fonts.
-  if (html === settingsShown.html && settingsShown.el?.isConnected) return;
+  if (html === settingsShown.html && settingsShown.el?.isConnected) {
+    mirrorsFieldRestore(mirrorsSnap);
+    mirrorsFieldBind($("px-mirrors"));
+    return;
+  }
   const kept = signinKeep($("content"));
   $("content").innerHTML = html;
   signinPut($("content"), kept);
@@ -8393,6 +8429,8 @@ function renderSettings() {
   $("px-mirrors")?.addEventListener("keydown", (ev) => {
     if (textareaTabIndent(ev)) ev.target.dispatchEvent(new Event("input", { bubbles: true }));
   });
+  mirrorsFieldBind($("px-mirrors"));
+  mirrorsFieldRestore(mirrorsSnap);
   $("reg-server")?.addEventListener("input", (ev) => { ui.reg.server = ev.target.value; regHintShow(); });
   document.querySelectorAll("#content [data-imp]").forEach((cb) => cb.addEventListener("change", (ev) => {
     pickChange(ev.target);
@@ -14009,6 +14047,7 @@ const setText = (el, text) => { if (el && el.textContent !== text) el.textConten
 function renderStatus() {
   const sb = $("statusbar");
   if (!sb) return;
+  const mirrorsSnap = mirrorsFieldSnap();
   const running = ui.containers.filter((c) => c.State === "running");
   const k8s = ui.containers.find((c) => c.Names?.[0] === "/kiri-k8s" && c.State === "running");
   const k8sVersion = k8s ? (k8s.Image.split(":")[1] || "").replace(/-k3s\d+$/, "") : "";
@@ -14034,6 +14073,7 @@ function renderStatus() {
     `<span class="sep">·</span><button class="item" data-open-site="${FEEDBACK_URL}" title="${tr("Feedback")}"><svg class="i" viewBox="0 0 256 256"><path d="${PH.chatdots}"/></svg>${tr("Feedback")}</button>`,
   ];
   setHTML(sb, parts.join(""));
+  mirrorsFieldRestore(mirrorsSnap);
 }
 
 /* Updates (design A): a card in the bottom-right corner offers a newer
@@ -14239,6 +14279,9 @@ function navTags() {
 addEventListener("resize", navTags);
 function render() {
   if (held(render)) return;
+  // Status / sidebar refreshes can reset the mirrors textarea scroll in WebView2;
+  // snapshot before those DOM writes and put it back after Settings paints.
+  const mirrorsSnap = mirrorsFieldSnap();
   if (ui.view !== "compose") cmpHWait(false);
   if ($("content").dataset.hold && ($("content").dataset.hold !== ui.view || ui.detail)) dropHold();
   themeBtn();
@@ -14270,7 +14313,7 @@ function render() {
   paintSearchPlaceholder();
   // A connection's pane belongs to the Share view; any other view takes the page back.
   if (v !== "share") { $("sh-pane")?.remove(); $("content").hidden = false; }
-  if (v === "settings") return renderSettings();
+  if (v === "settings") { renderSettings(); mirrorsFieldRestore(mirrorsSnap); return; }
   if (v === "share") return renderShare();
   if (v === "notes") return renderNotes();
   if (v === "projects") return renderProjects();
@@ -15963,7 +16006,10 @@ window.kiri = {
       case "daemon": {
         const wasSaving = ui.mirrorsSaving;
         ui.daemon = e;
-        ui.mirrorsDraft = formatDaemonDraft(e.settings || {});
+        // Don't yank an in-progress edit back to the server copy (and to scrollTop 0).
+        if (wasSaving || document.activeElement?.id !== "px-mirrors") {
+          ui.mirrorsDraft = formatDaemonDraft(e.settings || {});
+        }
         ui.mirrorsSaving = false;
         if (wasSaving && !e.error) {
           ui.mirrorsMsg = tr("daemon.json saved");
