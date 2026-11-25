@@ -60,14 +60,31 @@ pub(crate) enum Cmd {
     Refresh,
     Pull(String),
     RemoveImage(String),
-    /// An image, and the environment the Run popover asked for.
-    Run(String, Vec<String>),
+    /// An image and the Run popover's options (name, port, command, …).
+    Run(RunArgs),
     Container { action: String, id: String },
     RemoveVolume(String),
     RemoveNetwork(String),
     About,
     Ports { id: String, ports: Value },
     Env { id: String, env: Vec<String> },
+}
+
+/// What the window's Run sends to create and start a container.
+#[derive(Debug, Clone)]
+pub(crate) struct RunArgs {
+    image: String,
+    env: Vec<String>,
+    container: String,
+    host_port: Option<u16>,
+    /// From a custom `-p host:container`; None keeps `primary_exposed`.
+    target_port: Option<u16>,
+    command: String,
+    binds: Vec<String>,
+    entrypoint: String,
+    restart: String,
+    start_command: String,
+    network: String,
 }
 
 /// A command as the page sends it.
@@ -86,6 +103,33 @@ struct PageCmd {
     path: String,
     #[serde(default)]
     value: Value,
+    /// Optional container name for `run` (`docker run --name`).
+    #[serde(default)]
+    container: String,
+    /// Optional host port for `run` (`docker run -p`). `0` means unset.
+    #[serde(default)]
+    port: u64,
+    /// Optional command for `run` (`docker run IMAGE …`). Empty keeps CMD.
+    #[serde(default)]
+    command: String,
+    /// Container port from a pasted `-p host:container` (0 = unset).
+    #[serde(default)]
+    target_port: u64,
+    /// Bind mounts from a pasted `-v` / `--volume`.
+    #[serde(default)]
+    binds: Vec<String>,
+    /// `--entrypoint` from a pasted docker run (empty keeps the image's).
+    #[serde(default)]
+    entrypoint: String,
+    /// `--restart` policy name from a pasted docker run.
+    #[serde(default)]
+    restart: String,
+    /// Full pasted `docker run` line for `Labels["kiri.start.command"]`.
+    #[serde(default)]
+    start_command: String,
+    /// `--network` / `--net` from a pasted docker run (e.g. `host`).
+    #[serde(default)]
+    network: String,
 }
 
 /// What the engine needs from the rest of kiri-win.
@@ -190,11 +234,14 @@ fn engine(rx: &Receiver<Cmd>, tx: Sender<Cmd>) {
                 refresh();
             }
             Ok(Cmd::Pull(name)) => pull(name),
-            Ok(Cmd::Run(name, env)) => {
-                // The page shows its spinner until this says how it went.
-                let result = run_image(&name, &env);
-                emit(json!({"type": "ran", "name": name, "error": result.is_err()}).to_string());
-                act(result)
+            Ok(Cmd::Run(a)) => {
+                // The page shows Starting… until this says how it went.
+                // Name/port conflicts stay on the Run popover (`message`);
+                // other failures toast from the page when no popover is open.
+                let name = a.image.clone();
+                let result = run_image(&a);
+                let message = result.as_ref().err().map(std::string::ToString::to_string);
+                emit(json!({"type": "ran", "name": name, "error": message.is_some(), "message": message}).to_string());
             }
             Ok(Cmd::RemoveImage(name)) => match client::request("DELETE", &format!("/images/{}", path_escape(&name)), None) {
                 Ok(r) if r.ok() => {
@@ -477,8 +524,21 @@ fn refresh() {
                 .collect();
             emit(v.to_string());
             vm_panel();
+            // Docker Desktop (and others) can flip the default context after
+            // setup; clear a stale Switch-to-Kiri strip when it is ours again.
+            emit_status_if_context_changed();
         }
         Err(e) => no_answer(&e),
+    }
+}
+
+fn emit_status_if_context_changed() {
+    static LAST: Mutex<String> = Mutex::new(String::new());
+    let ctx = docker_current_context();
+    let mut last = LAST.lock().unwrap_or_else(PoisonError::into_inner);
+    if *last != ctx {
+        *last = ctx;
+        emit(status_event());
     }
 }
 
@@ -759,24 +819,260 @@ fn set_env(id: &str, env: Vec<String>) -> io::Result<()> {
     Ok(())
 }
 
-fn run_image(image: &str, env: &[String]) -> io::Result<()> {
-    let body = json!({"Image": image, "Tty": true, "OpenStdin": true, "Env": env, "HostConfig": {"PublishAllPorts": true}});
+fn run_image(a: &RunArgs) -> io::Result<()> {
+    let own = same_ports(&a.image);
     let began = std::time::Instant::now();
-    let created = client::request("POST", "/containers/create", Some(&body))?;
-    if !created.ok() {
-        return Err(io::Error::other(created.error()));
-    }
-    let id = created.json()["Id"].as_str().unwrap_or_default().to_owned();
-    expect_ok(client::request("POST", &format!("/containers/{id}/start"), None))?;
+    let id = match create_and_start(a, &own) {
+        // Taken between the check and the start: let the engine pick.
+        // A host port the person chose is kept; only the same-port guesses retry.
+        Err(e) if a.host_port.is_none() && !own.is_empty() && e.to_string().contains("already allocated") => {
+            create_and_start(a, &[])?
+        }
+        r => r?,
+    };
+    let image = a.image.as_str();
     let ms = began.elapsed().as_millis() as u64;
     let info = client::get(&format!("/containers/{id}/json"))?;
     let name = info["Name"].as_str().unwrap_or_default().trim_start_matches('/').to_owned();
     let ports = host_ports(&info, false);
     // View on the toast opens the container's page; the list stays put, as on
     // the Mac, and `image` puts it beside that image's Run button.
-    let text = if ports.is_empty() { trf("Started {name}", &[("name", &name)]) } else { trf("Started {name} on {ports}", &[("name", &name), ("ports", &ports.join(", "))]) };
+    let text = if ports.is_empty() {
+        trf("Started {name}", &[("name", &name)])
+    } else {
+        trf("Started {name} on {ports}", &[("name", &name), ("ports", &ports.join(", "))])
+    };
     emit(json!({"type": "notice", "kind": "ok", "text": text, "open": id, "image": image, "ms": ms}).to_string());
     Ok(())
+}
+
+/// Joins shell line continuations (`\` at end of line) into one line.
+fn flatten_continuations(s: &str) -> String {
+    let mut out = String::new();
+    for line in s.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let cont = t.ends_with('\\')
+            && t.as_bytes().iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 1;
+        let piece = if cont { t[..t.len() - 1].trim_end() } else { t };
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(piece);
+    }
+    out
+}
+
+/// Splits a Run popover command the way a simple shell would.
+fn split_command(s: &str) -> Vec<String> {
+    let flat = flatten_continuations(s);
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in flat.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            None => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn shell_arg(s: &str) -> String {
+    if s.is_empty() {
+        return "''".into();
+    }
+    if s.chars().all(|c| c.is_ascii_alphanumeric() || "-_.:/=@+,".contains(c)) {
+        s.to_owned()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
+fn docker_run_line(
+    image: &str,
+    env: &[String],
+    name: &str,
+    bindings: &serde_json::Map<String, Value>,
+    command: &str,
+) -> String {
+    let mut lines: Vec<String> = vec!["docker run -d -it -P".into()];
+    if !name.is_empty() {
+        lines.push(format!("  --name {}", shell_arg(name)));
+    }
+    for e in env {
+        lines.push(format!("  -e {}", shell_arg(e)));
+    }
+    let mut keys: Vec<_> = bindings.keys().cloned().collect();
+    keys.sort();
+    for key in keys {
+        let Some(list) = bindings.get(&key).and_then(|v| v.as_array()) else {
+            continue;
+        };
+        let host = list.first().and_then(|b| b.get("HostPort")).and_then(|p| p.as_str()).unwrap_or("");
+        let (port, proto) = match key.split_once('/') {
+            Some((p, "udp")) => (p, "/udp"),
+            Some((p, _)) => (p, ""),
+            None => (key.as_str(), ""),
+        };
+        if host.is_empty() {
+            continue;
+        }
+        lines.push(format!("  -p {host}:{port}{proto}"));
+    }
+    lines.push(format!("  {}", shell_arg(image)));
+    let argv = split_command(command);
+    if !argv.is_empty() {
+        lines.push(format!("  {}", argv.iter().map(|a| shell_arg(a)).collect::<Vec<_>>().join(" ")));
+    }
+    let last = lines.len().saturating_sub(1);
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(i, line)| if i == last { line } else { format!("{line} \\") })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Creates and starts `a.image` with every declared port published, `own` on
+/// the same host port. A container that fails to start is removed.
+fn create_and_start(a: &RunArgs, own: &[String]) -> io::Result<String> {
+    let (path, body) = run_create_request(a, own)?;
+    let created = client::request("POST", &path, Some(&body))?;
+    if !created.ok() {
+        return Err(io::Error::other(created.error()));
+    }
+    let id = created.json()["Id"].as_str().unwrap_or_default().to_owned();
+    if let Err(e) = expect_ok(client::request("POST", &format!("/containers/{id}/start"), None)) {
+        let _ = client::request("DELETE", &format!("/containers/{id}?force=1"), None);
+        return Err(e);
+    }
+    Ok(id)
+}
+
+/// Path + body for `POST /containers/create`, shared by Run (Default + Custom).
+fn run_create_request(a: &RunArgs, own: &[String]) -> io::Result<(String, Value)> {
+    let image = a.image.as_str();
+    let env = a.env.as_slice();
+    let container = a.container.as_str();
+    let network = a.network.trim();
+    // `--network host|none` cannot publish ports (Docker; Kiri refuses `none`).
+    let publish = !matches!(network, "host" | "none");
+    let mut bindings: serde_json::Map<String, Value> = if publish {
+        own.iter()
+            .map(|key| {
+                let port = key.split('/').next().unwrap_or_default();
+                (key.clone(), json!([{"HostIp": "", "HostPort": port}]))
+            })
+            .collect()
+    } else {
+        serde_json::Map::new()
+    };
+    if publish {
+        if let Some(hp) = a.host_port {
+            let key = if let Some(tp) = a.target_port {
+                format!("{tp}/tcp")
+            } else if let Some(k) = primary_exposed(image) {
+                k
+            } else {
+                return Err(io::Error::other("this image exposes no ports to publish on the host"));
+            };
+            bindings.insert(key, json!([{"HostIp": "", "HostPort": hp.to_string()}]));
+        }
+    }
+    let name = container.trim().trim_start_matches('/');
+    let start_cmd = a.command.trim();
+    let argv = split_command(start_cmd);
+    let run_line = {
+        let raw = a.start_command.trim();
+        let src = if raw.is_empty() {
+            docker_run_line(image, env, name, &bindings, start_cmd)
+        } else {
+            raw.to_owned()
+        };
+        src.lines()
+            .map(|l| l.trim().trim_end_matches('\\').trim())
+            .filter(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let mut host = if publish {
+        json!({"PublishAllPorts": true, "PortBindings": bindings})
+    } else {
+        json!({})
+    };
+    if !a.binds.is_empty() {
+        host["Binds"] = json!(a.binds);
+    }
+    if !a.restart.trim().is_empty() {
+        host["RestartPolicy"] = json!({"Name": a.restart.trim(), "MaximumRetryCount": 0});
+    }
+    if !network.is_empty() {
+        host["NetworkMode"] = json!(network);
+    }
+    let mut body = json!({
+        "Image": image, "Tty": true, "OpenStdin": true, "Env": env,
+        "Labels": {"kiri.start.command": run_line},
+        "HostConfig": host
+    });
+    if !argv.is_empty() {
+        body["Cmd"] = json!(argv);
+    }
+    let ep = a.entrypoint.trim();
+    if !ep.is_empty() {
+        body["Entrypoint"] = json!(split_command(ep));
+    }
+    let path = match container.trim() {
+        "" => "/containers/create".to_owned(),
+        name => format!("/containers/create?name={}", path_escape(name.trim_start_matches('/'))),
+    };
+    Ok((path, body))
+}
+
+/// The first exposed port on `image` to pin a host port to.
+fn primary_exposed(image: &str) -> Option<String> {
+    let info = client::get(&format!("/images/{}/json", path_escape(image))).ok()?;
+    let map = info["Config"]["ExposedPorts"].as_object()?;
+    let mut keys: Vec<_> = map.keys().cloned().collect();
+    keys.sort();
+    keys.iter().find(|k| k.ends_with("/tcp")).cloned().or_else(|| keys.into_iter().next())
+}
+
+/// Declared ports whose number is free on this Windows host.
+fn same_ports(image: &str) -> Vec<String> {
+    let Ok(info) = client::get(&format!("/images/{}/json", path_escape(image))) else {
+        return Vec::new();
+    };
+    let Some(map) = info["Config"]["ExposedPorts"].as_object() else {
+        return Vec::new();
+    };
+    map.keys()
+        .filter(|key| {
+            let (port, proto) = key.split_once('/').unwrap_or((key, "tcp"));
+            port.parse::<u16>().is_ok_and(|port| free_on_host(port, proto))
+        })
+        .cloned()
+        .collect()
+}
+
+fn free_on_host(port: u16, proto: &str) -> bool {
+    match proto {
+        "tcp" => std::net::TcpListener::bind(("0.0.0.0", port)).is_ok(),
+        "udp" => std::net::UdpSocket::bind(("0.0.0.0", port)).is_ok(),
+        _ => false,
+    }
 }
 
 fn about() {
@@ -793,11 +1089,47 @@ fn about() {
 }
 
 /// The status bar's left side: this build, and which engine `docker` talks
-/// to by default, as `docker context show` says (it knows DOCKER_CONTEXT,
-/// DOCKER_HOST and wherever Docker Desktop keeps the CLI config).
+/// to by default. Prefer `DOCKER_CONTEXT` / `%USERPROFILE%\.docker\config.json`
+/// (same as the Mac): `docker context show` can fail early in startup and
+/// wrongly made the Switch-to-Kiri strip appear while the context was already
+/// `kiri`. Fall back to the CLI when the file has no `currentContext`.
 fn status_event() -> String {
-    let context = docker(&["context", "show"]).ok().map(|s| s.trim().to_owned()).filter(|c| !c.is_empty());
-    json!({"type": "status", "version": env!("CARGO_PKG_VERSION"), "share": true, "app": "Kiri", "ours": "kiri", "context": context.unwrap_or_else(|| "default".into())}).to_string()
+    let context = docker_current_context();
+    json!({
+        "type": "status",
+        "version": env!("CARGO_PKG_VERSION"),
+        "share": true,
+        "app": crate::flavor::APP.get(),
+        "ours": crate::flavor::CONTEXT.get(),
+        "context": context,
+    })
+    .to_string()
+}
+
+fn docker_current_context() -> String {
+    if let Ok(c) = std::env::var("DOCKER_CONTEXT") {
+        let c = c.trim();
+        if !c.is_empty() {
+            return c.to_owned();
+        }
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"));
+    if let Some(home) = home {
+        let path = std::path::Path::new(&home).join(".docker").join("config.json");
+        if let Ok(bytes) = std::fs::read(&path) {
+            let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+            if let Ok(cfg) = serde_json::from_slice::<Value>(bytes) {
+                if let Some(c) = cfg["currentContext"].as_str().map(str::trim).filter(|c| !c.is_empty()) {
+                    return c.to_owned();
+                }
+            }
+        }
+    }
+    docker(&["context", "show"])
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| "default".into())
 }
 
 /// The docker CLI on Kiri's context, without a console window, for Compose
@@ -1011,6 +1343,7 @@ fn allowed_url(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{allowed_url, host_path_ok, unanswered, wakes};
+    use serde_json::json;
     use std::io::ErrorKind;
 
     /// As on the Mac and Linux: Stop on a stopped container, or Start on a
@@ -1073,6 +1406,100 @@ mod tests {
         assert!(!host_path_ok("http://evil.example/"));
         assert!(!host_path_ok("cmd.exe"));
         assert!(!host_path_ok("C:noslash"));
+    }
+
+    #[test]
+    fn run_command_splits_like_a_simple_shell() {
+        assert!(super::split_command("").is_empty());
+        assert_eq!(super::split_command("sleep 3600"), ["sleep", "3600"]);
+        assert_eq!(super::split_command(r#"nginx -g "daemon off;""#), ["nginx", "-g", "daemon off;"]);
+        assert_eq!(super::split_command("sh -c 'echo hi'"), ["sh", "-c", "echo hi"]);
+        assert_eq!(super::split_command("sleep \\\n  3600"), ["sleep", "3600"]);
+    }
+
+    #[test]
+    fn page_run_deserializes_custom_docker_run_fields() {
+        let msg: super::PageCmd = serde_json::from_str(
+            r#"{
+              "cmd":"run","name":"cym1102/nginxwebui:latest",
+              "value":["BOOT_OPTIONS=--server.port=8080"],
+              "container":"nginxwebui","port":18080,"target_port":8080,
+              "command":"sh -c 'mkdir -p /data; exec tail -F /data/log'",
+              "binds":["/home/nginxWebUI:/home/nginxWebUI"],
+              "entrypoint":"tini","restart":"unless-stopped","network":"host",
+              "start_command":"docker run -d --name nginxwebui cym1102/nginxwebui:latest"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(msg.container, "nginxwebui");
+        assert_eq!(msg.port, 18080);
+        assert_eq!(msg.target_port, 8080);
+        assert_eq!(msg.entrypoint, "tini");
+        assert_eq!(msg.restart, "unless-stopped");
+        assert_eq!(msg.network, "host");
+        assert_eq!(msg.binds, vec!["/home/nginxWebUI:/home/nginxWebUI"]);
+        assert!(msg.command.contains("mkdir -p"));
+        assert!(msg.start_command.contains("docker run"));
+    }
+
+    #[test]
+    fn custom_run_create_body_wires_name_ports_cmd_and_mounts() {
+        let a = super::RunArgs {
+            image: "nginx:alpine".into(),
+            env: vec!["FOO=bar".into()],
+            container: "web".into(),
+            host_port: Some(8080),
+            target_port: Some(80),
+            command: "sh -c 'echo hi'".into(),
+            binds: vec!["/data:/data".into()],
+            entrypoint: "docker-entrypoint.sh".into(),
+            restart: "always".into(),
+            start_command: "docker run -d --name web -p 8080:80 nginx:alpine".into(),
+            network: String::new(),
+        };
+        let (path, body) = super::run_create_request(&a, &[]).unwrap();
+        assert_eq!(path, "/containers/create?name=web");
+        assert_eq!(body["Image"], "nginx:alpine");
+        assert_eq!(body["Env"], json!(["FOO=bar"]));
+        assert_eq!(body["Cmd"], json!(["sh", "-c", "echo hi"]));
+        assert_eq!(body["Entrypoint"], json!(["docker-entrypoint.sh"]));
+        assert_eq!(body["HostConfig"]["Binds"], json!(["/data:/data"]));
+        assert_eq!(body["HostConfig"]["RestartPolicy"]["Name"], "always");
+        assert_eq!(body["HostConfig"]["PortBindings"]["80/tcp"][0]["HostPort"], "8080");
+        assert_eq!(body["HostConfig"]["PublishAllPorts"], true);
+        assert!(body["Labels"]["kiri.start.command"].as_str().unwrap().contains("docker run"));
+    }
+
+    #[test]
+    fn docker_context_prefers_config_json_over_missing_cli() {
+        // Empty DOCKER_CONTEXT must not win; the helper still falls through.
+        // We only assert the fallbacks parse: a currentContext of "kiri" is kept.
+        let v: serde_json::Value = serde_json::from_str(r#"{"currentContext":"kiri"}"#).unwrap();
+        assert_eq!(v["currentContext"].as_str().unwrap().trim(), "kiri");
+        let v: serde_json::Value = serde_json::from_str(r#"{"auths":{}}"#).unwrap();
+        assert!(v["currentContext"].as_str().is_none());
+    }
+
+    #[test]
+    fn custom_run_with_host_network_skips_port_publish() {
+        let a = super::RunArgs {
+            image: "cym1102/nginxwebui:latest".into(),
+            env: vec![],
+            container: "nginxwebui".into(),
+            host_port: Some(18080),
+            target_port: Some(8080),
+            command: String::new(),
+            binds: vec!["/home/nginxWebUI:/home/nginxWebUI".into()],
+            entrypoint: String::new(),
+            restart: "always".into(),
+            start_command: "docker run --net=host -p 18080:8080 cym1102/nginxwebui:latest".into(),
+            network: "host".into(),
+        };
+        let (_, body) = super::run_create_request(&a, &["8080/tcp".into()]).unwrap();
+        assert_eq!(body["HostConfig"]["NetworkMode"], "host");
+        assert!(body["HostConfig"].get("PortBindings").is_none());
+        assert!(body["HostConfig"].get("PublishAllPorts").is_none());
+        assert_eq!(body["HostConfig"]["Binds"], json!(["/home/nginxWebUI:/home/nginxWebUI"]));
     }
 }
 
@@ -1186,7 +1613,21 @@ pub fn on_message(msg: &str) {
         }
         "run" => {
             let env = c.value.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-            send(Cmd::Run(c.name, env));
+            let host_port = u16::try_from(c.port).ok().filter(|&p| p > 0);
+            let target_port = u16::try_from(c.target_port).ok().filter(|&p| p > 0);
+            send(Cmd::Run(RunArgs {
+                image: c.name,
+                env,
+                container: c.container,
+                host_port,
+                target_port,
+                command: c.command,
+                binds: c.binds,
+                entrypoint: c.entrypoint,
+                restart: c.restart,
+                start_command: c.start_command,
+                network: c.network,
+            }));
         }
         "container" => send(Cmd::Container { action: c.action, id: c.id }),
         "ports" => send(Cmd::Ports { id: c.id, ports: c.ports }),
@@ -1281,6 +1722,7 @@ pub fn on_message(msg: &str) {
         }
         "restartvm" => crate::wslconfig::restart(),
         "movedisk" => crate::wslconfig::move_disk(),
+        "compactdisk" => crate::wslconfig::compact_disk(),
         "inspect" => detail::inspect(c.id),
         "logs" => detail::logs(c.id),
         "logsstop" => detail::stop_logs(),
