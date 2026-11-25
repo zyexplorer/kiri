@@ -686,7 +686,11 @@ fn msi(root: &Path, arch: WinArch) -> io::Result<()> {
     // as `release` writes the Mac's.
     let size = fs::metadata(&out)?.len();
     let sum = sha256(&out)?;
-    let base = std::env::var("KIRI_RELEASE_BASE").unwrap_or_else(|_| "https://download.runkiri.com".to_owned());
+    // Personal default: GitHub Release asset URL for this version tag.
+    // Override with KIRI_RELEASE_BASE for a CDN or a different tag layout.
+    let base = std::env::var("KIRI_RELEASE_BASE").unwrap_or_else(|_| {
+        format!("https://github.com/zyexplorer/kiri/releases/download/v{version}")
+    });
     let extra = feed_notes()?;
     let feed = format!("{{\"version\":\"{version}\",\"url\":\"{base}/{name}\",\"sha256\":\"{sum}\",\"size\":{size}{extra}}}\n");
     let feed_path = root.join("target").join(arch.feed());

@@ -4,8 +4,10 @@ members = ["crates/*", "xtask"]
 
 [workspace.package]
 # Personal / fork release version for distributable Windows builds.
-# Upstream checkouts normally stay at 0.0.0 until a tagged release build.
-version = "0.2.0"
+# Suffix `-zy` is for branding; Windows MSI ProductVersion is only the part
+# before `-` (0.3.0). Each release must bump that numeric triple (0.3.1-zy, …)
+# or msiexec / update checks will treat it as the same installer.
+version = "0.3.0-zy"
 edition = "2024"
 license = "Apache-2.0"
 publish = false

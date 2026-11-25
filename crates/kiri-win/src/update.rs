@@ -40,10 +40,12 @@ use serde_json::json;
 
 use crate::engine::{emit, notice, trf};
 
+// Personal / fork: GitHub Releases on zyexplorer/kiri (tag + asset
+// `latest-windows-*.json`). Override with KIRI_UPDATE_URL when testing.
 #[cfg(not(target_arch = "aarch64"))]
-const FEED: &str = "https://download.runkiri.com/latest-windows-x86_64.json";
+const FEED: &str = "https://github.com/zyexplorer/kiri/releases/latest/download/latest-windows-x86_64.json";
 #[cfg(target_arch = "aarch64")]
-const FEED: &str = "https://download.runkiri.com/latest-windows-arm64.json";
+const FEED: &str = "https://github.com/zyexplorer/kiri/releases/latest/download/latest-windows-arm64.json";
 /// The biggest download accepted (the MSI is about 55 MB).
 const MAX_DOWNLOAD: u64 = 2 << 30;
 /// installer/windows/kiri.wxs's UpgradeCode: what makes an MSI a Kiri one.
@@ -324,8 +326,11 @@ fn check(msi: &Path, promised: &str) -> io::Result<()> {
         return Err(io::Error::new(io::ErrorKind::InvalidData, format!("the update is Kiri for {}, not for this {} Kiri", template.split(';').next().unwrap_or("another platform"), crate::win::BUILD_ARCH)));
     }
     let version = msi_property(msi, "ProductVersion")?;
-    let (version, promised) = (version.trim(), promised.trim_start_matches('v'));
-    if version != promised {
+    // WiX only embeds the numeric triple (before `-`); feeds may say `0.3.0-zy`.
+    let promised = promised.trim_start_matches('v');
+    let promised_msi = promised.split('-').next().unwrap_or(promised);
+    let version = version.trim();
+    if version != promised_msi {
         return Err(io::Error::new(io::ErrorKind::InvalidData, format!("the update is Kiri {version}, but the feed promised {promised}")));
     }
     if !newer(version, CURRENT) {
@@ -698,6 +703,10 @@ mod tests {
         assert!(newer("v1.0.1", "1.0"));
         assert!(!newer("0.1.0", "0.1.0"));
         assert!(!newer("0.1.0", "0.2.0"));
+        // Personal `-zy` builds: bump the numeric triple each release.
+        assert!(newer("0.3.1-zy", "0.3.0-zy"));
+        assert!(!newer("0.3.0-zy", "0.3.0-zy"));
+        assert!(newer("0.3.0", "0.2.2"));
     }
 
     #[test]
@@ -722,7 +731,9 @@ mod tests {
         let name = if cfg!(target_arch = "aarch64") { "arm64" } else { "x86_64" };
         let msi = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target").join(format!("Kiri-{}-{name}.msi", env!("CARGO_PKG_VERSION")));
         if msi.is_file() {
-            assert_eq!(super::msi_property(&msi, "ProductVersion").unwrap(), env!("CARGO_PKG_VERSION"));
+            let pkg = env!("CARGO_PKG_VERSION");
+            let msi_ver = pkg.split('-').next().unwrap_or(pkg);
+            assert_eq!(super::msi_property(&msi, "ProductVersion").unwrap(), msi_ver);
             assert!(super::msi_property(&msi, "UpgradeCode").unwrap().eq_ignore_ascii_case(super::UPGRADE_CODE));
             assert!(super::platform_matches(&super::msi_template(&msi).unwrap(), crate::win::BUILD_ARCH));
         }
