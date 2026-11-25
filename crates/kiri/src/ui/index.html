@@ -3391,6 +3391,13 @@ const ZH = {
   "Restart VM to apply": "重启虚拟机以应用",
   "Restarting stops the running containers; start them again afterwards.": "重启会停止正在运行的容器，之后需重新启动它们。",
   "Start Kiri to change its resources. ({error})": "请先启动 Kiri 再改资源。（{error}）",
+  "Linux disk": "Linux 磁盘",
+  "Images and containers live in the virtual disk at this path ({size}). Moving it shuts down every WSL distro, then restarts Kiri.": "镜像和容器存放在此路径的虚拟磁盘中（{size}）。迁移会关闭所有 WSL 发行版，然后重启 Kiri。",
+  "The Linux virtual disk path is not available yet.": "尚无法获取 Linux 虚拟磁盘路径。",
+  "Move…": "迁移…",
+  "Moving…": "正在迁移…",
+  "Move the Linux disk?": "要迁移 Linux 磁盘吗？",
+  "WSL will shut down (every distro, not only Kiri's). Pick a folder; the virtual disk moves there, then Kiri starts again.": "将关闭 WSL（所有发行版，不仅是 Kiri 的）。选择文件夹后，虚拟磁盘会移过去，然后 Kiri 重新启动。",
   // Network
   "Proxy": "代理", "Custom": "自定义", "None": "无",
   "{os} settings": "{os} 设置",
@@ -5034,6 +5041,13 @@ const ZH_TW = {
   "Restart VM to apply": "重啟虛擬機以應用",
   "Restarting stops the running containers; start them again afterwards.": "重啟會停止正在運行的容器，之後需重新啟動它們。",
   "Start Kiri to change its resources. ({error})": "請先啟動 Kiri 再改資源。（{error}）",
+  "Linux disk": "Linux 磁碟",
+  "Images and containers live in the virtual disk at this path ({size}). Moving it shuts down every WSL distro, then restarts Kiri.": "映像和容器存放在此路徑的虛擬磁碟中（{size}）。遷移會關閉所有 WSL 發行版，然後重新啟動 Kiri。",
+  "The Linux virtual disk path is not available yet.": "尚無法取得 Linux 虛擬磁碟路徑。",
+  "Move…": "遷移…",
+  "Moving…": "正在遷移…",
+  "Move the Linux disk?": "要遷移 Linux 磁碟嗎？",
+  "WSL will shut down (every distro, not only Kiri's). Pick a folder; the virtual disk moves there, then Kiri starts again.": "將關閉 WSL（所有發行版，不僅是 Kiri 的）。選擇資料夾後，虛擬磁碟會移過去，然後 Kiri 重新啟動。",
   "Proxy": "代理",
   "Custom": "自定義",
   "None": "無",
@@ -16364,11 +16378,14 @@ function k8sOn(e) {
       k8s.op = ""; k8s.opLine = ""; k8s.opAt = 0; k8s.sanDraft = null; k8s.portDraft = null;
       if (e.port) k8s.port = e.port;
       if (e.want_port) k8s.wantPort = e.want_port;
-      if (e.state === "error") toast("error", tr("Kubernetes: {error}", { error: trErr(e.error) }));
-      else if ((e.op === "start" || e.op === "set") && e.port) toast("ok", tr("Kubernetes is running · API on {api}", { api: `${k8sApi()}${k8sMoved()}` }));
-      if (e.state !== "error" && e.op === "start") starMoment(tr("Kubernetes is running."));
-      else toast("ok", { start: tr("Kubernetes is running: kubectl --context {ctx}", { ctx: e.context }), stop: tr("Kubernetes stopped. Its state is kept for the next start."),
-        set: tr("Kubernetes settings saved. They apply when it next starts."), deletecluster: tr("Kubernetes deleted, with its state") }[e.op] || tr("Done"));
+      if (e.state === "error") {
+        toast("error", tr("Kubernetes: {error}", { error: trErr(e.error) }));
+      } else {
+        if ((e.op === "start" || e.op === "set") && e.port) toast("ok", tr("Kubernetes is running · API on {api}", { api: `${k8sApi()}${k8sMoved()}` }));
+        else toast("ok", { start: tr("Kubernetes is running: kubectl --context {ctx}", { ctx: e.context || k8sContext() }), stop: tr("Kubernetes stopped. Its state is kept for the next start."),
+          set: tr("Kubernetes settings saved. They apply when it next starts."), deletecluster: tr("Kubernetes deleted, with its state") }[e.op] || tr("Done"));
+        if (e.op === "start") starMoment(tr("Kubernetes is running."));
+      }
       k8sSide();
       k8sAsk(true);
       if (k8sShown()) render();

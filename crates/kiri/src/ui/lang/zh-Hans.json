@@ -551,6 +551,7 @@
   "Loading…": "正在加载…",
   "Linux disk": "Linux 磁盘",
   "Linux disk moved. WSL restarted with the new location": "Linux 磁盘已迁移，WSL 已在新位置重启",
+  "Linux disk moved. Start the engine to run containers again.": "Linux 磁盘已迁移。请启动引擎以继续运行容器。",
   "Local names": "本地域名",
   "Location": "位置",
   "Images and containers live in the virtual disk at this path ({size}). Moving it shuts down every WSL distro, then restarts Kiri.": "镜像和容器存放在此路径的虚拟磁盘中（{size}）。迁移会关闭所有 WSL 发行版，然后重启 Kiri。",
