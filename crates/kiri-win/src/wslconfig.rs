@@ -6,11 +6,12 @@
 //!
 //! Disk location is the WSL distro's `ext4.vhdx` folder (Lxss BasePath).
 //! Setup chooses it before `wsl --import`; Resources can move it later with
-//! `wsl --manage <distro> --move`.
+//! `wsl --manage <distro> --move`, or reclaim host space by compacting the
+//! VHDX (fstrim + diskpart) after deleted images leave holes inside Linux.
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 
 use serde_json::{Value, json};
 
@@ -166,7 +167,8 @@ fn event() -> Value {
         "disk_path": disk_path,
         "disk_bytes": disk_bytes,
         "disk_movable": disk_movable,
-        "disk_moving": MOVING.load(Ordering::SeqCst),
+        "disk_moving": disk_op() == DiskOp::Moving,
+        "disk_compacting": disk_op() == DiskOp::Compacting,
         "restart_note": "Restarting restarts WSL: every WSL distro stops, not only Kiri's, and Kiri's containers start again as they're set to.",
     })
 }
@@ -200,6 +202,9 @@ pub fn resources(body: Option<Value>) {
 
 /// Restart to apply: WSL stops and Kiri's engine starts again.
 pub fn restart() {
+    if disk_busy() {
+        return;
+    }
     std::thread::spawn(|| {
         let mut cmd = crate::win::tool("wsl.exe");
         std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
@@ -212,7 +217,37 @@ pub fn restart() {
     });
 }
 
-static MOVING: AtomicBool = AtomicBool::new(false);
+/// Move or reclaim holds the VHDX; only one may run, and Restart VM waits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiskOp {
+    None = 0,
+    Moving = 1,
+    Compacting = 2,
+}
+
+static DISK_OP: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+fn disk_op() -> DiskOp {
+    match DISK_OP.load(Ordering::SeqCst) {
+        1 => DiskOp::Moving,
+        2 => DiskOp::Compacting,
+        _ => DiskOp::None,
+    }
+}
+
+fn disk_busy() -> bool {
+    disk_op() != DiskOp::None
+}
+
+fn begin_disk_op(op: DiskOp) -> bool {
+    DISK_OP
+        .compare_exchange(DiskOp::None as u8, op as u8, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+}
+
+fn end_disk_op() {
+    DISK_OP.store(DiskOp::None as u8, Ordering::SeqCst);
+}
 
 fn quiet_wsl() -> std::process::Command {
     let mut c = crate::win::tool("wsl.exe");
@@ -316,12 +351,12 @@ fn move_distro(distro: &str, dest: &Path) -> io::Result<()> {
 /// Settings → Resources → Move…: pick a parent folder, move the distro's
 /// VHDX there with `wsl --manage --move`, then restart the engine.
 pub fn move_disk() {
-    if MOVING.swap(true, Ordering::SeqCst) {
+    if !begin_disk_op(DiskOp::Moving) {
         return;
     }
     std::thread::spawn(|| {
         let finish = |r: io::Result<()>| {
-            MOVING.store(false, Ordering::SeqCst);
+            end_disk_op();
             match r {
                 Ok(()) => emit(notice("ok", &tr("Linux disk moved. WSL restarted with the new location"))),
                 Err(e) => emit(notice("error", &trf("Could not move the Linux disk: {error}", &[("error", &e)]))),
@@ -334,7 +369,7 @@ pub fn move_disk() {
             return;
         };
         let Some(parent) = crate::app::pick_folder_blocking(&tr("Choose where the Linux disk should live")) else {
-            MOVING.store(false, Ordering::SeqCst);
+            end_disk_op();
             emit(event().to_string());
             return;
         };
@@ -364,12 +399,266 @@ pub fn move_disk() {
             Ok(()) => finish(Ok(())),
             Err(e) => {
                 crate::serve::log(&format!("disk move: disk moved but engine did not start: {e}"));
-                MOVING.store(false, Ordering::SeqCst);
+                end_disk_op();
                 emit(notice("ok", &tr("Linux disk moved. Start the engine to run containers again.")));
                 emit(event().to_string());
             }
         }
     });
+}
+
+/// Settings → Resources → Reclaim…: fstrim, shut WSL down, compact
+/// `ext4.vhdx` with diskpart, then restart the engine. Does not enable
+/// experimental sparse VHD.
+pub fn compact_disk() {
+    if !begin_disk_op(DiskOp::Compacting) {
+        return;
+    }
+    std::thread::spawn(|| {
+        let finish_err = |e: io::Error| {
+            end_disk_op();
+            emit(notice("error", &trf("Could not reclaim Linux disk space: {error}", &[("error", &e)])));
+            emit(event().to_string());
+        };
+        emit(event().to_string());
+        let Some(distro) = crate::setup::distro().or_else(crate::engine::distro) else {
+            finish_err(io::Error::other("Kiri's Linux is not set up yet"));
+            return;
+        };
+        let Some(base) = crate::setup::distro_base_path(&distro) else {
+            finish_err(io::Error::other("Linux disk path is not available yet"));
+            return;
+        };
+        let vhdx = base.join("ext4.vhdx");
+        if !vhdx.is_file() {
+            finish_err(io::Error::other(format!("{} not found", vhdx.display())));
+            return;
+        }
+        let before = std::fs::metadata(&vhdx).ok().map(|m| m.len()).unwrap_or(0);
+
+        // Best-effort TRIM while the distro can still run; never /kiri/stop.
+        try_fstrim(&distro);
+
+        crate::serve::renew_bridge();
+        if let Err(e) = shutdown_wsl() {
+            finish_err(e);
+            return;
+        }
+        wait_vhdx_free(&distro, std::time::Duration::from_secs(15));
+
+        // Compact refuses NTFS-sparse VHDs; leave sparse off afterwards.
+        if vhdx_reported_sparse(&distro, &vhdx) {
+            let _ = set_distro_sparse(&distro, false);
+            wait_vhdx_free(&distro, std::time::Duration::from_secs(8));
+        }
+
+        if let Err(e) = compact_vhdx_file(&vhdx) {
+            crate::serve::log(&format!("disk compact failed ({e}); restarting engine anyway"));
+            let _ = restart_engine_after_move(&distro);
+            finish_err(e);
+            return;
+        }
+
+        let after = std::fs::metadata(&vhdx).ok().map(|m| m.len()).unwrap_or(before);
+        let reclaimed = before.saturating_sub(after);
+
+        match restart_engine_after_move(&distro) {
+            Ok(()) => {
+                end_disk_op();
+                if reclaimed == 0 {
+                    emit(notice("ok", &tr("Linux disk compacted. The file size did not change.")));
+                } else {
+                    emit(notice(
+                        "ok",
+                        &trf("Linux disk compacted. Reclaimed {size}.", &[("size", &fmt_bytes(reclaimed))]),
+                    ));
+                }
+                emit(event().to_string());
+            }
+            Err(e) => {
+                crate::serve::log(&format!("disk compact: compacted but engine did not start: {e}"));
+                end_disk_op();
+                if reclaimed == 0 {
+                    emit(notice("ok", &tr("Linux disk compacted. Start the engine to run containers again.")));
+                } else {
+                    emit(notice(
+                        "ok",
+                        &trf(
+                            "Linux disk compacted. Reclaimed {size}. Start the engine to run containers again.",
+                            &[("size", &fmt_bytes(reclaimed))],
+                        ),
+                    ));
+                }
+                emit(event().to_string());
+            }
+        }
+    });
+}
+
+fn fmt_bytes(n: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    if n >= GB {
+        format!("{:.1} GB", n as f64 / GB as f64)
+    } else if n >= MB {
+        format!("{} MB", (n + MB / 2) / MB)
+    } else if n >= KB {
+        format!("{} KB", (n + KB / 2) / KB)
+    } else {
+        format!("{n} B")
+    }
+}
+
+/// Issue discard so compact can see freed blocks. Best-effort only.
+fn try_fstrim(distro: &str) {
+    if !crate::client::alive() {
+        return;
+    }
+    let mut cmd = quiet_wsl();
+    cmd.args(["-d", distro, "-u", "root", "--", "fstrim", "-av"]);
+    match crate::update::output_within(&mut cmd, std::time::Duration::from_secs(120)) {
+        Ok(o) if o.status.success() => {}
+        Ok(o) => crate::serve::log(&format!("disk compact: fstrim exited {}: {}", o.status, wsl_err(&o))),
+        Err(e) => crate::serve::log(&format!("disk compact: fstrim skipped ({e})")),
+    }
+}
+
+fn vhdx_reported_sparse(distro: &str, vhdx: &Path) -> bool {
+    if let Ok(out) = quiet_wsl().args(["--manage", distro, "--get-sparse"]).output() {
+        let t = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)).to_ascii_lowercase();
+        if t.contains("true") {
+            return true;
+        }
+        if t.contains("false") {
+            return false;
+        }
+    }
+    let mut cmd = crate::win::tool("fsutil.exe");
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
+    let Ok(out) = cmd.args(["sparse", "queryflag"]).arg(vhdx).output() else {
+        return false;
+    };
+    let t = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+    if t.contains("not set as sparse") || t.contains("is not set") {
+        return false;
+    }
+    t.contains("set as sparse") || t.contains("is set")
+}
+
+fn set_distro_sparse(distro: &str, on: bool) -> io::Result<()> {
+    let flag = if on { "true" } else { "false" };
+    let out = quiet_wsl().args(["--manage", distro, "--set-sparse", flag]).output()?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(wsl_err(&out))
+    }
+}
+
+/// diskpart compact (Home-friendly). Non-ASCII BasePath uses `subst` first —
+/// diskpart's script encoding is unreliable with Unicode paths.
+fn compact_vhdx_file(vhdx: &Path) -> io::Result<()> {
+    let abs = vhdx.canonicalize().unwrap_or_else(|_| vhdx.to_path_buf());
+    let path = strip_unc_prefix(&abs);
+    if path_has_non_ascii(&path) {
+        return compact_via_subst(&path);
+    }
+    run_diskpart_compact(&path)
+}
+
+fn compact_via_subst(vhdx_path: &str) -> io::Result<()> {
+    let letter = free_drive_letter().ok_or_else(|| io::Error::other("no free drive letter for subst"))?;
+    let parent = Path::new(vhdx_path).parent().ok_or_else(|| io::Error::other("vhdx has no parent"))?;
+    subst_run(letter, parent, true)?;
+    let mapped = format!(
+        "{letter}:\\{}",
+        Path::new(vhdx_path).file_name().and_then(|n| n.to_str()).unwrap_or("ext4.vhdx")
+    );
+    let result = run_diskpart_compact(&mapped);
+    let _ = subst_run(letter, parent, false);
+    result
+}
+
+fn strip_unc_prefix(p: &Path) -> String {
+    let s = p.to_string_lossy();
+    s.strip_prefix(r"\\?\").unwrap_or(&s).replace('/', "\\")
+}
+
+fn path_has_non_ascii(p: &str) -> bool {
+    !p.is_ascii()
+}
+
+fn free_drive_letter() -> Option<char> {
+    // SAFETY: GetLogicalDrives returns a bitmask; no pointers.
+    let mask = unsafe { windows_sys::Win32::Storage::FileSystem::GetLogicalDrives() };
+    for c in (b'F'..=b'Z').rev() {
+        let bit = 1u32 << (c - b'A');
+        if mask & bit == 0 {
+            return Some(c as char);
+        }
+    }
+    None
+}
+
+fn subst_run(letter: char, path: &Path, add: bool) -> io::Result<()> {
+    let mut cmd = crate::win::tool("subst.exe");
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
+    let out = if add {
+        cmd.arg(format!("{letter}:")).arg(path).output()?
+    } else {
+        cmd.arg(format!("{letter}:")).arg("/d").output()?
+    };
+    if out.status.success() {
+        Ok(())
+    } else {
+        let text = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+        Err(io::Error::other(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("subst failed").to_owned()))
+    }
+}
+
+const COMPACT_LIMIT: std::time::Duration = std::time::Duration::from_secs(45 * 60);
+
+fn run_diskpart_compact(vhdx_path: &str) -> io::Result<()> {
+    let escaped = vhdx_path.replace('"', "");
+    let script = format!(
+        "select vdisk file=\"{escaped}\"\r\nattach vdisk readonly\r\ncompact vdisk\r\ndetach vdisk\r\n"
+    );
+    let dir = std::env::temp_dir();
+    let file = dir.join(format!("kiri-compact-{}.txt", std::process::id()));
+    std::fs::write(&file, script.as_bytes())?;
+    let mut cmd = crate::win::tool("diskpart.exe");
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
+    cmd.arg("/s").arg(&file);
+    let out = crate::update::output_within(&mut cmd, COMPACT_LIMIT);
+    let _ = std::fs::remove_file(&file);
+    let out = out?;
+    let text = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    let lower = text.to_ascii_lowercase();
+    // Prefer an explicit success line; diskpart may still exit 0 on failure.
+    if lower.contains("successfully compacted") || lower.contains("100 percent completed") {
+        return Ok(());
+    }
+    let bad = !out.status.success()
+        || lower.contains("access is denied")
+        || lower.contains("is not valid")
+        || lower.contains("virtual disk system limitation")
+        || lower.contains("must not be sparse")
+        || lower.contains("cannot be compacted")
+        || lower.contains("failed");
+    if bad {
+        let detail = text
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty() && !l.chars().all(|c| c.is_ascii_digit() || c == '%' || c.is_whitespace()))
+            .unwrap_or("diskpart compact failed");
+        return Err(io::Error::other(detail.to_owned()));
+    }
+    // Quiet success with exit 0 and no known failure string.
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(io::Error::other("diskpart compact failed"))
 }
 
 /// Clear a leftover window-Stop marker inside the distro so `kiri-start`
