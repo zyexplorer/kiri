@@ -28,8 +28,8 @@ use windows::Win32::Globalization::GetUserDefaultUILanguage;
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
-use windows::Win32::Graphics::Gdi::{CreateSolidBrush, EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW};
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE};
+use windows::Win32::Graphics::Gdi::{CreateSolidBrush, EnumFontFamiliesExW, GetDC, RedrawWindow, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, RDW_FRAME, RDW_INVALIDATE, TEXTMETRICW};
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_OEM_3, VK_SHIFT};
 use windows::Win32::UI::Shell::{
@@ -43,9 +43,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetForegroundWindow, GetMessageW, GetSystemMetrics, GetWindowThreadProcessId, IsWindowVisible, IsZoomed, KillTimer, SetWindowsHookExW, UnhookWindowsHookEx,
     SM_CXSCREEN, SM_CYSCREEN, SW_MAXIMIZE, SW_SHOWNORMAL, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SendMessageW,
     SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow, TrackPopupMenu, TranslateMessage, HHOOK, HICON, HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL, IDC_ARROW,
-    KBDLLHOOKSTRUCT, LLKHF_UP, LR_DEFAULTCOLOR, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, WH_KEYBOARD_LL, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_LBUTTONUP, WM_RBUTTONUP, WM_SETICON, WM_SIZE, WM_TIMER,
-    WNDCLASSW, WS_OVERLAPPEDWINDOW,
+    KBDLLHOOKSTRUCT, LLKHF_UP, LR_DEFAULTCOLOR, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, SW_HIDE, SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, TPM_RETURNCMD, TPM_RIGHTBUTTON, WH_KEYBOARD_LL, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NCACTIVATE,
+    WM_RBUTTONUP, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
 
 pub const CLASS: PCWSTR = w!("KiriWindow");
@@ -484,6 +484,20 @@ impl Ui {
         unsafe {
             let flag = windows::core::BOOL::from(dark);
             let _ = DwmSetWindowAttribute(self.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, (&raw const flag).cast(), std::mem::size_of_val(&flag) as u32);
+            // Win11: paint the caption in the page's colours so the bar changes
+            // immediately (immersive dark mode alone often waits for an NC event).
+            let (cr, cg, cb) = backdrop(dark);
+            let caption = COLORREF(cb as u32 | (cg as u32) << 8 | (cr as u32) << 16);
+            let (tr, tg, tb) = if dark { (0xE8u8, 0xEEu8, 0xF4u8) } else { (0x1Fu8, 0x23u8, 0x28u8) };
+            let text = COLORREF(tb as u32 | (tg as u32) << 8 | (tr as u32) << 16);
+            let _ = DwmSetWindowAttribute(self.hwnd, DWMWA_CAPTION_COLOR, (&raw const caption).cast(), std::mem::size_of_val(&caption) as u32);
+            let _ = DwmSetWindowAttribute(self.hwnd, DWMWA_TEXT_COLOR, (&raw const text).cast(), std::mem::size_of_val(&text) as u32);
+            // Win10 / stubborn frames: SWP_FRAMECHANGED alone is not enough;
+            // toggling WM_NCACTIVATE forces a caption redraw (same as focus change).
+            let _ = SetWindowPos(self.hwnd, None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            let _ = RedrawWindow(Some(self.hwnd), None, None, RDW_INVALIDATE | RDW_FRAME);
+            SendMessageW(self.hwnd, WM_NCACTIVATE, Some(WPARAM(0)), None);
+            SendMessageW(self.hwnd, WM_NCACTIVATE, Some(WPARAM(1)), None);
             if let Some(c) = &self.controller {
                 set_backdrop(c, dark);
             }
