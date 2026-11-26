@@ -68,6 +68,10 @@ const UBUNTU: Pin = Pin {
 const UBUNTU_DISTRO: &str = "Ubuntu-26.04";
 pub(crate) const KIRI_DISTRO: &str = "kiri";
 
+/// Personal China mirror page for the pinned WSL MSI (GitHub is often slow).
+/// Browser download, then Welcome → "I already have the installer…" (SHA-256 checked).
+const WSL_ALT_URL: &str = "https://docsys.tongluegroup.com:9090/DocSystem/web/project.html?vid=1&shareId=236494149";
+
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -125,6 +129,8 @@ struct State {
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 static BUSY: AtomicBool = AtomicBool::new(false);
 static CANCEL: AtomicBool = AtomicBool::new(false);
+/// Engine alpine test: Skip for now (vs Cancel, which aborts the step).
+static SKIP_TEST: AtomicBool = AtomicBool::new(false);
 
 fn dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Kiri")).unwrap_or_else(|| PathBuf::from("."))
@@ -410,7 +416,7 @@ fn fresh_state(step: &'static str, s: &Saved) -> State {
         step,
         linux: s.linux.clone(),
         sizes: json!({"wsl": WSL_MSI.size, "ubuntu": UBUNTU.size, "kiri": std::fs::metadata(bundle().join("kiri-linux.tar.gz")).map_or(0, |m| m.len())}),
-        urls: json!({"wsl": WSL_MSI.url, "ubuntu": UBUNTU.url}),
+        urls: json!({"wsl": WSL_MSI.url, "ubuntu": UBUNTU.url, "wslAlt": WSL_ALT_URL}),
         existing_ubuntu: existing_ubuntu().is_some(),
         other_docker: other,
         other_engine: crate::buildwith::other_engine(),
@@ -477,6 +483,7 @@ fn run(step: &'static str, work: impl FnOnce() -> io::Result<()> + Send + 'stati
         return;
     }
     CANCEL.store(false, Ordering::SeqCst);
+    SKIP_TEST.store(false, Ordering::SeqCst);
     update(|s| {
         s.step = step;
         s.error = None;
@@ -862,6 +869,8 @@ fn seed_hub_mirror(distro: &str) -> io::Result<()> {
 }
 
 fn docker_on_kiri(args: &[&str]) -> io::Result<std::process::Output> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
     if !dir().join("bin").join("docker.exe").is_file() {
         verified("bin/docker.exe")?;
     }
@@ -870,7 +879,55 @@ fn docker_on_kiri(args: &[&str]) -> io::Result<std::process::Output> {
     let mut cmd = quiet(&docker().to_string_lossy());
     cmd.args(["--host", &host]);
     cmd.args(args);
-    cmd.output()
+    // Poll so Cancel / Skip for now can kill a hung Hub pull.
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    loop {
+        if CANCEL.load(Ordering::SeqCst) || SKIP_TEST.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::other("cancelled"));
+        }
+        // SAFETY: child's process handle is valid while `child` lives.
+        let waited = unsafe { windows_sys::Win32::System::Threading::WaitForSingleObject(child.as_raw_handle() as _, 200) };
+        if waited == WAIT_OBJECT_0 {
+            return child.wait_with_output();
+        }
+        if waited != WAIT_TIMEOUT {
+            return Err(io::Error::last_os_error());
+        }
+    }
+}
+
+fn skip_test_now() -> io::Result<()> {
+    SKIP_TEST.store(false, Ordering::SeqCst);
+    CANCEL.store(false, Ordering::SeqCst);
+    update(|s| {
+        s.error = None;
+        if let Some(t) = s.tasks.get_mut(2) {
+            t.state = "done";
+            t.detail = "skipped".into();
+        }
+    });
+    log_line("test container skipped");
+    tools()
+}
+
+fn docker_or_skip(args: &[&str]) -> io::Result<std::process::Output> {
+    match docker_on_kiri(args) {
+        Ok(o) => {
+            if SKIP_TEST.load(Ordering::SeqCst) {
+                return Err(io::Error::other("skipped"));
+            }
+            Ok(o)
+        }
+        Err(e) => {
+            if SKIP_TEST.load(Ordering::SeqCst) {
+                Err(io::Error::other("skipped"))
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 fn test_hello_ok(out: &std::process::Output) -> bool {
@@ -888,14 +945,18 @@ fn log_docker_tail(out: &std::process::Output) {
 /// Pull alpine via an explicit mirror host (not registry-mirrors), then tag
 /// it as `alpine:latest`. Works even when the engine in WSL is old and does
 /// not honour daemon.json mirrors for `docker pull alpine`.
-fn pull_alpine_via_mirrors() -> bool {
+fn pull_alpine_via_mirrors() -> io::Result<bool> {
     for base in HUB_MIRRORS {
+        if SKIP_TEST.load(Ordering::SeqCst) {
+            return Err(io::Error::other("skipped"));
+        }
         let host = base.trim_end_matches('/').trim_start_matches("https://").trim_start_matches("http://");
         let ref_img = format!("{host}/library/alpine:latest");
         task(2, "active", &format!("mirror {host}"));
         log_line(&format!("$ docker pull {ref_img}"));
-        let pull = match docker_on_kiri(&["pull", &ref_img]) {
+        let pull = match docker_or_skip(&["pull", &ref_img]) {
             Ok(o) => o,
+            Err(e) if e.to_string().contains("skipped") => return Err(e),
             Err(e) => {
                 log_line(&format!("pull failed: {e}"));
                 continue;
@@ -907,14 +968,18 @@ fn pull_alpine_via_mirrors() -> bool {
         }
         let _ = docker_on_kiri(&["tag", &ref_img, "alpine:latest"]);
         log_line("$ docker run --rm alpine echo hello");
-        if let Ok(run) = docker_on_kiri(&["run", "--rm", "alpine", "echo", "hello"]) {
-            log_docker_tail(&run);
-            if test_hello_ok(&run) {
-                return true;
+        match docker_or_skip(&["run", "--rm", "alpine", "echo", "hello"]) {
+            Ok(run) => {
+                log_docker_tail(&run);
+                if test_hello_ok(&run) {
+                    return Ok(true);
+                }
             }
+            Err(e) if e.to_string().contains("skipped") => return Err(e),
+            Err(e) => log_line(&format!("run failed: {e}")),
         }
     }
-    false
+    Ok(false)
 }
 
 /// Step 3: the engine answers through the pipe and runs a container.
@@ -942,6 +1007,9 @@ fn engine() -> io::Result<()> {
         crate::serve::log(&format!("setup engine: {e}; still waiting for it"));
     }
     while !crate::client::alive() {
+        if SKIP_TEST.load(Ordering::SeqCst) {
+            return skip_test_now();
+        }
         if CANCEL.load(Ordering::SeqCst) {
             return Err(io::Error::other("cancelled"));
         }
@@ -956,19 +1024,33 @@ fn engine() -> io::Result<()> {
     // Windows' proxy before the first pull, through the relay when it is on
     // Windows' loopback: the minute's refresh may not have come yet.
     crate::engine::send_windows_proxy();
+    if SKIP_TEST.load(Ordering::SeqCst) {
+        return skip_test_now();
+    }
     // 1) Local image (docker load / earlier pull).
     task(2, "active", "local alpine");
     log_line("$ docker run --rm --pull=never alpine echo hello");
-    let local = docker_on_kiri(&["run", "--rm", "--pull=never", "alpine", "echo", "hello"])?;
+    let local = match docker_or_skip(&["run", "--rm", "--pull=never", "alpine", "echo", "hello"]) {
+        Ok(o) => o,
+        Err(e) if e.to_string().contains("skipped") => return skip_test_now(),
+        Err(e) => return Err(e),
+    };
     log_docker_tail(&local);
     if test_hello_ok(&local) {
         task(2, "done", "hello (local)");
         return tools();
     }
+    if SKIP_TEST.load(Ordering::SeqCst) {
+        return skip_test_now();
+    }
     // 2) Plain `alpine` (uses daemon.json mirrors when the engine supports them).
     task(2, "active", &tr("pulling alpine"));
     log_line("$ docker run --rm alpine echo hello");
-    let out = docker_on_kiri(&["run", "--rm", "alpine", "echo", "hello"])?;
+    let out = match docker_or_skip(&["run", "--rm", "alpine", "echo", "hello"]) {
+        Ok(o) => o,
+        Err(e) if e.to_string().contains("skipped") => return skip_test_now(),
+        Err(e) => return Err(e),
+    };
     log_docker_tail(&out);
     if test_hello_ok(&out) {
         task(2, "done", "hello");
@@ -978,11 +1060,18 @@ fn engine() -> io::Result<()> {
     for l in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(20) {
         crate::serve::log(&format!("setup engine: docker: {l}"));
     }
+    if SKIP_TEST.load(Ordering::SeqCst) {
+        return skip_test_now();
+    }
     // 3) Explicit China mirrors as image refs — reliable when Hub is blocked
     // and older engines ignore registry-mirrors.
-    if pull_alpine_via_mirrors() {
-        task(2, "done", "hello (mirror)");
-        return tools();
+    match pull_alpine_via_mirrors() {
+        Ok(true) => {
+            task(2, "done", "hello (mirror)");
+            return tools();
+        }
+        Err(e) if e.to_string().contains("skipped") => return skip_test_now(),
+        Ok(false) | Err(_) => {}
     }
     Err(io::Error::other(format!(
         "{} (import alpine with docker load, or Skip for now)",
@@ -1126,7 +1215,7 @@ pub fn handles(msg: &str) -> bool {
 }
 
 fn setup_open_url(url: &str) -> bool {
-    url == "https://learn.microsoft.com/windows/wsl/about" || url == WSL_MSI.url || url == UBUNTU.url
+    url == "https://learn.microsoft.com/windows/wsl/about" || url == WSL_MSI.url || url == UBUNTU.url || url == WSL_ALT_URL
 }
 
 pub fn on_message(msg: &str) {
@@ -1201,7 +1290,10 @@ pub fn on_message(msg: &str) {
                 run("linux", || install_linux("kiri"));
             });
         }
-        "setup-cancel" => CANCEL.store(true, Ordering::SeqCst),
+        "setup-cancel" => {
+            SKIP_TEST.store(false, Ordering::SeqCst);
+            CANCEL.store(true, Ordering::SeqCst);
+        }
         "setup-retry" => {
             let step = STATE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map_or("welcome", |s| s.step);
             let linux = STATE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().and_then(|s| s.linux.clone()).unwrap_or_else(|| "kiri".into());
@@ -1213,22 +1305,19 @@ pub fn on_message(msg: &str) {
                 _ => update(|s| s.error = None),
             }
         }
-        // Engine test failed (often Hub unreachable): continue to Docker tools.
+        // Engine alpine test: continue to Docker tools (error UI, or while a Hub
+        // pull is still hanging — Skip for now must work before the pull fails).
         "setup-skip-test" => {
             let step = STATE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map_or("", |s| s.step);
-            if step == "engine" {
-                run("tools", || {
-                    update(|s| {
-                        s.error = None;
-                        if let Some(t) = s.tasks.get_mut(2) {
-                            t.state = "done";
-                            t.detail = "skipped".into();
-                        }
-                    });
-                    log_line("test container skipped");
-                    tools()
-                });
+            if step != "engine" {
+                return;
             }
+            if BUSY.load(Ordering::SeqCst) {
+                SKIP_TEST.store(true, Ordering::SeqCst);
+                CANCEL.store(true, Ordering::SeqCst);
+                return;
+            }
+            run("tools", || skip_test_now());
         }
         // Offline / flaky download: pick the pinned MSI or .wsl, verify it,
         // stage it where download() looks, then continue the step.

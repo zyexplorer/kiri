@@ -19,7 +19,7 @@ way the main page does: it sends JSON strings with
 | `setup-switch` | `value`: `"kiri"` | while Ubuntu downloads → "Use Kiri Linux instead" |
 | `setup-cancel` | | any progress screen → "Cancel" (back to the step's start) |
 | `setup-retry` | | error → "Try again" |
-| `setup-skip-test` | | engine step error → "Skip for now" (continues to Docker tools when Hub pull of alpine fails; for offline / mainland China installs that already have a local image or will pull later) |
+| `setup-skip-test` | | engine step → "Skip for now" while the alpine test is running or after it errors (continues to Docker tools; for offline / mainland China installs that already have a local image or will pull later). Works during a hung Hub pull, not only after failure. |
 | `setup-use-local` | `which`: `"wsl"` or `"ubuntu"` (optional; inferred from the current step) | Welcome → "I already have the installer…"; download error → "Use a local file…" (stages the pinned MSI / `.wsl` into downloads after SHA-256 check, then continues the step) |
 | `setup-default` | `value`: bool | Docker tools → "Make Kiri the default for docker" checkbox |
 | `setup-build` | `value`: `"docker"` or `"kiri"` | Docker tools → Builds (shown only with another engine and Kiri not made docker's default): "Keep building with Docker" / "Build with Kiri" |
@@ -27,7 +27,7 @@ way the main page does: it sends JSON strings with
 | `setup-open` | | Ready → "Open Kiri" (the main window replaces setup) |
 | `setup-quit` | | Welcome → "Quit" |
 | `copy` | `value`: text | Ready → "Copy" |
-| `open` | `name`: https URL | "What is WSL?", the pinned WSL MSI / Ubuntu `.wsl` download (only those URLs) |
+| `open` | `name`: https URL | "What is WSL?", the pinned WSL MSI / Ubuntu `.wsl` download, and the personal China WSL mirror page (`urls.wslAlt`) |
 
 ## Host → page
 
@@ -39,7 +39,7 @@ One event type, sent whenever anything changes (at most ~10 a second):
   "step": "welcome" | "wsl" | "restart" | "choose" | "linux" | "engine" | "tools" | "ready",
   "linux": "kiri" | "ubuntu" | null,
   "sizes": {"wsl": 367575040, "ubuntu": 418495746, "kiri": 9000000},
-  "urls": {"wsl": "https://github.com/microsoft/WSL/releases/download/3.0.3/wsl.3.0.3.0.x64.msi", "ubuntu": "https://releases.ubuntu.com/…"},
+  "urls": {"wsl": "https://github.com/microsoft/WSL/releases/download/3.0.3/wsl.3.0.3.0.x64.msi", "ubuntu": "https://releases.ubuntu.com/…", "wslAlt": "https://docsys.tongluegroup.com:9090/DocSystem/web/project.html?vid=1&shareId=236494149"},
   "existingUbuntu": false,
   "otherDocker": false,
   "otherEngine": null | "Docker Desktop",

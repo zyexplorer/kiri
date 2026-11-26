@@ -422,7 +422,9 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
     "Try again": "重试",
     "Use a local file…": "使用本地文件…",
     "I already have the installer…": "我已有安装包…",
+    "Faster download…": "国内快速下载…",
     "Or download it in a browser, then choose the file here:": "也可在浏览器中下载，再在此处选择文件：",
+    "GitHub is slow? Open the China mirror, download the MSI, then choose the file here:": "GitHub 较慢？可打开国内备选地址下载安装包，再点「我已有安装包」选择文件：",
     "Download failed? Open this link in a browser, then use a local file:": "下载失败？可在浏览器打开此链接，再用本地文件：",
     "Quit": "退出",
     "Copy": "复制",
@@ -2173,6 +2175,11 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
     if (!url) return '';
     return '<p class="dl-hint"><span>' + esc(lead) + '</span><a href="' + esc(url) + '" data-open title="' + esc(url) + '">' + esc(url) + '</a></p>';
   };
+  // GitHub MSI + personal China mirror page (browser download → local file).
+  var wslDlHints = function (urls) {
+    return dlHint(urls.wsl, tr('Or download it in a browser, then choose the file here:')) +
+      dlHint(urls.wslAlt, tr('GitHub is slow? Open the China mirror, download the MSI, then choose the file here:'));
+  };
 
   /* ---------- screens (structure; live values are filled by update()) ---------- */
   /* The first start: the language, before Welcome, as the main window asks it
@@ -2215,8 +2222,11 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
         '<div class="head"><span class="eyebrow">' + tr('Step 1 of 5') + '</span><h1 tabindex="-1">' + tr('Installing Windows Subsystem for Linux') + '</h1></div>' +
         '<section class="card" aria-label="' + esc(tr('Progress')) + '">' + PROG + TASKS + '</section>' +
         '<p class="note">' + tr('Windows will need one restart when this finishes. Kiri will ask before restarting, so you can save your work first.') + '</p>' +
-        ERR + dlHint(urls.wsl, tr('Or download it in a browser, then choose the file here:')) +
-        '<div class="foot">' + CANCEL + '</div>' };
+        ERR + wslDlHints(urls) +
+        '<div class="foot">' +
+          (urls.wslAlt ? '<button type="button" class="btn" data-open-url="' + esc(urls.wslAlt) + '">' + tr('Faster download…') + '</button>' : '') +
+          '<button type="button" class="btn" data-cmd="setup-use-local" data-which="wsl">' + tr('Use a local file…') + '</button>' +
+          CANCEL + '</div>' };
 
       case 'restart': return { cls: 'center', html:
         ART.restart + '<h1 class="l" tabindex="-1">' + tr('One restart to finish WSL') + '</h1>' +
@@ -2278,7 +2288,7 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
       case 'engine': return { cls: '', html:
         hero(ART.engine, tr('Step 3 of 5'), tr("Starting Kiri's engine"), tr('The part that runs your containers, inside {linux}.', { linux: esc(linuxName(s.linux, true)) })) +
         '<section class="card tight" aria-label="' + esc(tr('Progress')) + '">' + PROG + TASKS + LOG(true) + '</section>' +
-        ERR + '<div class="foot">' + CANCEL + '</div>' };
+        ERR + '<div class="foot"><button type="button" class="btn" data-cmd="setup-skip-test" data-slot="skip-test">' + tr('Skip for now') + '</button>' + CANCEL + '</div>' };
 
       case 'tools': {
         var engineName = esc(s.otherEngine || tr('your other Docker'));
@@ -2309,9 +2319,10 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
       default: return { cls: '', html: /* welcome */
         '<div class="hero lgx">' + ART.welcome + '<div class="hero-t"><h1 class="xl" tabindex="-1">' + tr('Welcome to Kiri') + '</h1><p class="lede lg">' + tr("Kiri runs Linux containers on Windows without Docker Desktop. It needs Windows Subsystem for Linux (WSL), Microsoft's own way to run Linux, which this PC doesn't have yet.") + '</p></div></div>' +
         '<section class="size">' + ART.download + '<div class="size-t"><span class="size-n">' + (isNum(sz.wsl) ? mb(sz.wsl) : '—') + '</span><span class="size-s">' + tr('WSL, downloaded from Microsoft') + '</span>' +
-        dlHint(urls.wsl, tr('Or download it in a browser, then choose the file here:')) + '</div></section>' +
+        wslDlHints(urls) + '</div></section>' +
         ERR + '<div class="foot"><a href="https://learn.microsoft.com/windows/wsl/about" data-open>' + tr('What is WSL?') + '</a><span class="grow"></span>' +
         '<button type="button" class="btn" data-cmd="setup-quit">' + tr('Quit') + '</button>' +
+        (urls.wslAlt ? '<button type="button" class="btn" data-open-url="' + esc(urls.wslAlt) + '">' + tr('Faster download…') + '</button>' : '') +
         '<button type="button" class="btn" data-cmd="setup-use-local" data-which="wsl">' + tr('I already have the installer…') + '</button>' +
         '<button type="button" class="btn primary" data-cmd="setup-install-wsl">' + tr('Install WSL') + '</button></div>' };
     }
@@ -2500,6 +2511,14 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
     updTools(q('[data-slot=tools]'), s.tasks);
     updLog(q('[data-slot=log]'), s.log);
     updError(q('[data-slot=error]'), s.error);
+    // Skip alpine while pulling (not only after Hub fails): hide when the
+    // error card already offers the same button.
+    var skipBtn = q('[data-slot=skip-test]');
+    if (skipBtn) {
+      var t2 = (s.tasks || [])[2];
+      var testBusy = t2 && (t2.state === 'active' || t2.state === 'error');
+      skipBtn.hidden = !!s.error || !testBusy;
+    }
     var r = main.querySelectorAll('input[name=linux]');
     for (var i = 0; i < r.length; i++) r[i].checked = r[i].value === choice;
     var cb = document.getElementById('chooseBtn');
@@ -2536,6 +2555,7 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
     if (a) { ev.preventDefault(); send('open', { name: a.href }); return; }
     var b = ev.target.closest('button');
     if (!b || b.disabled) return;
+    if (b.dataset.openUrl) { send('open', { name: b.dataset.openUrl }); return; }
     if (b.dataset.cmd) {
       var extra = {};
       if (b.dataset.value != null && b.dataset.value !== '') extra.value = b.dataset.value;
@@ -2590,7 +2610,7 @@ function trn(n, one, other, vars) { var s = isOne(n) ? one : other, v = { n: n }
   if (hash.indexOf('#demo') !== 0) return;
   var T = function (label, state, detail) { return { label: label, state: state, detail: detail }; };
   var base = { type: 'setup', linux: null, sizes: { wsl: 367575040, ubuntu: 418495746, kiri: 9000000 },
-    urls: { wsl: 'https://github.com/microsoft/WSL/releases/download/3.0.3/wsl.3.0.3.0.x64.msi', ubuntu: 'https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-wsl-amd64.wsl' },
+    urls: { wsl: 'https://github.com/microsoft/WSL/releases/download/3.0.3/wsl.3.0.3.0.x64.msi', ubuntu: 'https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-wsl-amd64.wsl', wslAlt: 'https://docsys.tongluegroup.com:9090/DocSystem/web/project.html?vid=1&shareId=236494149' },
     existingUbuntu: false, otherDocker: false, otherEngine: null,
     makeDefault: true, buildKiri: true, autostart: true, progress: null, tasks: [], log: [], error: null };
   var wsl = { step: 'wsl', progress: { pct: 58, done: 224395264, total: 367575040, rate: 19084083, eta: 9, label: 'Downloading WSL 3.0.3 from Microsoft' },
