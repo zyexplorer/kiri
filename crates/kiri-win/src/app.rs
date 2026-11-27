@@ -405,9 +405,26 @@ unsafe fn foreground(hwnd: HWND) {
 fn show() {
     if let Some(Some(hwnd)) = with_ui(Ui::show) {
         if let Err(e) = start_webview(hwnd) {
-            crate::serve::log(&format!("webview: {e}"));
+            webview_failed(&e.to_string());
         }
     }
+}
+
+/// WebView2 env/controller failed: blank client area otherwise. Server 2016
+/// and many Server SKUs ship without the Evergreen Runtime.
+fn webview_failed(detail: &str) {
+    crate::serve::log(&format!("webview: {detail}"));
+    crate::win::alert(
+        "Kiri",
+        &format!(
+            "无法创建 WebView2 窗口（界面空白通常就是这个原因）。\n\n\
+Windows Server 2016 / 精简环境默认不带 Microsoft Edge WebView2 Runtime。\n\
+请安装 Evergreen Runtime 后重新打开 Kiri。\n\n\
+详情: {detail}\n\n\
+点击“确定”打开下载页。"
+        ),
+    );
+    crate::win::open_https("https://go.microsoft.com/fwlink/p/?LinkId=2124703");
 }
 
 impl Ui {
@@ -923,20 +940,35 @@ fn data_dir() -> HSTRING {
 
 fn start_webview(hwnd: HWND) -> windows::core::Result<()> {
     let env_done = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |result, env: Option<ICoreWebView2Environment>| {
-        result?;
-        let Some(env) = env else { return Ok(()) };
+        if let Err(e) = result {
+            webview_failed(&e.to_string());
+            return Ok(());
+        }
+        let Some(env) = env else {
+            webview_failed("CreateCoreWebView2Environment returned no environment");
+            return Ok(());
+        };
         let env_for_page = env.clone();
         let ctl_done = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |result, ctl: Option<ICoreWebView2Controller>| {
-            result?;
-            if let Some(ctl) = ctl
-                && let Err(e) = webview_ready(hwnd, &env_for_page, ctl)
-            {
-                crate::serve::log(&format!("webview: {e}"));
+            if let Err(e) = result {
+                webview_failed(&e.to_string());
+                return Ok(());
+            }
+            match ctl {
+                Some(ctl) => {
+                    if let Err(e) = webview_ready(hwnd, &env_for_page, ctl) {
+                        webview_failed(&e.to_string());
+                    }
+                }
+                None => webview_failed("CreateCoreWebView2Controller returned no controller"),
             }
             Ok(())
         }));
         // SAFETY: our window, on its thread.
-        unsafe { env.CreateCoreWebView2Controller(hwnd, &ctl_done) }
+        if let Err(e) = unsafe { env.CreateCoreWebView2Controller(hwnd, &ctl_done) } {
+            webview_failed(&e.to_string());
+        }
+        Ok(())
     }));
     // SAFETY: creates the environment; the handler runs on this thread's loop.
     unsafe { CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), &data_dir(), None, &env_done) }

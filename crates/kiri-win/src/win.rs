@@ -20,8 +20,11 @@ use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APA
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, SetDefaultDllDirectories};
 use windows_sys::Win32::System::SystemInformation::{GetSystemDirectoryW, IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_ARM64};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetExitCodeProcess, WaitForSingleObject, INFINITE};
-use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
-use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, SW_SHOWNORMAL, WM_SETTINGCHANGE};
+use windows_sys::Win32::UI::Shell::{ShellExecuteExW, ShellExecuteW, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    MessageBoxW, SendMessageTimeoutW, HWND_BROADCAST, MB_ICONERROR, MB_OK, MB_SETFOREGROUND, SMTO_ABORTIFHUNG, SW_SHOWNORMAL,
+    WM_SETTINGCHANGE,
+};
 
 const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
 
@@ -177,6 +180,29 @@ pub fn harden_dll_search() {
     // SAFETY: a process-wide setting with a constant flag.
     unsafe {
         SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
+    }
+}
+
+/// Blocking error dialog on the calling thread (the window thread for UI).
+pub fn alert(title: &str, body: &str) {
+    let title: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
+    let body: Vec<u16> = body.encode_utf16().chain(Some(0)).collect();
+    // SAFETY: null owner; UTF-16 NUL-terminated strings; flags are constants.
+    unsafe {
+        MessageBoxW(0, body.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+    }
+}
+
+/// Opens an https URL in the default browser (best-effort).
+pub fn open_https(url: &str) {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return;
+    }
+    let file: Vec<u16> = url.encode_utf16().chain(Some(0)).collect();
+    let op: Vec<u16> = "open\0".encode_utf16().collect();
+    // SAFETY: ShellExecuteW with open + absolute URL; return value ignored.
+    unsafe {
+        ShellExecuteW(0, op.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL);
     }
 }
 
