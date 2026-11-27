@@ -133,6 +133,27 @@ try {
     Fail "kiri-admin.ps1 checksum was NOT embedded in kiri-win.exe (do not ship this build)"
   }
   Write-Host "Checksum embed OK (kiri-admin.ps1)" -ForegroundColor Green
+
+  # Older Win10: static imports of these APIs make the loader refuse to start
+  # ("entry point not found in kiri-win.exe"). They must be GetProcAddress'd.
+  $dumpbin = Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022" -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -match '\\Hostx64\\x64\\dumpbin\.exe$' } |
+    Select-Object -First 1 -ExpandProperty FullName
+  if ($dumpbin) {
+    $forbidden = @(
+      "IsWow64Process2", "CreatePseudoConsole", "ResizePseudoConsole", "ClosePseudoConsole",
+      "GetDpiForSystem", "GetDpiForWindow", "SetProcessDpiAwarenessContext", "SetThreadDpiAwarenessContext",
+      "SetThreadDescription", "GetTempPath2"
+    )
+    $imports = & $dumpbin /IMPORTS (Join-Path $Out "kiri-win.exe") 2>&1 | Out-String
+    $hits = @($forbidden | Where-Object { $imports.Contains($_) })
+    if ($hits.Count) {
+      Fail ("kiri-win.exe still statically imports: {0}`nFix with GetProcAddress before shipping (older Windows 10 will not start)." -f ($hits -join ", "))
+    }
+    Write-Host "Import gate OK (no Win10-gated static APIs)" -ForegroundColor Green
+  } else {
+    Write-Host "WARN: dumpbin.exe not found; skipped Win10 import gate" -ForegroundColor Yellow
+  }
 } finally {
   Pop-Location
 }

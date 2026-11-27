@@ -17,9 +17,9 @@ use std::process::Command;
 
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE};
-use windows_sys::Win32::System::LibraryLoader::SetDefaultDllDirectories;
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, SetDefaultDllDirectories};
 use windows_sys::Win32::System::SystemInformation::{GetSystemDirectoryW, IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_ARM64};
-use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetExitCodeProcess, IsWow64Process2, WaitForSingleObject, INFINITE};
+use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetExitCodeProcess, WaitForSingleObject, INFINITE};
 use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
 use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, SW_SHOWNORMAL, WM_SETTINGCHANGE};
 
@@ -183,14 +183,71 @@ pub fn harden_dll_search() {
 /// This build's architecture as Windows names it: "x64" or "arm64".
 pub const BUILD_ARCH: &str = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
 
+/// Per-monitor DPI awareness when the API exists (Win10 1703+). No-op on older.
+pub fn set_dpi_aware() {
+    type SetFn = unsafe extern "system" fn(isize) -> i32;
+    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4 as HANDLE/isize.
+    const PER_MONITOR_V2: isize = -4;
+    // SAFETY: user32 is mapped; missing export → skip.
+    unsafe {
+        let name: Vec<u16> = "user32.dll\0".encode_utf16().collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        if module == 0 {
+            return;
+        }
+        if let Some(f) = GetProcAddress(module, b"SetProcessDpiAwarenessContext\0".as_ptr().cast()) {
+            let f: SetFn = std::mem::transmute(f);
+            let _ = f(PER_MONITOR_V2);
+        }
+    }
+}
+
+/// System DPI (96 on older Windows without `GetDpiForSystem`).
+pub fn dpi_for_system() -> u32 {
+    type GetFn = unsafe extern "system" fn() -> u32;
+    // SAFETY: user32 is mapped; missing export → 96.
+    unsafe {
+        let name: Vec<u16> = "user32.dll\0".encode_utf16().collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        if module == 0 {
+            return 96;
+        }
+        match GetProcAddress(module, b"GetDpiForSystem\0".as_ptr().cast()) {
+            Some(f) => {
+                let f: GetFn = std::mem::transmute(f);
+                f()
+            }
+            None => 96,
+        }
+    }
+}
+
 /// The PC's own processor, as Windows reports it even to a program running
 /// under emulation (an x64 Kiri on Windows on Arm): "arm64", "x64", or
 /// None when Windows does not say.
+///
+/// `IsWow64Process2` is resolved at run time: a static import makes the
+/// process fail to start on Windows 10 before 1709 (loader: entry point
+/// not found in kiri-win.exe).
 pub fn native_arch() -> Option<&'static str> {
+    type IsWow64Process2Fn = unsafe extern "system" fn(isize, *mut u16, *mut u16) -> i32;
+    // SAFETY: kernel32 is mapped for the process lifetime.
+    let api: Option<IsWow64Process2Fn> = unsafe {
+        let name: Vec<u16> = "kernel32.dll\0".encode_utf16().collect();
+        let module = GetModuleHandleW(name.as_ptr());
+        if module == 0 {
+            None
+        } else {
+            GetProcAddress(module, b"IsWow64Process2\0".as_ptr().cast()).map(|p| std::mem::transmute(p))
+        }
+    };
+    let Some(is_wow64_process2) = api else {
+        // Pre-1709: no WoA emulation story for us; trust this build's arch.
+        return Some(BUILD_ARCH);
+    };
     let (mut process, mut native) = (0u16, 0u16);
-    // SAFETY: the current-process pseudo handle and two out-pointers to
-    // locals; the call only writes them.
-    if unsafe { IsWow64Process2(GetCurrentProcess(), &mut process, &mut native) } == 0 {
+    // SAFETY: current-process pseudo handle; outs are locals.
+    if unsafe { is_wow64_process2(GetCurrentProcess(), &mut process, &mut native) } == 0 {
         return None;
     }
     match native {

@@ -752,7 +752,7 @@ dependencies = [
 
 [[package]]
 name = "kiri"
-version = "0.3.2-zy"
+version = "0.3.3-zy"
 dependencies = [
  "block2",
  "dispatch2",
@@ -786,7 +786,7 @@ dependencies = [
 
 [[package]]
 name = "kiri-image"
-version = "0.3.2-zy"
+version = "0.3.3-zy"
 dependencies = [
  "rcgen",
  "rustls",
@@ -799,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "kiri-init"
-version = "0.3.2-zy"
+version = "0.3.3-zy"
 dependencies = [
  "flate2",
  "kiri-proto",
@@ -810,11 +810,11 @@ dependencies = [
 
 [[package]]
 name = "kiri-proto"
-version = "0.3.2-zy"
+version = "0.3.3-zy"
 
 [[package]]
 name = "kiri-share-proto"
-version = "0.3.2-zy"
+version = "0.3.3-zy"
 dependencies = [
  "hmac",
  "sha2",
@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "kiri-vmm"
-version = "0.3.2-zy"
+version = "0.3.3-zy"
 dependencies = [
  "block2",
  "dispatch2",
@@ -834,7 +834,7 @@ dependencies = [
 
 [[package]]
 name = "kiri-win"
-version = "0.3.2-zy"
+version = "0.3.3-zy"
 dependencies = [
  "embed-resource",
  "kiri-share-proto",
@@ -2091,7 +2091,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.3.2-zy"
+version = "0.3.3-zy"
 
 [[package]]
 name = "yasna"

@@ -30,7 +30,6 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, EnumFontFamiliesExW, GetDC, RedrawWindow, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, RDW_FRAME, RDW_INVALIDATE, TEXTMETRICW};
-use windows::Win32::UI::HiDpi::{GetDpiForSystem, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_OEM_3, VK_SHIFT};
 use windows::Win32::UI::Shell::{
     FileOpenDialog, FileSaveDialog, IFileOpenDialog, IFileSaveDialog, ShellExecuteW, Shell_NotifyIconW, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST,
@@ -534,7 +533,7 @@ pub fn run(show: bool, setup: bool, on_message: impl Fn(String) + 'static, on_tr
     // SAFETY: once, on the thread that owns the window and the webview.
     unsafe {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        crate::win::set_dpi_aware();
     }
     TRAY.with(|t| *t.borrow_mut() = Some(Box::new(on_tray)));
     // SAFETY: plain Win32 window creation with a static class name.
@@ -547,7 +546,7 @@ pub fn run(show: bool, setup: bool, on_message: impl Fn(String) + 'static, on_tr
         RegisterClassW(&class);
         // 1280x840 at 100%, scaled to the display, centred, and never
         // larger than the screen.
-        let scale = |v: i32| v * GetDpiForSystem() as i32 / 96;
+        let scale = |v: i32| v * crate::win::dpi_for_system() as i32 / 96;
         let (sw, sh) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
         let (w, h) = (scale(1280).min(sw * 9 / 10), scale(840).min(sh * 9 / 10));
         let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), CLASS, w!("Kiri"), WS_OVERLAPPEDWINDOW, (sw - w) / 2, (sh - h) / 2, w, h, None, None, Some(instance.into()), None)?;
@@ -714,7 +713,7 @@ fn run_jobs() {
 /// smallest PNG at least that big, which Windows takes as an icon image.
 fn icon(size: i32) -> Option<HICON> {
     // SAFETY: plain system query.
-    let px = size * unsafe { GetDpiForSystem() } as i32 / 96;
+    let px = size * crate::win::dpi_for_system() as i32 / 96;
     let png = ICONS.iter().find(|(s, _)| *s >= px).unwrap_or(&ICONS[ICONS.len() - 1]).1;
     // SAFETY: the bytes are a complete PNG image.
     unsafe { CreateIconFromResourceEx(png, true, 0x0003_0000, px, px, LR_DEFAULTCOLOR).ok() }
