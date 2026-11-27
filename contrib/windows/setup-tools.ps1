@@ -1,9 +1,10 @@
 # Setup step 4, run by kiri-win (crates/kiri-win/src/setup.rs): the docker
-# CLI, Compose, buildx and the `kiri` command into %LOCALAPPDATA%\Kiri\bin,
-# the `kiri` context and Kiri's builder, and, if asked, Kiri as docker's
-# default. Prints "TASK <n>" as each task finishes, for the setup screen.
-# Per user, no admin; the same as kiri.ps1 does. Installed beside
-# kiri-win.exe, which checks it against the SHA-256 it was built with and runs
+# CLI, Compose, buildx and the `kiri` command into <install>\bin (this
+# script's folder), the `kiri` context and Kiri's builder, and, if asked,
+# Kiri as docker's default. Prints "TASK <n>" as each task finishes, for the
+# setup screen. Per user, no admin; the same as kiri.ps1 does. Installed
+# beside kiri-win.exe, which checks it against the SHA-256 it was built with
+# and runs
 #   powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File setup-tools.ps1 -Bundle <folder> [-Default]
 param([string]$Bundle, [string]$Pipe = "npipe:////./pipe/kiri", [switch]$Default)
 $ErrorActionPreference = "Stop"
@@ -25,12 +26,13 @@ trap {
   "ERROR $why"
   exit 1
 }
-$dir = Join-Path $env:LOCALAPPDATA "Kiri"
+# Beside this script (MSI/portable install dir), not hard-coded LocalAppData.
+$dir = $PSScriptRoot
 $bin = Join-Path $dir "bin"
 $plugins = Join-Path $bin "cli-plugins"
 $dockerConfig = Join-Path $env:USERPROFILE ".docker\config.json"
 New-Item -ItemType Directory -Force $plugins | Out-Null
-# The MSI installs the bundle straight into %LOCALAPPDATA%\Kiri: nothing to copy then.
+# The MSI installs the bundle straight into the install folder: nothing to copy then.
 $inPlace = (Resolve-Path $Bundle).Path.TrimEnd('\') -ieq $dir.TrimEnd('\')
 
 if (-not $inPlace) { Copy-Item (Join-Path $Bundle "bin\docker.exe"), (Join-Path $Bundle "bin\kiri.exe") $bin -Force }

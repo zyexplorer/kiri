@@ -81,9 +81,9 @@ pub fn newer(candidate: &str, current: &str) -> bool {
     false
 }
 
-/// %LOCALAPPDATA%\Kiri, where the MSI installs and kiri-win keeps its state.
+/// Install root (MSI/portable beside the exe, or `%LOCALAPPDATA%\Kiri`).
 fn dir() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Kiri")).unwrap_or_else(|| PathBuf::from("."))
+    crate::paths::kiri_dir()
 }
 
 /// Where a download is staged; it outlives the upgrade, which keeps the

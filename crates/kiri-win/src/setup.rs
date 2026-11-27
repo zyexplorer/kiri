@@ -133,7 +133,7 @@ static CANCEL: AtomicBool = AtomicBool::new(false);
 static SKIP_TEST: AtomicBool = AtomicBool::new(false);
 
 fn dir() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Kiri")).unwrap_or_else(|| PathBuf::from("."))
+    crate::paths::kiri_dir()
 }
 
 fn saved() -> Saved {

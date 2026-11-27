@@ -13,12 +13,51 @@ use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde_json::Value;
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, S_OK};
-use windows_sys::Win32::System::Console::{COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole};
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HMODULE, S_OK};
+use windows_sys::Win32::System::Console::{COORD, HPCON};
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
     CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
+
+/// ConPTY entry points, resolved at runtime. Static imports of
+/// `CreatePseudoConsole` make the process fail to start on Windows 10
+/// before 1809 (loader: entry point not found in kiri-win.exe).
+type CreatePseudoConsoleFn = unsafe extern "system" fn(COORD, HANDLE, HANDLE, u32, *mut HPCON) -> i32;
+type ResizePseudoConsoleFn = unsafe extern "system" fn(HPCON, COORD) -> i32;
+type ClosePseudoConsoleFn = unsafe extern "system" fn(HPCON);
+
+struct ConptyApi {
+    create: CreatePseudoConsoleFn,
+    resize: ResizePseudoConsoleFn,
+    close: ClosePseudoConsoleFn,
+}
+
+fn conpty() -> std::io::Result<&'static ConptyApi> {
+    use std::sync::OnceLock;
+    static API: OnceLock<Option<ConptyApi>> = OnceLock::new();
+    let slot = API.get_or_init(|| {
+        // SAFETY: kernel32 is mapped for the process lifetime; names are
+        // NUL-terminated as GetProcAddress requires.
+        unsafe {
+            let module_name: Vec<u16> = "kernel32.dll\0".encode_utf16().collect();
+            let module: HMODULE = GetModuleHandleW(module_name.as_ptr());
+            if module == 0 {
+                return None;
+            }
+            let create = GetProcAddress(module, b"CreatePseudoConsole\0".as_ptr().cast())?;
+            let resize = GetProcAddress(module, b"ResizePseudoConsole\0".as_ptr().cast())?;
+            let close = GetProcAddress(module, b"ClosePseudoConsole\0".as_ptr().cast())?;
+            Some(ConptyApi {
+                create: std::mem::transmute::<_, CreatePseudoConsoleFn>(create),
+                resize: std::mem::transmute::<_, ResizePseudoConsoleFn>(resize),
+                close: std::mem::transmute::<_, ClosePseudoConsoleFn>(close),
+            })
+        }
+    });
+    slot.as_ref().ok_or_else(|| std::io::Error::other("This Windows build has no ConPTY (needs Windows 10 version 1809 or later). The rest of Kiri still works; the built-in terminal does not."))
+}
 
 #[path = "../../kiri/src/ui/termwire.rs"]
 mod termwire;
@@ -33,15 +72,19 @@ struct Console(Mutex<Option<HPCON>>);
 impl Console {
     fn close(&self) {
         if let Some(h) = self.0.lock().unwrap_or_else(PoisonError::into_inner).take() {
-            // SAFETY: h came from CreatePseudoConsole and is closed only here.
-            unsafe { ClosePseudoConsole(h) };
+            if let Ok(api) = conpty() {
+                // SAFETY: h came from CreatePseudoConsole and is closed only here.
+                unsafe { (api.close)(h) };
+            }
         }
     }
 
     fn resize(&self, cols: u16, rows: u16) {
         if let Some(h) = *self.0.lock().unwrap_or_else(PoisonError::into_inner) {
-            // SAFETY: h is open while it is in the mutex.
-            unsafe { ResizePseudoConsole(h, COORD { X: cols as i16, Y: rows as i16 }) };
+            if let Ok(api) = conpty() {
+                // SAFETY: h is open while it is in the mutex.
+                unsafe { (api.resize)(h, COORD { X: cols as i16, Y: rows as i16 }) };
+            }
         }
     }
 }
@@ -128,10 +171,11 @@ pub fn captured(program: &std::path::Path, args: &[&str]) -> std::io::Result<(st
     let command = std::iter::once(quote(&program.to_string_lossy())).chain(args.iter().map(|a| quote(a))).collect::<Vec<_>>().join(" ");
     let (con_in, typed_w) = pipe()?;
     let (screen_r, con_out) = pipe()?;
+    let api = conpty()?;
     let mut hpc: HPCON = 0;
     // Wide, so a long line (a code and its page) isn't wrapped.
     // SAFETY: the console duplicates both handles; ours are closed after.
-    let hr = unsafe { CreatePseudoConsole(COORD { X: 240, Y: 40 }, con_in.as_raw_handle() as HANDLE, con_out.as_raw_handle() as HANDLE, 0, &mut hpc) };
+    let hr = unsafe { (api.create)(COORD { X: 240, Y: 40 }, con_in.as_raw_handle() as HANDLE, con_out.as_raw_handle() as HANDLE, 0, &mut hpc) };
     drop((con_in, con_out));
     if hr != S_OK {
         return Err(std::io::Error::other(format!("CreatePseudoConsole failed ({hr:#x})")));
@@ -234,10 +278,10 @@ fn command_line(id: &str) -> String {
     }
 }
 
-/// Install `kiri-run-cmd` into `%LOCALAPPDATA%\Kiri\bin` so the page can type a
+/// Install `kiri-run-cmd` into `<kiri_dir>\bin` so the page can type a
 /// short `kiri-run-cmd middleware.cmd up` instead of a BOM-strip one-liner.
 fn ensure_run_cmd_helper() {
-    let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(r"Kiri\bin")) else { return };
+    let dir = crate::paths::kiri_dir().join("bin");
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("kiri-run-cmd: create bin dir: {e}");
         return;
@@ -259,7 +303,7 @@ fn ensure_run_cmd_helper() {
 /// project vars (e.g. `DATA_ROOT`) after the defaults.
 fn environment(extra: &[(String, String)]) -> Vec<u16> {
     ensure_run_cmd_helper();
-    let ours = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join(r"Kiri\bin")).filter(|d| d.is_dir());
+    let ours = Some(crate::paths::kiri_dir().join("bin")).filter(|d| d.is_dir());
     let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()));
     let mut vars: Vec<(String, String)> = std::env::vars_os().map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned())).collect();
     // Drop vars that force plain text — ConPTY is a real TTY and can show ANSI.
@@ -350,9 +394,10 @@ fn open(
     // The console reads what's typed from one pipe and writes the screen to the other.
     let (con_in, typed_w) = pipe()?;
     let (screen_r, con_out) = pipe()?;
+    let api = conpty()?;
     let mut hpc: HPCON = 0;
     // SAFETY: the console duplicates both handles; ours are closed after.
-    let hr = unsafe { CreatePseudoConsole(COORD { X: cols as i16, Y: rows as i16 }, con_in.as_raw_handle() as HANDLE, con_out.as_raw_handle() as HANDLE, 0, &mut hpc) };
+    let hr = unsafe { (api.create)(COORD { X: cols as i16, Y: rows as i16 }, con_in.as_raw_handle() as HANDLE, con_out.as_raw_handle() as HANDLE, 0, &mut hpc) };
     drop((con_in, con_out));
     if hr != S_OK {
         return Err(std::io::Error::other(format!("CreatePseudoConsole failed ({hr:#x})")));
@@ -552,7 +597,7 @@ mod tests {
     #[test]
     #[ignore = "runs the real docker login (Kiri's docker.exe), which reaches Docker's sign-in service"]
     fn live_docker_login_shows_its_device_code_on_a_captured_console() {
-        let docker = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap()).join(r"Kiri\bin\docker.exe");
+        let docker = crate::paths::kiri_dir().join(r"bin\docker.exe");
         let dir = std::env::temp_dir().join(format!("kiri-weblogin-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("config.json"), "{}").unwrap();

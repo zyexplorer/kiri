@@ -17,9 +17,9 @@
   Windows on Arm (`cargo xtask msi`, arch arm64) is the same source with
   -arch arm64, -d Bundle=..\..\target\kiri-windows-aarch64 and -o
   ..\..\target\Kiri-<version>-arm64.msi: the Platform is Arm64, the custom action
-  DLL Wix4UtilCA_A64 ($(sys.BUILDARCHSHORT)), and nothing else differs. A
-  per-user install has no Program Files folder to choose, so there is no
-  ProgramFiles64Folder/ProgramFilesArm64 question either.
+  DLL Wix4UtilCA_A64 ($(sys.BUILDARCHSHORT)), and nothing else differs.
+  Default folder is still %LOCALAPPDATA%\Kiri; InstallDirDlg lets the user
+  pick another writable path (per-user, no Program Files elevation).
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
@@ -90,11 +90,10 @@
       <RegistrySearch Root="HKCU" Key="Software\$(Manufacturer)" Name="InstallDir" Type="raw" />
     </Property>
     <Property Id="KIRIDIR" Secure="yes" />
-    <SetProperty Id="KIRIDIR_HOME" Value="[LocalAppDataFolder]$(Name)\" After="AppSearch" Sequence="execute" />
-    <SetProperty Id="KIRIDIR" Value="[KIRIDIR_FOUND]" After="SetKIRIDIR_HOME" Sequence="execute" Condition="Installed AND NOT UPGRADINGPRODUCTCODE" />
-    <SetProperty Id="KIRIDIR" Action="ResetKIRIDIR" Value="{}" After="SetKIRIDIR" Sequence="execute" Condition="NOT (KIRIDIR ~= KIRIDIR_HOME)" />
+    <!-- Uninstall cleanup uses the registered InstallDir (default or custom). -->
+    <SetProperty Id="KIRIDIR" Value="[KIRIDIR_FOUND]" After="AppSearch" Sequence="execute" Condition="Installed AND NOT UPGRADINGPRODUCTCODE" />
 
-    <!-- %LOCALAPPDATA%\Kiri: kiri-win.exe keeps setup.json, logs and the WebView2 cache here too. -->
+    <!-- Default %LOCALAPPDATA%\Kiri; WIXUI_INSTALLDIR / InstallDirDlg can move INSTALLFOLDER. -->
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="INSTALLFOLDER" Name="$(Name)">
         <Directory Id="BinFolder" Name="bin">
@@ -103,6 +102,7 @@
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
 
     <!--
       Per-user components key on HKCU values, not files (ICE38). The bundle
@@ -177,19 +177,11 @@
     </InstallExecuteSequence>
 
     <!--
-      The pages, as drawn in the Kiri Installer Windows design: Welcome,
-      licence, ready, progress, done. All but the ready page are stock
-      WixUI dialogs. It is WixUI_InstallDir without its folder page:
-      kiri-win runs from %LOCALAPPDATA%\Kiri and nowhere else, so the
-      folder is not a choice; the ready page (KiriReadyDlg, below) shows
-      it instead, with the size and the scope. Repair and remove still go
-      through the stock VerifyReadyDlg.
-      The art is committed in brand\installer\windows: wix-dialog.bmp (night
-      panel at the left, white under the text) and wix-banner.bmp (chalk,
-      the lockup at the right). `cargo xtask msi` stamps the version onto a
-      copy of the dialog (make-bitmaps.ps1 -Stamp, no browser needed, so CI
-      builds from the checkout) and points Assets at it. The texts are in
-      kiri.wxl.
+      The pages: Welcome, licence, folder (InstallDirDlg), ready, progress,
+      done. Stock WixUI dialogs plus KiriReadyDlg (folder, size, scope).
+      Default install dir is %LOCALAPPDATA%\Kiri; the folder page can change it.
+      The art is committed in brand\installer\windows; `cargo xtask msi`
+      stamps the version (make-bitmaps.ps1 -Stamp). Texts are in kiri.wxl.
     -->
     <?ifndef Assets ?><?define Assets = "..\..\brand\installer\windows" ?><?endif?>
     <WixVariable Id="WixUIBannerBmp" Value="$(Assets)\wix-banner.bmp" />
@@ -213,6 +205,9 @@
       <DialogRef Id="ProgressDlg" />
       <DialogRef Id="ResumeDlg" />
       <DialogRef Id="UserExit" />
+      <DialogRef Id="InstallDirDlg" />
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="DiskCostDlg" />
 
       <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
 
@@ -220,9 +215,20 @@
       <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
 
       <Publish Dialog="LicenseAgreementDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" />
-      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="KiriReadyDlg" Condition="LicenseAccepted = &quot;1&quot;" />
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Condition="LicenseAccepted = &quot;1&quot;" />
 
-      <Publish Dialog="KiriReadyDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath" Order="2" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3" Condition="WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="KiriReadyDlg" Order="4" Condition="WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" />
+
+      <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath" Order="1" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="2" Condition="WIXUI_INSTALLDIR_VALID&lt;&gt;&quot;1&quot;" />
+      <Publish Dialog="BrowseDlg" Control="OK" Event="EndDialog" Value="Return" Order="3" Condition="WIXUI_INSTALLDIR_VALID=&quot;1&quot;" />
+
+      <Publish Dialog="KiriReadyDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" />
 
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="1" Condition="Installed AND NOT PATCH" />
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="Installed AND PATCH" />
@@ -237,10 +243,8 @@
                Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
 
       <!--
-        The ready page of a fresh install, as the design draws it: the stock
-        VerifyReadyDlg's words, then the folder, the size and the scope in a
-        table, since there was no folder page to say them. Its measurements
-        are VerifyReadyDlg's (370 by 270 dialog units, the banner 44 high).
+        Ready page after the folder choice: folder, size and scope.
+        Measurements match VerifyReadyDlg (370×270, banner 44 high).
       -->
       <Dialog Id="KiriReadyDlg" Width="370" Height="270" Title="!(loc.VerifyReadyDlg_Title)">
         <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
@@ -264,6 +268,7 @@
       </Dialog>
     </UI>
     <UIRef Id="WixUI_Common" />
+    <CustomAction Id="WixUIValidatePath" BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" DllEntry="WixUIValidatePath" Execute="immediate" Return="check" />
 
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.KiriExitCheckbox)" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />

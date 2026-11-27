@@ -61,6 +61,8 @@ mod win;
 mod usb;
 #[cfg(windows)]
 mod setup;
+#[cfg(windows)]
+mod paths;
 // The built-in terminal's shells, on ConPTY.
 #[cfg(windows)]
 mod term;

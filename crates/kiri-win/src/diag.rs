@@ -24,7 +24,7 @@ const TAIL_BYTES: u64 = 512 << 10;
 const MAX_BODY: usize = 1 << 20;
 
 fn kiri_dir() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Kiri"))
+    Some(crate::paths::kiri_dir())
 }
 
 fn redactor() -> redact::Redactor {

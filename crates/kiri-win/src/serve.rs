@@ -1988,9 +1988,9 @@ fn read_frame(r: &mut impl Read) -> io::Result<Option<(u8, u32, Vec<u8>)>> {
     Ok(Some((h[0], id, data)))
 }
 
-/// Appends to %LOCALAPPDATA%\Kiri\kiri-win.log: there is no console.
+/// Appends to <kiri_dir>\kiri-win.log: there is no console.
 pub fn log(msg: &str) {
-    let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Kiri")) else { return };
+    let dir = crate::paths::kiri_dir();
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("kiri-win.log")) {
         // UTC to the millisecond, as the engine's /var/log/kiri.log writes

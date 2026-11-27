@@ -7,12 +7,12 @@
 #   powershell -ExecutionPolicy Bypass -File kiri.ps1 [-Distro Ubuntu] [-Bundle C:\path\to\kiri-windows-x86_64 (or -aarch64)] [-Default]
 #   powershell -ExecutionPolicy Bypass -File kiri.ps1 -Uninstall [-Distro Ubuntu]
 #   powershell -ExecutionPolicy Bypass -File kiri.ps1 -Update -Msi <staged .msi> [-WaitFor <pid>]
-# The MSI (installer/windows) lays the same files in %LOCALAPPDATA%\Kiri and
-# runs `-Uninstall -IfSetUp` when removed: nothing happens unless first-run
-# setup completed, and the distro setup chose is taken from setup.json.
-# kiri-win.exe runs `-Update` (update.rs) when it quits for an update it
-# downloaded: once that process is gone the staged MSI upgrades Kiri
-# silently and the new Kiri opens.
+# The MSI (installer/windows) lays the same files in the chosen install
+# folder (default %LOCALAPPDATA%\Kiri) and runs `-Uninstall -IfSetUp` when
+# removed: nothing happens unless first-run setup completed, and the distro
+# setup chose is taken from setup.json. kiri-win.exe runs `-Update`
+# (update.rs) when it quits for an update it downloaded: once that process
+# is gone the staged MSI upgrades Kiri silently and the new Kiri opens.
 # Kiri becomes docker's default engine (the current context, and the builder
 # `docker build` uses) unless Docker Desktop is installed; -Default makes it
 # the default anyway.
@@ -45,19 +45,25 @@ if ($Update) {
     $p = Start-Process -FilePath (Join-Path $env:SystemRoot "System32\msiexec.exe") -ArgumentList "/i", "`"$Msi`"", "/qn", "/norestart", "/L*V", "`"$(Join-Path $stage 'install.log')`"" -Wait -PassThru
     Say "msiexec exit $($p.ExitCode)"
     if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue }
-    Start-Process -FilePath (Join-Path $env:LOCALAPPDATA "Kiri\kiri-win.exe")
+    $regDir = (Get-ItemProperty -Path "HKCU:\Software\Kiri" -ErrorAction SilentlyContinue).InstallDir
+    $launch = if ($regDir) { Join-Path $regDir.TrimEnd('\') "kiri-win.exe" } elseif (Test-Path (Join-Path $PSScriptRoot "kiri-win.exe")) { Join-Path $PSScriptRoot "kiri-win.exe" } else { Join-Path $env:LOCALAPPDATA "Kiri\kiri-win.exe" }
+    Start-Process -FilePath $launch
   } catch { Say "failed: $_" }
   return
 }
 
-$setupJson = Join-Path $env:LOCALAPPDATA "Kiri\setup.json"
+# Install root: this script's folder (MSI/portable), else registry, else LocalAppData.
+$regDir = (Get-ItemProperty -Path "HKCU:\Software\Kiri" -ErrorAction SilentlyContinue).InstallDir
+if (Test-Path (Join-Path $PSScriptRoot "kiri-win.exe")) { $dir = $PSScriptRoot }
+elseif ($regDir) { $dir = $regDir.TrimEnd('\') }
+else { $dir = Join-Path $env:LOCALAPPDATA "Kiri" }
+$setupJson = Join-Path $dir "setup.json"
 if ($IfSetUp -and -not (Test-Path $setupJson)) { return }
 if (-not $PSBoundParameters.ContainsKey("Distro") -and (Test-Path $setupJson)) {
   $saved = (Get-Content $setupJson -Raw | ConvertFrom-Json).distro
   if ($saved) { $Distro = $saved }
 }
 if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) { throw "WSL is not installed: run 'wsl --install' first" }
-$dir = Join-Path $env:LOCALAPPDATA "Kiri"
 $exe = Join-Path $dir "kiri-win.exe"
 $bin = Join-Path $dir "bin"
 $plugins = Join-Path $bin "cli-plugins"
