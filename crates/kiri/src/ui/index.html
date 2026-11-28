@@ -15974,7 +15974,9 @@ window.kiri = {
       case "share": case "shares": case "shareaccount": case "sharelogin": case "shareusage": case "sharetunnels": case "sharetraffic": shEvent(e); break;
       case "builds": {
         const b = ui.bl;
-        b.items = e.builds || b.items || []; b.error = e.error || "";
+        // Two builders can share one BuildKit (kiri and kiri-build): its builds come once per builder, and are one build.
+        const seen = new Set();
+        b.items = (e.builds || b.items || []).filter((x) => !seen.has(x.id) && seen.add(x.id)); b.error = e.error || "";
         const sel = b.sel && b.items.find((x) => x.id === b.sel.id);
         if (!sel && b.items.length) pickBuild(b.items[0]);
         else if (sel && (sel.status === "Running" || sel.status !== b.sel.status)) { b.sel = sel; send("build", { name: sel.builder, id: sel.id }); }
